@@ -117,3 +117,6 @@ unstated training-data licence carry over to a trained network's weights; (2) do
 carry rights that matter; (3) does MIT on code plus "subject to their respective licenses" on models leave the weights
 unlicensed. Until those are answered, nothing here is cleared for commercial use, and a CPU-only UHD 620 target has
 no demonstrated engine at all.
+
+**CPU-only alternative (study):** `SWAP-CPU.md` describes a licence-clean route that needs no neural model, a photo of a
+synthetic face wrapped on the tracked face mesh. It is a study, not an engine: nothing is built or measured.
