@@ -39,16 +39,30 @@ def _models(action: str) -> int:
     return 0
 
 
-def _voice(src: str, dst: str, semitones: float) -> int:
+def _voices() -> int:
+    from realx.audio import presets
+
+    for p in presets.PRESETS.values():
+        print(f"  {p.id:8s} {p.description}")
+    print(presets.NOTE)
+    return 0
+
+
+def _voice(src: str, dst: str, semitones: float, preset: str | None = None) -> int:
     from realx.audio import offline
     from realx.audio.wavio import read_wav
 
     samples, rate = read_wav(src)
-    _, pcm = offline.convert(samples, rate, semitones)
+    try:
+        _, pcm = offline.convert(samples, rate, semitones, preset=preset)
+    except ValueError as exc:
+        print(f"cannot convert: {exc}", file=sys.stderr)
+        return 2
     from realx.audio.wavio import write_wav
 
     write_wav(dst, pcm.astype(np.float32) / 32767.0, rate)
-    print(f"wrote {dst}: {pcm.size / rate:.1f}s at {rate} Hz, {semitones:+g} semitones, provenance mark embedded")
+    how = f"preset '{preset}'" if preset else f"{semitones:+g} semitones"
+    print(f"wrote {dst}: {pcm.size / rate:.1f}s at {rate} Hz, {how}, provenance mark embedded")
     return 0
 
 
@@ -96,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("input")
     v.add_argument("output")
     v.add_argument("--semitones", type=float, default=0.0)
+    v.add_argument("--preset", default=None, help="character voice (see `realx voices`); not combined with --semitones")
+    sub.add_parser("voices", help="list the character voice presets")
 
     s = sub.add_parser("serve", help="open the control room in your browser")
     s.add_argument("--port", type=int, default=8765)
@@ -113,7 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "models":
         return _models(args.action)
     if args.command == "voice":
-        return _voice(args.input, args.output, args.semitones)
+        return _voice(args.input, args.output, args.semitones, args.preset)
+    if args.command == "voices":
+        return _voices()
     if args.command == "serve":
         return _serve(args.port, args.source, not args.no_browser, args.avatar)
     return _selftest()

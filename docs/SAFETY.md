@@ -16,3 +16,17 @@ realX produces synthetic video of people's faces. These controls ship with the p
 
 These are product requirements, not optional extras. Payment processors, app stores
 and most jurisdictions now expect them.
+
+## What the character, background and voice-preset features do and do not touch
+
+- **Character (Pip).** An original cartoon with no likeness of a real person. The browser
+  gets head-pose numbers only. The stream announces itself as a virtual character
+  (hello message and an on-screen badge, which `?badge=off` hides).
+- **Background replacement.** Edits only the area around the user's own picture; the
+  person's pixels are never regenerated. Photos stay in memory. A pipeline cannot place
+  it after a watermark, because that would erase the mark.
+- **Voice presets.** Effects on your own voice. There is no speaker data in a preset, and
+  the test suite fails if a field that could hold one is added without review.
+- **Unchanged.** Anything that imitates a real person (`voice_convert`, face swaps) still
+  needs a consent gate before it and a watermark after it. `inswapper_128` and `buffalo_l`
+  stay blocked.

@@ -140,12 +140,23 @@ const fmt = (v) => (v > 0 ? "+" : "") + v + (Math.abs(v) === 1 ? " semitone" : "
 pitch.addEventListener("input", () => { $("pitchOut").textContent = fmt(Number(pitch.value)); });
 $("pitchOut").textContent = fmt(Number(pitch.value));
 
+const preset = $("preset");
+preset.addEventListener("change", () => { $("pitchBox").hidden = preset.value !== ""; });
+api("/api/voices").then((v) => {
+  v.presets.forEach((p) => {
+    const o = document.createElement("option");
+    o.value = p.id; o.textContent = `${p.label}: ${p.description}`;
+    preset.append(o);
+  });
+  $("presetNote").textContent = v.note;
+}).catch(() => {});
+
 async function convert(body, demo) {
   const buttons = [$("convert"), $("tone")];
   buttons.forEach((b) => (b.disabled = true));
   $("voiceMsg").className = "msg"; $("voiceMsg").textContent = "Converting…";
   try {
-    const blob = await api(`/api/voice?semitones=${pitch.value}${demo ? "&demo=1" : ""}`, { method: "POST", body });
+    const blob = await api(`/api/voice?${preset.value ? "preset=" + encodeURIComponent(preset.value) : "semitones=" + pitch.value}${demo ? "&demo=1" : ""}`, { method: "POST", body });
     const url = URL.createObjectURL(blob);
     $("player").src = url; $("player").hidden = false;
     $("download").href = url; $("download").download = "realx-voice.wav"; $("download").hidden = false;
@@ -172,6 +183,7 @@ api("/api/safety").then((s) => {
   [
     ["Consent", s.consent],
     ["Provenance", s.watermark],
+    ["Voices", s.voices],
     ["Models in use", models],
     ["Blocked", blocked.length ? blocked.join(", ") + " until licensed" : "none"],
   ].forEach(([k, v]) => {

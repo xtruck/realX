@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 
 from realx import __version__
-from realx.audio import offline
+from realx.audio import offline, presets
 from realx.models import BLOCKED, MANIFEST
 from realx import ws
 from realx.pipeline import Pipeline
@@ -440,10 +440,13 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self._rig_socket()
             elif path == "/api/stats":
                 self._json(engine.stats())
+            elif path == "/api/voices":
+                self._json({"presets": presets.describe(), "note": presets.NOTE})
             elif path == "/api/safety":
                 self._json(
                     {
                         "watermark": "provenance mark embedded in voice output",
+                        "voices": presets.NOTE,
                         "consent": "required before any real-person face or voice synthesis",
                         "models": {
                             n: {"license": m.license, "commercial_ok": m.commercial_ok} for n, m in MANIFEST.items()
@@ -526,6 +529,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 elif parsed.path == "/api/voice":
                     q = parse_qs(parsed.query)
                     semitones = float(q.get("semitones", ["0"])[0])
+                    preset = q.get("preset", [""])[0] or None
                     data = self._body(offline.MAX_WAV_BYTES)
                     if q.get("demo", ["0"])[0] == "1" and not data:
                         t = np.arange(16000 * 2) / 16000
@@ -533,7 +537,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                             np.float32
                         )
                         data = offline.wav_bytes(tone, 16000)
-                    out = offline.convert_wav_bytes(data, semitones)
+                    out = offline.convert_wav_bytes(data, semitones, preset=preset)
                     self.send_response(200)
                     self._headers("audio/wav", len(out))
                     self.end_headers()

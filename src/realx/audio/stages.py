@@ -8,7 +8,7 @@ from typing import Protocol
 
 import numpy as np
 
-from realx.audio import dsp
+from realx.audio import dsp, presets
 from realx.audio.types import AudioContext
 from realx.audio.wavio import to_pcm16
 from realx.safety import watermark
@@ -90,6 +90,39 @@ class VoicePitch:
 
     def close(self) -> None:
         self._shifter = None
+
+
+@register("voice_character")
+class VoiceCharacter:
+    """Colours your own voice with a character preset (see `realx.audio.presets`).
+
+    Not identity synthesis, so it needs no consent gate; presets carry no speaker data.
+    It edits the audio, so it must come before any audio watermark.
+    """
+
+    name = "voice_character"
+    alters_media = True
+    stateful = True
+
+    def __init__(self, preset: str) -> None:
+        self.preset = presets.get_preset(preset)
+        self._voice: presets.CharacterVoice | None = None
+        self._rate = 0
+
+    def setup(self) -> None:
+        self._voice = None
+
+    def process(self, ctx: AudioContext) -> AudioContext:
+        if self._voice is None or self._rate != ctx.sample_rate:
+            self._voice = presets.CharacterVoice(self.preset, ctx.sample_rate)
+            self._rate = ctx.sample_rate
+        ctx.samples = self._voice.process(ctx.samples)
+        ctx.meta["voice_preset"] = self.preset.id
+        ctx.meta["latency_ms"] = 1000.0 * self._voice.latency_samples / ctx.sample_rate
+        return ctx
+
+    def close(self) -> None:
+        self._voice = None
 
 
 class VoiceBackend(Protocol):

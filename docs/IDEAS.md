@@ -15,10 +15,13 @@ research. **Verify each license file before adding a model to `MANIFEST`.**
 | Wall-clock demo rendering (no skip spiral) | live demo 2 fps -> 14 fps on the dev laptop |
 | Consent + watermark ordering enforced at pipeline build time | tests |
 | Authenticated watermark tags (video and audio) | tests |
+| Rig over WebSocket + browser VRM renderer (#1) | 60 fps display from 15-30 Hz rig, no JPEG in character mode |
+| Background replacement with PP-HumanSeg | 10 ms/frame; kept person 0.9+, replaced room 0.9+ on test photos |
+| Character voice presets with formant control | each preset tested for pitch, brightness, band limits, chunking |
 
 ## Next, ranked by value for a CPU-only laptop
 
-1. **Rig numbers over WebSocket, avatar rendered in the browser** (three.js +
+1. ~~**Rig numbers over WebSocket, avatar rendered in the browser**~~ (shipped) (three.js +
    @pixiv/three-vrm, both MIT). The browser draws at 60 fps on the integrated GPU,
    interpolating between 15-30 Hz tracker updates, and the per-frame JPEG encode goes
    away. Output sink is an OBS Browser Source, which avoids `pyvirtualcam` (GPL-2.0).

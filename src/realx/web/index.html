@@ -216,8 +216,13 @@
 
       <section aria-labelledby="voice">
         <h2 id="voice">Voice</h2>
-        <p class="hint">Change pitch on a recording. Every file carries a realX provenance mark.</p>
+        <p class="hint">Change how your recording sounds. Every file carries a realX provenance mark.</p>
         <fieldset>
+          <legend>Character</legend>
+          <select id="preset" aria-label="Character voice"><option value="">Plain pitch change</option></select>
+          <p class="hint" id="presetNote"></p>
+        </fieldset>
+        <fieldset id="pitchBox">
           <div class="row"><legend>Pitch</legend><output id="pitchOut">+3 semitones</output></div>
           <input type="range" id="pitch" min="-12" max="12" value="3" step="1" aria-label="Pitch in semitones">
         </fieldset>

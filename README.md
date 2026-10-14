@@ -16,6 +16,14 @@ with **consent, provenance and license checks built in**.
   frames. Measured below.
 - **Avatar tier**: a cartoon avatar follows your face and head tilt. No real face is
   synthesized, so no restricted model is involved.
+- **3D character**: Pip, an original VRM character, rendered in your browser with
+  three.js and @pixiv/three-vrm and driven by head pose over a local WebSocket. Add
+  `http://127.0.0.1:8765/avatar` as an OBS Browser Source (transparent background).
+  Bring your own model with `realx serve --avatar my.vrm`.
+- **Background replacement**: cut yourself out of your own camera picture and put a
+  photo, a blur or a colour behind you (PP-HumanSeg, Apache-2.0). Nothing is generated.
+- **Character voices**: `realx voices` lists presets (pip, bear, imp, robot, radio).
+  They colour your own voice and cannot imitate anyone.
 - **Voice**: pitch shifting with a streaming phase vocoder, noise gate, normalization,
   A/V delay matching, WAV conversion, and a provenance mark on every output.
 - **Safety by construction**: a pipeline that synthesizes a face or voice cannot be
@@ -26,7 +34,7 @@ with **consent, provenance and license checks built in**.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
-.\.venv\Scripts\realx models fetch      # downloads the MIT-licensed face detector, hash-verified
+.\.venv\Scripts\realx models fetch      # downloads the face detector (MIT) and person segmenter (Apache-2.0), hash-verified
 .\.venv\Scripts\realx serve             # opens http://127.0.0.1:8765/
 .\.venv\Scripts\realx voice in.wav out.wav --semitones 3
 .\.venv\Scripts\python -m pytest

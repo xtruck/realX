@@ -114,7 +114,14 @@ class StreamingPitchShifter:
 
     DEFAULT_FFT = 1024
 
-    def __init__(self, semitones: float, sample_rate: int, fft_size: int = DEFAULT_FFT, oversample: int = 4) -> None:
+    def __init__(
+        self,
+        semitones: float,
+        sample_rate: int,
+        fft_size: int = DEFAULT_FFT,
+        oversample: int = 4,
+        formant: float | None = None,
+    ) -> None:
         if fft_size & (fft_size - 1) or fft_size < 256:
             raise ValueError("fft_size must be a power of two >= 256")
         if not -24 <= semitones <= 24:  # also rejects NaN
@@ -123,7 +130,14 @@ class StreamingPitchShifter:
             raise ValueError("oversample must be 4 or 8")
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")
+        if formant is not None and not 0.5 <= formant <= 2.0:  # also rejects NaN
+            raise ValueError("formant must be a ratio between 0.5 and 2")
         self.ratio = 2.0 ** (semitones / 12.0)
+        # `formant` places the vocal-tract resonances independently of the pitch:
+        # 1.0 keeps the speaker's own, above 1 sounds smaller, below 1 larger.
+        # None leaves them riding along with the pitch (the classic chipmunk effect).
+        self.formant = formant
+        self._lifter = max(8, int(sample_rate * 0.0025))  # quefrency cut-off: below one pitch period
         self.sample_rate = sample_rate
         self.n = fft_size
         self.osamp = oversample
@@ -158,6 +172,8 @@ class StreamingPitchShifter:
         syn_magn = np.bincount(idx[ok], weights=magn[ok], minlength=half)[:half]
         syn_freq = np.zeros(half)
         syn_freq[idx[ok]] = true_freq[ok] * self.ratio
+        if self.formant is not None and abs(self.formant - self.ratio) > 1e-6:
+            syn_magn = syn_magn * self._formant_gain(magn)
 
         dev = (syn_freq - self._k * self._bin_hz) / self._bin_hz
         self._sum_phase += 2 * np.pi * dev / self.osamp + self._k * self._expct
@@ -166,6 +182,18 @@ class StreamingPitchShifter:
         # Hann analysis + synthesis windows overlap-add to 3/8 * osamp, so this gives
         # unity gain (verified by test_pitch_shift_has_unity_gain)
         return out * (8.0 / (3.0 * self.osamp))
+
+    def _formant_gain(self, magn: np.ndarray) -> np.ndarray:
+        """Per-bin gain that moves the spectral envelope from where the pitch shift left
+        it (envelope stretched by `ratio`) to where `formant` wants it."""
+        log_m = np.log(magn + 1e-9)
+        ceps = np.fft.irfft(log_m, n=self.n)
+        ceps[self._lifter + 1 : self.n - self._lifter] = 0.0  # keep the smooth envelope only
+        env = np.exp(np.fft.rfft(ceps).real)
+        k = self._k.astype(np.float64)
+        moved = np.interp(k / self.ratio, k, env)  # where the shift put it
+        wanted = np.interp(k / self.formant, k, env)
+        return np.clip(wanted / (moved + 1e-9), 0.1, 10.0)
 
     def process(self, x: np.ndarray) -> np.ndarray:
         x = np.asarray(x, dtype=np.float64)
@@ -204,3 +232,53 @@ def pitch_shift(x: np.ndarray, semitones: float, sample_rate: int, fft_size: int
     padded = np.concatenate([x.astype(np.float64), np.zeros(ps.n)])
     y = ps.process(padded)
     return y[ps.latency_samples : ps.latency_samples + x.size].astype(np.float32)
+
+
+class RingModulator:
+    """Multiplies the voice by a sine: the metallic "robot" colour. Phase persists across chunks."""
+
+    def __init__(self, freq_hz: float, mix: float, sample_rate: int) -> None:
+        if not 0 < freq_hz < sample_rate / 4 or not 0.0 <= mix <= 1.0:
+            raise ValueError("invalid ring modulator settings")
+        self.freq, self.mix, self.sample_rate = freq_hz, mix, sample_rate
+        self._n = 0
+
+    def process(self, x: np.ndarray) -> np.ndarray:
+        x = np.asarray(x, dtype=np.float32)
+        t = (self._n + np.arange(x.size)) / self.sample_rate
+        self._n = (self._n + x.size) % self.sample_rate  # keeps the phase exact and the counter small
+        carrier = np.sin(2 * np.pi * self.freq * t).astype(np.float32)
+        return ((1.0 - self.mix) * x + self.mix * x * carrier).astype(np.float32)
+
+
+class BandPass:
+    """Linear-phase FIR band-pass that works chunk by chunk. Delay: `latency_samples`."""
+
+    def __init__(self, low_hz: float, high_hz: float, sample_rate: int, taps: int = 129) -> None:
+        if taps % 2 == 0 or taps < 15:
+            raise ValueError("taps must be odd and >= 15")
+        if not 0 < low_hz < high_hz < sample_rate / 2:
+            raise ValueError("need 0 < low < high < Nyquist")
+        n = np.arange(taps) - taps // 2
+
+        def lowpass(fc: float) -> np.ndarray:
+            return 2 * fc / sample_rate * np.sinc(2 * fc / sample_rate * n)
+
+        self._h = ((lowpass(high_hz) - lowpass(low_hz)) * np.hamming(taps)).astype(np.float64)
+        self.latency_samples = taps // 2
+        self._tail = np.zeros(taps - 1)
+
+    def process(self, x: np.ndarray) -> np.ndarray:
+        x = np.asarray(x, dtype=np.float64)
+        joined = np.concatenate([self._tail, x])
+        y = np.convolve(joined, self._h, mode="valid")  # len(x) outputs
+        self._tail = joined[-(self._h.size - 1) :]
+        return y.astype(np.float32)
+
+
+def soft_clip(x: np.ndarray, drive: float) -> np.ndarray:
+    """Gentle tanh saturation, scaled so a full-scale input still peaks at 1."""
+    if drive <= 0:
+        return np.asarray(x, dtype=np.float32)
+    y = np.tanh(drive * np.asarray(x, dtype=np.float64)) / np.tanh(drive)
+    return np.clip(y, -1.0, 1.0).astype(np.float32)  # inputs beyond full scale saturate instead of overshooting

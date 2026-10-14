@@ -8,7 +8,7 @@ import wave
 
 import numpy as np
 
-from realx.audio import dsp
+from realx.audio import dsp, presets
 from realx.audio.stages import extract_audio_mark  # noqa: F401  (re-export for callers)
 from realx.audio.types import AudioContext
 from realx.audio.wavio import to_pcm16
@@ -55,15 +55,26 @@ def wav_bytes(samples: np.ndarray, rate: int) -> bytes:
 
 
 def convert(
-    samples: np.ndarray, rate: int, semitones: float = 0.0, gate_db: float | None = -55.0, key: bytes | None = None
+    samples: np.ndarray,
+    rate: int,
+    semitones: float = 0.0,
+    gate_db: float | None = -55.0,
+    key: bytes | None = None,
+    preset: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Clean up and pitch-shift a recording. Returns (float samples, 16-bit pcm).
+    """Clean up a recording and change its pitch or give it a character preset.
+    Returns (float samples, 16-bit pcm).
 
     The output always carries the realX provenance mark.
     """
     if not -12 <= semitones <= 12:
         raise ValueError("semitones must be between -12 and 12")
-    shifted = dsp.pitch_shift(samples, semitones, rate)
+    if preset is not None:
+        if semitones != 0:
+            raise ValueError("choose a voice preset or a pitch change, not both")
+        shifted = presets.CharacterVoice(presets.get_preset(preset), rate).render(samples)
+    else:
+        shifted = dsp.pitch_shift(samples, semitones, rate)
     stages = []
     if gate_db is not None:
         stages.append(create("voice_gate", threshold_db=gate_db))
@@ -73,11 +84,13 @@ def convert(
     return out.samples, out.meta["pcm16"]
 
 
-def convert_wav_bytes(data: bytes, semitones: float = 0.0, key: bytes | None = None) -> bytes:
+def convert_wav_bytes(
+    data: bytes, semitones: float = 0.0, key: bytes | None = None, preset: str | None = None
+) -> bytes:
     samples, rate = read_wav_bytes(data)
     if samples.size == 0:
         raise ValueError("audio file is empty")
-    _, pcm = convert(samples, rate, semitones, key=key)
+    _, pcm = convert(samples, rate, semitones, key=key, preset=preset)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
