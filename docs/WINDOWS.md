@@ -81,3 +81,18 @@ Then choose **Full body**, allow the camera when the browser asks, and read `doc
 | Git shows the bundled WASM file as changed | Windows line-ending conversion (`core.autocrlf`); the content is identical |
 
 To remove everything: delete the `..\realx-venv` folder and the `models` folder in the repository.
+
+## Sitting at a desk (upper-body view)
+
+In **Full body** mode, open **Camera view** and choose **Sitting at a desk: upper body**. The choice is remembered.
+
+* The tracker follows your head, face (eyes, brows, mouth, jaw), shoulders, arms, hands and fingers. It never reads
+  the hips or legs: behind a desk they are guesses, and a wrong hip line used to tilt the whole torso.
+* The character is framed from the head down to the hands, and its legs stay relaxed.
+* When an arm or hand drops out of the picture (down onto the keyboard) it stays where it was for 1.5 s, then eases
+  to a seated pose with the forearms resting in front of the body, not back to arms hanging at the sides.
+* Put the camera so your face, both shoulders and your hands when raised are in view; press **Recenter** once
+  you are seated.
+
+What this does not do: it does not track the tongue or teeth, and it cannot make the character hold an object.
+Tuning (how long a hand is held, how the rest pose looks) needs a live camera session; the values are starting points.

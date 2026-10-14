@@ -14,13 +14,14 @@ const FRESH_MIN_MS = 300; // a model result older than this (or 8 frame interval
  * solver     a BodySolver built from the character's rest pose
  * mirror     selfie view (the character moves like your reflection); the solver must use the same value
  * legs       "auto" | "off" | "on"
+ * desk       the desk view (upper body): legs off, arms held longer, seated rest pose; the solver must use upperBody too
  * delegate   "auto" tries the GPU and falls back to the CPU; "cpu" and "gpu" force one
  * base       URL prefix for /mp/wasm and /mp/models (same origin)
  * video      an existing <video> to show the camera in (a preview), or omitted for a hidden one
  * onFrame    (message, info) called with each packed body message
  * onStatus   (state, detail) state: camera | models | running | error | stopped
  */
-export async function startTracker({ solver, mirror = true, legs = "auto", delegate = "auto", base = "", video = null, deviceId = null, quality = "balanced", onFrame, onStatus = () => {} }) {
+export async function startTracker({ solver, mirror = true, legs = "auto", desk = false, delegate = "auto", base = "", video = null, deviceId = null, quality = "balanced", onFrame, onStatus = () => {} }) {
   const preset = qualityOf(quality);
   const status = (state, detail = "") => onStatus(state, detail);
   let stopped = false;
@@ -68,7 +69,7 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
     return { stop() {}, recenter() {}, setLegs() {}, stats: () => ({}) };
   }
 
-  const filter = new BodyFilter({ legs });
+  const filter = new BodyFilter({ legs, desk });
   const root = new RootTracker({ mirror });
   const stagger = new Stagger({ budgetMs: preset.budgetMs }); // balanced: ~28 ms per model measured on an integrated GPU, so about one per frame
   const latest = { face: null, pose: null, hands: null }; // { t, result } of the newest run of each model
