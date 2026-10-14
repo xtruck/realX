@@ -82,7 +82,7 @@ Runtime providers: ranking and a SessionCache exist, but NO stage uses ONNX Runt
 | 6 | Global model-download lock could stall the server | per-model locks, prefetch |
 | 7 | `pipeline.run_stream` never dropped stale frames; it blocked the camera | fixed, regression test |
 | 8 | **No logging anywhere in `src/realx`** (0 uses of `logging`; request log silenced): unexpected 500s, WebSocket 1011 closes, model-prefetch failures, camera-close errors leave no trace, and being offline during prefetch is invisible | fixed: `realx.log` (plain or JSON lines, `--log-level`, `--log-json`); engine, camera, 500, 1011, prefetch, model-download and stage-start failures are logged once with type, message and traceback, and never reach the client; 14 tests in `tests/test_logging.py` |
-| 9 | Browser tracker does not notice a camera or microphone being unplugged | open |
+| 9 | Browser tracker does not notice a camera or microphone being unplugged | implemented: `DeviceSupervisor` (`webapp/src/recover.js`) restarts a camera or microphone after its track ends, with 1, 2, 4, 8, 15 s pauses, treats a refused permission as final, releases devices on stop, and a 3 s freeze watchdog restarts a camera that stops delivering frames without saying so. 12 node tests pass. **Two Chromium tests that simulate an ended and a frozen camera are written but have not been run** (not enough free memory); a real unplug has never been tried |
 | 10 | Filter time uses processing time, not the camera's capture time, so variable processing delay becomes motion jitter | open |
 | 11 | Server camera loop does capture, inference and JPEG encoding in one thread | open |
 | 12 | No runtime hardware detection; the default quality is fixed regardless of the machine | open |
@@ -129,7 +129,7 @@ non-commercial; its weights' and the MediaPipe fork's licenses are unverified; X
 | Milestone | Work | State |
 |---|---|---|
 | 1 Baseline | this report | done |
-| 2 Critical fixes | structured logging (8) **done**; still to do: device disconnect recovery (9); runtime hardware detection and low-resource defaults (12); capture-time filtering (10); lazy or staged model loading and memory measurement (13); troubleshooting guide | next |
+| 2 Critical fixes | structured logging (8) **done**; device disconnect recovery (9) **implemented, browser tests not yet run**; still to do: runtime hardware detection and low-resource defaults (12); capture-time filtering (10); lazy or staged model loading and memory measurement (13); troubleshooting guide | next |
 | 3 Real webcam | a script the owner runs that records numbers only; I do not turn the camera on myself | planned |
 | 4 Performance | soak test for slowdown over time; per-stage latency and CPU/memory; adaptive quality | planned |
 | 5 Streaming | OBS and A/V sync validated against ground truth | needs the owner's OBS and microphone |

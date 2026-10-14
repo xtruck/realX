@@ -9,6 +9,7 @@ import { hasFlag, packStats, unpackBody } from "./body.js";
 import { idleQuats } from "./idle.js";
 import { BONES, EXPRESSIONS } from "./skeleton.js";
 import { startMic } from "./mic.js";
+import { DeviceSupervisor } from "./recover.js";
 import { DelayLine, MouthBlender, MouthFromAudio, avSyncOffset } from "./speech.js";
 
 const params = new URLSearchParams(location.search);
@@ -241,22 +242,35 @@ const audioMouth = new MouthFromAudio(), blender = new MouthBlender();
 const trackedLine = new DelayLine(), audioLine = new DelayLine();
 let mic = null, micInfo = null, lastAudio = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0, speaking: false, level: 0 }, avSync = null;
 
+// The microphone is optional and never stops the camera. If it is unplugged, or taken by another app, the
+// supervisor releases it, the mouth goes back to the tracked face alone, and it reconnects by itself.
 async function beginMic() {
-  try {
-    mic = await startMic({
-      deviceId: MIC === "default" ? undefined : MIC,
-      onFeatures: (f) => {
-        lastAudio = audioMouth.update(f, f.t);
-        micInfo = { active: true, speaking: lastAudio.speaking, levelDb: f.levelDb, latencyMs: mic ? mic.latencyMs : null };
-        probe.mic = micInfo;
-      },
-    });
-    micInfo = { active: true, speaking: false, levelDb: null, latencyMs: mic.latencyMs };
-    probe.mic = micInfo;
-  } catch (e) {
-    probe.micError = String((e && e.message) || e).slice(0, 200);   // the camera keeps working without it
-    micInfo = null;
-  }
+  const supervisor = new DeviceSupervisor({
+    kind: "microphone",
+    explain: (e) => String((e && e.message) || "The microphone is not available.").slice(0, 140),   // startMic throws plain messages
+    start: async () => {
+      const m = await startMic({
+        deviceId: MIC === "default" ? undefined : MIC,
+        onFeatures: (f) => {
+          lastAudio = audioMouth.update(f, f.t);
+          micInfo = { active: true, speaking: lastAudio.speaking, levelDb: f.levelDb, latencyMs: mic ? mic.latencyMs : null };
+          probe.mic = micInfo;
+        },
+      });
+      mic = m;
+      micInfo = { active: true, speaking: false, levelDb: null, latencyMs: m.latencyMs };
+      probe.mic = micInfo;
+      probe.micError = null;
+      return m;   // { stop, tracks }: the supervisor watches the tracks
+    },
+    onState: (e) => {
+      if (e.state === "lost" || e.state === "blocked") {
+        mic = null; micInfo = null; probe.mic = null;
+        probe.micError = e.message;
+      }
+    },
+  });
+  await supervisor.run();
 }
 
 // Tracked mouth when the face is seen, speech estimate when it is not, cross-faded; the faster of the two

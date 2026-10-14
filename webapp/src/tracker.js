@@ -7,8 +7,10 @@
 import { FaceLandmarker, FilesetResolver, HandLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { assignHands } from "./assign.js";
 import { BodyFilter, RootTracker, Stagger, packBody, qualityOf } from "./body.js";
+import { DeviceSupervisor } from "./recover.js";
 
 const FRESH_MIN_MS = 300; // a model result older than this (or 8 frame intervals, if longer) is treated as "not seen"
+const FROZEN_MS = 3000;   // no new camera frame for this long, with the page visible: treat the camera as gone
 
 /**
  * solver     a BodySolver built from the character's rest pose
@@ -25,23 +27,40 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
   const preset = qualityOf(quality);
   const status = (state, detail = "") => onStatus(state, detail);
   let stopped = false;
-  let stream = null;
-  const tasks = {};      // face | pose | hands -> landmarker
-  const used = {};       // face | pose | hands -> "GPU" | "CPU"
-
-  try {
-    status("camera");
-    stream = await navigator.mediaDevices.getUserMedia({
+  let watchdog = null, modelsReady = false, restarted = false, lastNewFrameAt = performance.now();
+  video = video || document.createElement("video");   // the camera shows here; a hidden one when there is no preview
+  video.muted = true; video.playsInline = true;
+  // Opens the camera. The supervisor calls it again, with growing pauses, when the camera is unplugged or taken
+  // by another app, so tracking resumes by itself.
+  const openCamera = async () => {
+    const s = await navigator.mediaDevices.getUserMedia({
       video: {
         ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }),
         width: { ideal: preset.width }, height: { ideal: preset.height }, frameRate: { ideal: 30 },
       },
       audio: false,
     });
-    const el = video || document.createElement("video");
-    el.muted = true; el.playsInline = true; el.srcObject = stream;
-    await el.play();
-    video = el;
+    video.srcObject = s;
+    await video.play();
+    restarted = true;                 // the camera's own frame counter starts over
+    lastNewFrameAt = performance.now();
+    return { tracks: s.getVideoTracks(), stop() { s.getTracks().forEach((t) => t.stop()); if (video.srcObject === s) video.srcObject = null; } };
+  };
+  const camera = new DeviceSupervisor({
+    kind: "camera", start: openCamera, explain: describe,
+    onState: (e) => {                 // while the models load, start-up reports its own progress
+      if (!modelsReady) return;
+      if (e.state === "running") status("running");
+      else if (e.state === "lost" || e.state === "blocked") status("error", e.message);
+    },
+  });
+  const tasks = {};      // face | pose | hands -> landmarker
+  const used = {};       // face | pose | hands -> "GPU" | "CPU"
+
+  try {
+    status("camera");
+    await camera.run();
+    if (camera.state === "blocked") throw new Error(camera.last.message);   // a refused permission is final
 
     status("models");
     const fileset = await FilesetResolver.forVisionTasks(`${base}/mp/wasm`);
@@ -79,7 +98,7 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
     skipped: 0,        // camera frames that arrived but were not processed (the models were busy)
     latencyMs: null,   // from the camera capturing a frame to its numbers being ready; null when the browser gives no capture time
   };
-  let presented = 0, captureTime = null, presentedBase = null;
+  let presented = 0, captureTime = null, presentedBase = null, processedSince = 0;
   const watch = (_now, meta) => {   // a light per-frame watcher: the camera's own frame counter and capture time
     presented = meta.presentedFrames ?? presented;
     captureTime = Number.isFinite(meta.captureTime) ? meta.captureTime : null;
@@ -92,6 +111,7 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
     if (stopped) return;
     if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
       lastVideoTime = video.currentTime;
+      lastNewFrameAt = performance.now();
       try {
         process();
         failures = 0;
@@ -155,9 +175,11 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
     stats.diag = diagnose({ face, poseWorld, hands, assigned, solved, poseImage });
     const msg = packBody(filter.update(solved, now, root.update(poseImage, aspect)));
     stats.frames++;
+    if (restarted) { presentedBase = null; processedSince = 0; restarted = false; }   // a reconnected camera counts its frames from zero
+    processedSince++;
     if (presented > 0) {   // count from the first processed frame, not from when the camera started (model loading takes seconds)
       if (presentedBase === null) presentedBase = presented - 1;
-      stats.skipped = Math.max(0, presented - presentedBase - stats.frames);
+      stats.skipped = Math.max(0, presented - presentedBase - processedSince);
     }
     if (captureTime !== null) stats.latencyMs = Math.max(0, performance.now() - captureTime);
     if (lastFrameAt) {
@@ -180,11 +202,17 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
   window.addEventListener("pagehide", onHide);   // release the camera and the models if the page is torn down
   function cleanup() {
     for (const t of Object.values(tasks)) { try { t.close(); } catch (e) { /* already closed */ } }
-    if (stream) stream.getTracks().forEach((t) => t.stop());
-    if (video) video.srcObject = null;
+    if (watchdog !== null) clearInterval(watchdog);
+    camera.stop();   // releases the camera and stops any pending retry
   }
 
-  status("running");
+  modelsReady = true;
+  if (camera.state === "running") status("running");
+  else if (camera.last) status("error", camera.last.message);   // no camera yet: say so; it keeps trying
+  watchdog = setInterval(() => {
+    if (stopped || camera.state !== "running" || document.visibilityState !== "visible") return;
+    if (performance.now() - lastNewFrameAt > FROZEN_MS) camera.lost();   // a camera can freeze without ever saying it ended
+  }, 1000);
   schedule();
   return {
     stop,

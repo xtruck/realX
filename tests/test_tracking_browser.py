@@ -24,7 +24,7 @@ from conftest import token_cookie
 ROOT = Path(__file__).resolve().parents[1]
 ARGS = ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
 FAKE_CAMERA = ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"]
-SOURCES = ["tracker.js", "body.js", "assign.js", "idle.js"]
+SOURCES = ["tracker.js", "body.js", "assign.js", "idle.js", "recover.js"]
 FORBIDDEN = [  # calls that would read, copy, encode or ship camera pixels
     "toDataURL", "toBlob", "getImageData", "createImageBitmap", "MediaRecorder", "captureStream", "ImageCapture",
     "readPixels", "drawImage", "sendBeacon", "XMLHttpRequest", "fetch(", "WebSocket(", "RTCPeerConnection",
@@ -269,6 +269,53 @@ def test_microphone_drives_the_mouth_when_no_face_is_seen_and_audio_stays_in_the
             msg = json.loads(payload if isinstance(payload, str) else payload.decode("utf-8"))
             assert sorted(msg) == ["e", "f", "q", "r", "type"] and len(json.dumps(msg)) <= 6144
         assert page.evaluate("document.querySelectorAll('audio').length") == 0, "nothing is played back"
+    finally:
+        browser.close()
+
+
+def _tracking_page(browser, srv, clip_flags_ok=True):
+    ctx = browser.new_context(viewport={"width": 480, "height": 480}, permissions=["camera"])
+    ctx.add_cookies(token_cookie(srv.port))
+    page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(f"http://127.0.0.1:{srv.port}/avatar?track=1&preview=1&delegate=cpu&quality=low")
+    _wait(page, "window.__realx && window.__realx.tracking && window.__realx.tracking.frames >= 10", 180)
+    return page, errors
+
+
+def test_a_camera_that_ends_is_reported_and_tracking_resumes_by_itself(stack):
+    p, exe, clip, srv = stack
+    browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
+    try:
+        page, errors = _tracking_page(browser, srv)
+        before = page.evaluate("window.__realx.tracking.frames")
+        # what the browser does when a camera is unplugged or taken by another app: the track reports 'ended'
+        page.evaluate("document.getElementById('cam').srcObject.getVideoTracks()[0].dispatchEvent(new Event('ended'))")
+        _wait(page, "window.__realx.tracking.state === 'error' && /disconnected|not available/i.test(window.__realx.tracking.detail)", 10)
+        detail = page.evaluate("window.__realx.tracking.detail")
+        assert "camera" in detail.lower() and len(detail) < 200, detail
+        assert page.inner_text("#trackstate").strip(), "the person is told, in the preview"
+        _wait(page, "window.__realx.tracking.state === 'running'", 30)                     # it reconnected on its own
+        _wait(page, f"window.__realx.tracking.frames > {before + 10}", 60)                 # and frames flow again
+        assert not errors, errors
+        assert page.evaluate("document.getElementById('cam').srcObject.getVideoTracks()[0].readyState") == "live"
+    finally:
+        browser.close()
+
+
+def test_a_camera_that_freezes_without_saying_so_is_restarted(stack):
+    p, exe, clip, srv = stack
+    browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
+    try:
+        page, errors = _tracking_page(browser, srv)
+        before = page.evaluate("window.__realx.tracking.frames")
+        # a frozen camera: the track stays 'live' but no new picture arrives (here the preview is paused)
+        page.evaluate("document.getElementById('cam').pause()")
+        _wait(page, "window.__realx.tracking.state === 'error'", 15)                        # the watchdog notices after ~3 s
+        _wait(page, "window.__realx.tracking.state === 'running'", 30)
+        _wait(page, f"window.__realx.tracking.frames > {before + 10}", 60)
+        assert not errors, errors
     finally:
         browser.close()
 

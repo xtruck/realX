@@ -10,7 +10,7 @@
  * deviceId     a microphone id from enumerateDevices(), or omitted for the default one
  * onFeatures   ({ levelDb, freqDb, sampleRate, fftSize, t }) every intervalMs. `freqDb` is a reused buffer:
  *              valid during the call only
- * Returns { stop(), latencyMs, label }. Throws an Error with a plain message when the microphone cannot be used.
+ * Returns { stop(), tracks, latencyMs, label }. Throws an Error with a plain message when the microphone cannot be used.
  */
 export async function startMic({ deviceId, onFeatures, intervalMs = 20 } = {}) {
   const devices = globalThis.navigator && globalThis.navigator.mediaDevices;
@@ -73,6 +73,7 @@ export async function startMic({ deviceId, onFeatures, intervalMs = 20 } = {}) {
   const track = stream.getAudioTracks ? stream.getAudioTracks()[0] : null;
   return {
     stop,
+    tracks: track ? [track] : [],   // so a supervisor can notice the microphone being unplugged
     label: (track && track.label) || "",
     // how long a sound takes to show up in the numbers: the audio system's own delay plus the analysis window
     latencyMs: (ctx.baseLatency || 0) * 1000 + (analyser.fftSize / ctx.sampleRate) * 1000,
