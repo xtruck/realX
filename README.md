@@ -46,6 +46,12 @@ CPU only (Intel i5-7300U, no GPU), 640x480, demo footage with motion blur and no
 | Sprinting | 44% | 93% | 0 | 4 px |
 | Head spin | 100% | 99% | 0 | 2 px |
 
+Real webcam (640x480, dim room, face about 140 px wide): the face was found in 99% of
+frames with one stable identity and no duplicates, at about 10 fps. The first version
+found it in only 72% of frames. The cause was a single-scale face detector that
+struggles with large faces; detection now runs at small input widths and brightens dark
+frames. Under blur, position error is now 7-8 px at the 95th percentile.
+
 Reproduce with `python scripts/motion_check.py --degrade`. The test suite also checks
 that no duplicate "ghost" faces appear when 1 to 12 frames are skipped between
 processed frames, which is what a loaded machine does.

@@ -26,6 +26,16 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
     return float(inter / union) if union > 0 else 0.0
 
 
+def same_face(a: np.ndarray, b: np.ndarray) -> bool:
+    """True when two boxes plausibly cover one face: they overlap, or one sits mostly
+    inside the other (detectors at different scales disagree on how much of the head
+    a 'face' box covers)."""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return iou(a, b) > 0.3 or (smaller > 0 and ix * iy / smaller > 0.5)
+
+
 def _center(b: np.ndarray) -> np.ndarray:
     return np.array([(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0])
 
@@ -55,7 +65,7 @@ class FaceTracker:
         min_hits: int = 2,
         match_threshold: float = 0.15,
         gate: float = 4.0,
-        new_track_score: float = 0.6,
+        new_track_score: float = 0.5,
         low_score_penalty: float = 0.85,
         max_gate_scale: float = 6.0,
     ) -> None:
@@ -90,6 +100,12 @@ class FaceTracker:
         # the longer we have not seen the face, the further it may legitimately be
         gate = self.gate * min(max(1.0, elapsed), self.max_gate_scale)
         if dist > gate:
+            return 0.0
+        # A face does not double or halve in size between frames. Weak detections under
+        # blur are often much too large; refuse to merge them into a healthy track.
+        ratio = _size(det.bbox) / _size(pred)
+        limit = (1.35 if det.score < self.new_track_score else 1.8) + 0.05 * min(elapsed, 10.0)
+        if ratio > limit or ratio < 1.0 / limit:
             return 0.0
         proximity = max(0.0, 1.0 - dist / gate)
         # equal weight: a face that jumped a couple of box widths has no overlap but
@@ -139,8 +155,18 @@ class FaceTracker:
             used_d.add(di)
             tr, det = self._tracks[ti], detections[di]
             new_box = np.asarray(det.bbox, dtype=float)
+            if det.score < self.new_track_score:
+                # trust a weak detection's position but not its size: keep the track's
+                # established size and move it to the detected centre
+                old_w, old_h = tr.last_seen[2] - tr.last_seen[0], tr.last_seen[3] - tr.last_seen[1]
+                w = 0.7 * old_w + 0.3 * (new_box[2] - new_box[0])
+                h = 0.7 * old_h + 0.3 * (new_box[3] - new_box[1])
+                c = _center(new_box)
+                new_box = np.array([c[0] - w / 2, c[1] - h / 2, c[0] + w / 2, c[1] + h / 2])
             gap = dt + tr.lost  # frames since the last real sighting
-            observed = (new_box - tr.last_seen) / gap
+            # translation only: extrapolating size change collapses or inflates the box
+            shift = (_center(new_box) - _center(tr.last_seen)) / gap
+            observed = np.array([shift[0], shift[1], shift[0], shift[1]])
             tr.velocity = 0.5 * tr.velocity + 0.5 * observed if tr.lost == 0 else observed
             tr.bbox = new_box
             tr.last_seen = new_box.copy()
@@ -180,7 +206,7 @@ class FaceTracker:
             if di in used_d or det.score < self.new_track_score:
                 continue
             # a second box on a face we already follow is a duplicate, not a new person
-            if any(iou(np.asarray(det.bbox, dtype=float), box) > 0.5 for box in live):
+            if any(same_face(np.asarray(det.bbox, dtype=float), box) for box in live):
                 continue
             live.append(np.asarray(det.bbox, dtype=float))
             self._tracks.append(

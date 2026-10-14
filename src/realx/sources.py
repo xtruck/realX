@@ -15,12 +15,36 @@ class SourceError(RuntimeError):
     pass
 
 
+def _open_camera(cv2, index: int):
+    """Open a camera, trying the backends that work on this platform.
+
+    On Windows DirectShow is the most reliable for USB and built-in webcams; the
+    default (Media Foundation) often opens but never delivers frames.
+    """
+    import sys
+
+    backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY] if sys.platform == "win32" else [cv2.CAP_ANY]
+    for backend in backends:
+        cap = cv2.VideoCapture(index, backend)
+        if cap.isOpened():
+            ok = False
+            for _ in range(10):  # a camera that opens must also deliver a frame
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    break
+            if ok:
+                return cap
+        cap.release()
+    raise SourceError(
+        f"cannot open camera {index}. Close other apps using it and check "
+        "Windows Settings > Privacy > Camera allows desktop apps."
+    )
+
+
 def camera_frames(index: int = 0, size: tuple[int, int] = (640, 480)) -> Iterator[FrameContext]:
     import cv2
 
-    cap = cv2.VideoCapture(index)
-    if not cap.isOpened():
-        raise SourceError(f"cannot open camera {index}")
+    cap = _open_camera(cv2, index)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # latest frame wins

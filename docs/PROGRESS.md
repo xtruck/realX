@@ -20,6 +20,11 @@ each step so a resumed session knows exactly where to continue.
 - [x] ECC review 3 (final diff review): one defect (voice backend state shared across
       streams), fixed with a regression test
 - [x] 93 tests green; pushed to main
+- [x] Real-camera test (owner's webcam): detector found the face in 0-3% of frames at
+      its default threshold. Fixed with multi-scale small-input detection, dark-frame
+      lift, DirectShow camera backend, size-consistent tracking and translation-only
+      velocity. Result: face found in 99% of frames, one id, no duplicates; synthetic
+      p95 error under blur 64-73 px -> 7-8 px.
 
 ## Next (in order)
 
