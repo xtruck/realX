@@ -237,7 +237,10 @@ def test_a_good_answer_is_returned_as_eight_floats():
     json.dumps({"v": 1, "seq": 0, "rig": {**RIG, "note": "hi"}}).encode(),
     json.dumps({"v": 2, "seq": 0, "rig": RIG}).encode(),
     json.dumps({"v": 1, "seq": 0, "rig": RIG, "extra": 1}).encode(),
-    b"[" * 100000, b"x" * (remote.MAX_RESPONSE_BYTES + 1),
+    # short ids on purpose: pytest puts a test's id in the PYTEST_CURRENT_TEST environment variable, and Windows
+    # refuses an environment variable longer than 32,767 characters (the raw bytes would make the id 100,000 long)
+    pytest.param(b"[" * 100000, id="100000-nested-brackets"),
+    pytest.param(b"x" * (remote.MAX_RESPONSE_BYTES + 1), id="one-byte-over-the-response-limit"),
 ])
 def test_an_unacceptable_answer_is_rejected(raw):
     with pytest.raises(RemoteError):

@@ -85,6 +85,9 @@ each step so a resumed session knows exactly where to continue.
 
 ## Next (in order)
 
+**Continuing on another computer? Start with `HANDOFF.md`**: where the code is (branch `handoff-2026-10-14`), what is
+tested and what is not, the owner's decisions, and the commands to rerun everything.
+
 - [ ] Run `docs/REAL-WEBCAM-VALIDATION.md` on a real person and microphone; tune filter constants from the results
 - [ ] Re-measure the browser tracker on an idle machine (`scripts/bench_tracking.py`)
 - [ ] Tune the filter constants and hold/fade times with a real person on a real webcam (never done)

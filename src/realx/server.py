@@ -40,6 +40,7 @@ from realx.rig import EMOTES, MAX_BODY_BYTES, hello_message, parse_body_message,
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
 from realx.stages.background import MAX_IMAGE_BYTES, BackgroundError, decode_background
 from realx.stages import create
+from realx import hardware
 from realx import log as rlog
 
 log = rlog.get_logger("server")
@@ -530,6 +531,19 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
     # MediaPipe runtime files: exactly the ones bundled in the package, by name. Nothing else under /mp is served.
     wasm_root = resources.files("realx.web").joinpath("mp/wasm")
     wasm_files = {p.name: p for p in wasm_root.iterdir() if _WASM_NAME.fullmatch(p.name)} if wasm_root.is_dir() else {}
+    hw_lock = threading.Lock()
+    hw_cache: dict = {"t": 0.0, "doc": None}
+
+    def hardware_doc() -> dict:
+        """What this computer can do. Detection can take a couple of seconds, and free memory changes, so it is
+        refreshed every 30 s rather than on every request."""
+        with hw_lock:
+            if hw_cache["doc"] is None or time.monotonic() - hw_cache["t"] > 30.0:
+                profile = hardware.detect()
+                hw_cache["doc"] = hardware.to_dict(profile, hardware.recommend(profile))
+                hw_cache["t"] = time.monotonic()
+            return hw_cache["doc"]
+
     model_cache: dict[str, bytes] = {}  # verified model bytes, kept in memory
     # one lock per model: a slow download of one never makes a request for another wait, and no lock is
     # ever held while a different model downloads
@@ -729,6 +743,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                 self._rig_socket()
             elif path == "/api/stats":
                 self._json(engine.stats())
+            elif path == "/api/hardware":
+                self._json(hardware_doc())
             elif path == "/api/voices":
                 self._json({"presets": presets.describe(), "note": presets.NOTE})
             elif path == "/api/safety":

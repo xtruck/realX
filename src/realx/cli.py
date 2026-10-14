@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -132,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-json", action="store_true", help="write log lines as JSON, one per line")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("providers", help="show execution providers, fastest first")
+    hw = sub.add_parser("hardware", help="show what this computer can do and the quality setting that suits it")
+    hw.add_argument("--json", action="store_true", help="print the result as JSON")
     sub.add_parser("stages", help="list registered pipeline stages")
     sub.add_parser("selftest", help="run a minimal pipeline end to end")
 
@@ -182,6 +185,13 @@ def main(argv: list[str] | None = None) -> int:
         rlog.configure(level=args.log_level, json_lines=args.log_json)
     except ValueError as exc:  # an unknown level is a usage error, not a crash
         parser.error(str(exc))
+    if args.command == "hardware":
+        from realx import hardware
+
+        profile = hardware.detect()
+        advice = hardware.recommend(profile)
+        print(json.dumps(hardware.to_dict(profile, advice), indent=2) if args.json else hardware.describe(profile, advice))
+        return 0
     if args.command == "providers":
         print("\n".join(pick_providers()))
         return 0
