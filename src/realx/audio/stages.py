@@ -21,6 +21,7 @@ class VoiceGate:
     """Noise gate: silences background noise between words."""
 
     name = "voice_gate"
+    alters_media = True
 
     stateful = True  # keeps its gain between chunks
 
@@ -46,6 +47,7 @@ class VoiceGate:
 @register("voice_normalize")
 class VoiceNormalize:
     name = "voice_normalize"
+    alters_media = True
 
     def __init__(self, target_db: float = -3.0) -> None:
         self.target_db = target_db
@@ -64,6 +66,7 @@ class VoicePitch:
     """Pitch shift in real time. Changes your own voice; does not imitate anyone."""
 
     name = "voice_pitch"
+    alters_media = True
     stateful = True
 
     def __init__(self, semitones: float = 0.0, fft_size: int = 1024) -> None:
@@ -148,6 +151,7 @@ class VoiceConvert:
     """
 
     name = "voice_convert"
+    alters_media = True
     requires_consent = True
 
     def __init__(self, target: str, backend: str = "pitch_morph") -> None:

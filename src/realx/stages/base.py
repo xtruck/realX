@@ -14,6 +14,7 @@ class Stage(Protocol):
       requires_consent  stage synthesizes faces; needs a consent gate before it
       is_gate           stage is a consent gate
       is_watermark      stage embeds provenance; must follow synthesizing stages
+      alters_media      stage edits pixels or samples; must come before any watermark
       stateful          stage keeps per-stream state; forces workers=1
     """
 

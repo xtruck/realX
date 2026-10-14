@@ -195,6 +195,25 @@
         <p class="msg" id="cfgMsg" role="status"></p>
       </section>
 
+      <section aria-labelledby="bg">
+        <h2 id="bg">Background</h2>
+        <p class="hint">Cut yourself out and put a photo, or a blur, behind you. Your own picture only: nothing is generated and the photo stays on this computer.</p>
+        <fieldset>
+          <legend>Behind you</legend>
+          <div class="seg" id="bgSeg">
+            <label><input type="radio" name="background" value="off" checked><span>Unchanged</span></label>
+            <label><input type="radio" name="background" value="blur"><span>Blur</span></label>
+            <label><input type="radio" name="background" value="photo"><span>Photo</span></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Background photo (JPEG or PNG, up to 12 MB)</legend>
+          <input type="file" id="bgFile" accept="image/jpeg,image/png">
+        </fieldset>
+        <p class="msg" id="bgMsg" role="status"></p>
+        <p class="hint">Not used in Character mode, which draws only the character.</p>
+      </section>
+
       <section aria-labelledby="voice">
         <h2 id="voice">Voice</h2>
         <p class="hint">Change pitch on a recording. Every file carries a realX provenance mark.</p>

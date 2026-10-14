@@ -31,10 +31,17 @@ def validate_stages(stages: Sequence[Stage]) -> None:
     - every stage that synthesizes faces (`requires_consent`) needs a consent gate
       (`is_gate`) before it
     - a watermark stage (`is_watermark`) must come after the last such stage
+    - no stage that changes the media (`alters_media`) may come after a watermark,
+      because editing marked pixels or samples would damage the provenance mark
     """
     gate_seen = False
     last_synth = -1
+    mark_at = -1
     for i, stage in enumerate(stages):
+        if getattr(stage, "is_watermark", False) and mark_at < 0:
+            mark_at = i
+        elif mark_at >= 0 and getattr(stage, "alters_media", False):
+            raise PipelineConfigError(f"stage '{stage.name}' changes the media after the watermark; move it before")
         if getattr(stage, "is_gate", False):
             gate_seen = True
         if getattr(stage, "requires_consent", False):

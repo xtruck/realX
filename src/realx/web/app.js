@@ -85,6 +85,7 @@ function syncControls(c) {
   if (Date.now() - editing < 1500) return;
   document.querySelectorAll('input[name="mode"]').forEach((r) => { r.checked = r.value === c.mode; });
   if (c.mode !== mode) applyMode(c.mode);
+  document.querySelectorAll('input[name="background"]').forEach((r) => { r.checked = r.value === c.background; });
   $("source").value = c.source;
   $("smooth").value = Math.round(c.smoothing * 100);
   $("smoothOut").textContent = Math.round(c.smoothing * 100) + "%";
@@ -104,6 +105,32 @@ let t;
 $("smooth").addEventListener("input", (e) => {
   $("smoothOut").textContent = e.target.value + "%";
   clearTimeout(t); t = setTimeout(() => setConfig({ smoothing: e.target.value / 100 }), 200);
+});
+// --- background -------------------------------------------------------------------
+const bgMsg = (cls, text) => { $("bgMsg").className = "msg " + cls; $("bgMsg").textContent = text; };
+document.querySelectorAll('input[name="background"]').forEach((r) => r.addEventListener("change", async () => {
+  editing = Date.now();
+  try {
+    await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ background: r.value }) });
+    bgMsg("ok", "Updated");
+  } catch (e) {
+    bgMsg("err", e.message);
+    poll();  // put the selector back to what the server really has
+  }
+}));
+$("bgFile").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  bgMsg("", "Uploading…");
+  editing = Date.now();
+  try {
+    await api("/api/background", { method: "POST", headers: { "Content-Type": f.type }, body: f });
+    await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ background: "photo" }) });
+    bgMsg("ok", "Photo in place.");
+  } catch (err) {
+    bgMsg("err", err.message);
+  }
+  e.target.value = "";
 });
 $("guideToggle").addEventListener("change", (e) => $("guides").classList.toggle("on", e.target.checked));
 

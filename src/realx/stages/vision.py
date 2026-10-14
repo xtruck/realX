@@ -217,6 +217,7 @@ class DebugBoxes:
     """Draws what the tracker sees: boxes, landmarks and ids. Amber means coasting."""
 
     name = "debug_boxes"
+    alters_media = True
 
     def setup(self) -> None: ...
 
@@ -254,6 +255,7 @@ class AvatarOverlay:
     """
 
     name = "avatar"
+    alters_media = True
 
     def setup(self) -> None: ...
 

@@ -24,9 +24,11 @@ from realx import ws
 from realx.pipeline import Pipeline
 from realx.rig import hello_message, rig_message
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
+from realx.stages.background import MAX_IMAGE_BYTES, BackgroundError, decode_background
 from realx.stages import create
 
 MODES = ("avatar", "character", "boxes", "original")
+BACKGROUNDS = ("off", "blur", "photo")
 MAX_JSON = 4096
 MAX_AVATAR_BYTES = 32 * 1024 * 1024
 MAX_CONNECTIONS = 16
@@ -78,7 +80,8 @@ class Engine:
         self._rig = json.dumps(rig_message(0, 0.0, (0, 0), []))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._config = {"source": source, "mode": mode, "smoothing": smoothing}
+        self._config = {"source": source, "mode": mode, "smoothing": smoothing, "background": "off"}
+        self._bg_photo: np.ndarray | None = None  # kept in memory only, never written to disk
         self._config_version = 0
         self._open_source: str | None = None
         self._ribbon: deque[int] = deque(maxlen=120)  # 0 lost, 1 detected, 2 predicted
@@ -108,7 +111,7 @@ class Engine:
             return dict(self._config)
 
     def update(self, changes: dict) -> dict:
-        allowed = {"source", "mode", "smoothing"}
+        allowed = {"source", "mode", "smoothing", "background"}
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError(f"unknown settings: {sorted(unknown)}")
@@ -122,6 +125,12 @@ class Engine:
             if isinstance(s, bool) or not isinstance(s, (int, float)) or not 0 <= s <= 1:
                 raise ValueError("smoothing must be a number between 0 and 1")
             staged["smoothing"] = float(s)
+        if "background" in changes:
+            if changes["background"] not in BACKGROUNDS:
+                raise ValueError(f"background must be one of {BACKGROUNDS}")
+            if changes["background"] == "photo" and self._bg_photo is None:
+                raise ValueError("choose a background photo first")
+            staged["background"] = changes["background"]
         if "source" in changes:
             src = changes["source"]
             ok = src == "camera" or (isinstance(src, str) and src.startswith("demo:") and src[5:] in MOTIONS)
@@ -132,6 +141,12 @@ class Engine:
             self._config = {**self._config, **staged}
             self._config_version += 1
             return dict(self._config)
+
+    def set_background(self, photo: np.ndarray) -> None:
+        """Use this RGB photo behind the person. Rebuilds the pipeline to pick it up."""
+        with self._lock:
+            self._bg_photo = photo
+            self._config_version += 1
 
     def stats(self) -> dict:
         with self._lock:
@@ -160,12 +175,20 @@ class Engine:
             return dict(self._config), self._config_version
 
     def _build(self, cfg: dict) -> Pipeline:
-        stages = [create("detect_yunet", score_threshold=0.3)]
-        stages += [create("track"), create("one_euro", min_cutoff=_smoothing_to_cutoff(cfg["smoothing"]), beta=0.5)]
-        stages.append(create("rig"))  # the character renderer in the browser reads this
-        if cfg["mode"] == "avatar":
+        mode, background = cfg["mode"], cfg["background"]
+        stages = []
+        if mode != "original":  # the plain camera picture needs no tracking
+            stages += [create("detect_yunet", score_threshold=0.3), create("track")]
+            stages.append(create("one_euro", min_cutoff=_smoothing_to_cutoff(cfg["smoothing"]), beta=0.5))
+            stages.append(create("rig"))  # the character renderer in the browser reads this
+        if background != "off" and mode != "character":
+            with self._lock:
+                photo = self._bg_photo
+            # cut the person out before anything is drawn on top of the picture
+            stages.append(create("bg_replace", mode=background, image=photo))
+        if mode == "avatar":
             stages.append(create("avatar"))
-        elif cfg["mode"] == "boxes":
+        elif mode == "boxes":
             stages.append(create("debug_boxes"))
         return Pipeline(stages)
 
@@ -229,11 +252,7 @@ class Engine:
                         ctx = next(frames)
 
                     t0 = time.perf_counter()
-                    if cfg["mode"] == "original":
-                        out = ctx
-                        out.faces = []
-                    else:
-                        out = pipe.process(ctx)
+                    out = pipe.process(ctx)
                     latency = (time.perf_counter() - t0) * 1000
                     buf = None
                     if cfg["mode"] != "character":  # the browser draws the character itself
@@ -498,6 +517,12 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                     if not isinstance(changes, dict):
                         raise ValueError("expected a JSON object")
                     self._json(engine.update(changes))
+                elif parsed.path == "/api/background":
+                    kind = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+                    if kind not in ("image/jpeg", "image/png"):
+                        raise ValueError("Content-Type must be image/jpeg or image/png")
+                    engine.set_background(decode_background(self._body(MAX_IMAGE_BYTES)))
+                    self._json({"ok": True})
                 elif parsed.path == "/api/voice":
                     q = parse_qs(parsed.query)
                     semitones = float(q.get("semitones", ["0"])[0])
@@ -515,7 +540,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                     self.wfile.write(out)
                 else:
                     self._deny(404, "not found")
-            except (ValueError, json.JSONDecodeError, RecursionError) as exc:
+            except (ValueError, BackgroundError, json.JSONDecodeError, RecursionError) as exc:
                 self._deny(400, str(exc)[:200])
             except OSError:
                 return
