@@ -140,3 +140,31 @@ def test_a_token_less_post_with_a_body_gets_a_clean_reply(srv):
                   headers={"Host": f"127.0.0.1:{srv.port}", "Content-Type": "image/png"})
         assert c.getresponse().status == 401
         c.close()
+
+
+def test_an_unauthorised_camera_switch_is_refused_and_changes_nothing_and_bad_sources_are_still_refused(srv):
+    before = srv.engine.config()["source"]
+    body = b'{"source":"camera"}'
+    h = {"Content-Type": "application/json"}
+    assert req(srv, "POST", "/api/config", h, body)[0] == 401
+    assert req(srv, "POST", "/api/config", {**h, "Authorization": "Bearer wrong"}, body)[0] == 401
+    assert req(srv, "POST", "/api/config", {**h, "Cookie": "realx_token=wrong"}, body)[0] == 401
+    assert srv.engine.config()["source"] == before, "nothing changed"
+    ok = {**h, "Authorization": f"Bearer {TOKEN}"}
+    for bad in (b'{"source":"rtsp://evil.example/x"}', b'{"source":"/etc/passwd"}', b'{"source":"demo:../x"}', b'{"source":0}'):
+        assert req(srv, "POST", "/api/config", ok, bad)[0] == 400, bad
+    assert srv.engine.config()["source"] == before
+
+
+def test_an_unauthorised_camera_switch_is_refused_and_changes_nothing_and_bad_sources_are_still_refused(srv):
+    before = srv.engine.config()["source"]
+    body = b'{"source":"camera"}'
+    h = {"Content-Type": "application/json"}
+    assert req(srv, "POST", "/api/config", h, body)[0] == 401
+    assert req(srv, "POST", "/api/config", {**h, "Authorization": "Bearer wrong"}, body)[0] == 401
+    assert req(srv, "POST", "/api/config", {**h, "Cookie": "realx_token=wrong"}, body)[0] == 401
+    assert srv.engine.config()["source"] == before, "nothing changed"
+    ok = {**h, "Authorization": f"Bearer {TOKEN}"}
+    for bad in (b'{"source":"rtsp://evil.example/x"}', b'{"source":"/etc/passwd"}', b'{"source":"demo:../x"}', b'{"source":0}'):
+        assert req(srv, "POST", "/api/config", ok, bad)[0] == 400, bad
+    assert srv.engine.config()["source"] == before

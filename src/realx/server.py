@@ -30,10 +30,12 @@ from urllib.parse import parse_qs, urlencode, urlparse
 import numpy as np
 
 from realx import __version__
+from realx.diag import Diagnostics
 from realx.audio import offline, presets
 from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model
 from realx import ws
 from realx.pipeline import Pipeline
+from realx.studio import StudioController
 from realx.rig import EMOTES, MAX_BODY_BYTES, hello_message, parse_body_message, rig_message
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
 from realx.stages.background import MAX_IMAGE_BYTES, BackgroundError, decode_background
@@ -152,6 +154,9 @@ class Engine:
         self._config_version = 0
         self._open_source: str | None = None
         self._ribbon: deque[int] = deque(maxlen=120)  # 0 lost, 1 detected, 2 predicted
+        self._diag = Diagnostics()
+        self._pipe: StudioController | None = None  # read only for per-stage timings and the studio state in stats()
+        self._frames_src = None  # the open video source, read only for its capture figures
         self._stats = {"fps": 0.0, "latency_ms": 0.0, "faces": 0, "dropped": 0, "frames": 0, "error": None}
 
     # -- public -------------------------------------------------------------------
@@ -229,6 +234,18 @@ class Engine:
             out["config"] = dict(self._config)
             out["version"] = __version__
             out["body"] = {"publishing": self._publishing, "viewers": self._viewers}
+            pipe, src = self._pipe, self._frames_src
+        stage_ms = {name: t.mean_ms for name, t in list(pipe.timings.items())} if pipe is not None else {}
+        capture = None
+        grab = getattr(src, "capture_stats", None)
+        if callable(grab):
+            try:
+                capture = grab()
+            except Exception:  # diagnostics must never break a stats request
+                capture = None
+        out["diag"] = self._diag.snapshot(stage_ms, capture)
+        status = getattr(pipe, "status", None)  # a plain Pipeline (tests, custom builds) has no studio state
+        out["studio"] = status().as_dict() if callable(status) else None
         return out
 
     # -- full-body relay -------------------------------------------------------------
@@ -314,7 +331,7 @@ class Engine:
         with self._lock:  # config and its version must be read together
             return dict(self._config), self._config_version
 
-    def _build(self, cfg: dict) -> Pipeline:
+    def _build(self, cfg: dict) -> StudioController:
         mode, background = cfg["mode"], cfg["background"]
         stages = []
         if mode != "original":  # the plain camera picture needs no tracking
@@ -330,7 +347,9 @@ class Engine:
             stages.append(create("avatar"))
         elif mode == "boxes":
             stages.append(create("debug_boxes"))
-        return Pipeline(stages, strict=True)  # only realX's own registered stages ever run in the studio
+        # AVATAR is the only state here: portrait mode needs REALX_ENABLE_PORTRAIT=1 and a consented image, and nothing
+        # in the control room offers it yet. Strict pipelines mean only realX's own registered stages ever run.
+        return StudioController(stages)
 
     def _open(self, source: str):
         if source == "camera":
@@ -372,6 +391,7 @@ class Engine:
                         if frames is not None:
                             self._close_source(frames)
                             frames, self._open_source = None, None
+                        self._frames_src = self._pipe = None
                         version = current
                         self._set_error(None)
                         self._heartbeat()
@@ -384,9 +404,11 @@ class Engine:
                             pipe = None
                         pipe = self._build(cfg)
                         pipe.setup()
+                        self._pipe = pipe
                         if frames is None or cfg["source"] != self._open_source:
                             self._close_source(frames)
                             frames = self._open(cfg["source"])
+                            self._frames_src = frames
                             self._open_source = cfg["source"]
                             started, last_index = time.perf_counter(), -1
                         version = current
@@ -406,6 +428,7 @@ class Engine:
                         ctx = next(frames)
 
                     t0 = time.perf_counter()
+                    captured = ctx.meta.get("captured_at")  # set by a camera: when the frame arrived
                     out = pipe.process(ctx)
                     latency = (time.perf_counter() - t0) * 1000
                     buf = None
@@ -422,6 +445,12 @@ class Engine:
                     inst_fps = 1.0 / max(now - last, 1e-6)
                     last = now
                     backoff = 0.5
+                    self._diag.source_back()
+                    self._diag.frame(
+                        None if captured is None else (t0 - captured) * 1000,
+                        None if captured is None else (now - captured) * 1000,
+                        latency,
+                    )
                     with self._cond:
                         s = self._stats
                         s["fps"] = round(0.9 * s["fps"] + 0.1 * inst_fps if s["frames"] else inst_fps, 1)
@@ -444,6 +473,7 @@ class Engine:
                     # camera unplugged or busy: say so, drop the dead generator, retry
                     reason = str(exc) or "The video source stopped."
                     self._set_error(reason)
+                    self._diag.source_lost()
                     if self._dedup.first(("source", reason)):
                         log.warning("video source problem, retrying with backoff: %s", rlog.clip(reason))
                     self._close_source(frames)

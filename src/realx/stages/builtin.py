@@ -194,6 +194,12 @@ class Disclosure:
     is_disclosure = True
     alters_media = True
     PREFIX = "DIGITAL HOST"
+    BAR_RGB = (14, 20, 27)
+
+    @staticmethod
+    def bar_height(frame_height: int) -> int:
+        """Rows the label bar covers: 6% of the frame, never fewer than 24."""
+        return max(24, int(round(0.06 * frame_height)))
 
     def __init__(self, display_name: str) -> None:
         clean = "".join(ch for ch in str(display_name) if ch.isprintable()).strip()[:40]
@@ -207,9 +213,9 @@ class Disclosure:
         import cv2
 
         h, w = ctx.pixels.shape[:2]
-        bar = max(24, int(round(0.06 * h)))
+        bar = self.bar_height(h)
         canvas = ctx.pixels.copy()
-        canvas[h - bar :] = (14, 20, 27)
+        canvas[h - bar :] = self.BAR_RGB
         font = cv2.FONT_HERSHEY_SIMPLEX
         scale = 1.0
         (tw, th), _ = cv2.getTextSize(self.text, font, scale, 2)

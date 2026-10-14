@@ -91,3 +91,29 @@ Nothing. `ensure_model("liveportrait")`, `ensure_model("liveportrait_animals")` 
 
 Limit: the attestation at issue time is the user's own statement. realX cannot check that a portrait is theirs or that
 the person agreed, which is why output is always labelled and watermarked, and why consent can be revoked and expires.
+
+## Second review (2026-10-14): other candidates, from primary sources, nothing downloaded
+
+Method: the repositories' own README and LICENSE files were read over HTTPS; no weights, checkpoints or code were
+downloaded or run. "Not stated" means the file I read does not say, which is different from "allowed".
+
+| Candidate (repository) | Code license | Weights / checkpoints | Training data | CPU-only? | Verdict |
+|---|---|---|---|---|---|
+| First Order Motion Model (`AliaksandrSiarohin/first-order-model`) | **Not stated**: the README has no license line and `LICENSE` returns 404 on `master` | Google Drive / Yandex links, **no license or terms stated** | VoxCeleb, Taichi, Nemo, Fashion, Bair, Mgif, with no terms stated | not documented | **unverified, blocked**: with no code license, none of it can be used |
+| Thin-Plate Spline Motion Model (`yoyo-nb/Thin-Plate-Spline-Motion-Model`) | MIT ("Copyright (c) 2021 yoyo-nb") | Yandex / Google Drive / Baidu links, **no license or terms stated** | VoxCeleb, TaiChiHD, TED-talks, MGif; the VoxCeleb site states no usage terms and says the clips are YouTube videos | not documented (Python 3.9 recommended; PyTorch version not stated) | **unverified**: usable code, but nothing says the weights may be used commercially |
+| FasterLivePortrait (`warmshao/FasterLivePortrait`) | MIT | "Any machine learning models used in this project are subject to their respective licenses"; the authors "do not take responsibility for model license compliance" | inherits LivePortrait's (unverified, see above) | ONNX Runtime CPU works but the README says it is "extremely slow and not recommended" | **blocked** by the LivePortrait weights verdict. Its MediaPipe option removes InsightFace only |
+| LivePortrait (`KwaiVGI/LivePortrait`) | MIT + the InsightFace restriction | see the first review | see the first review | no CPU figure published | **blocked** (first review) |
+
+Measured performance: the only figure any README gives is FasterLivePortrait's "30+ FPS" on an **RTX 3090 with TensorRT**
+including pre- and post-processing. Nothing was measured on, or reported for, an Intel UHD 620 or any CPU-only machine,
+and none of these engines was run here. RAM and VRAM requirements: not stated in the files read. Supported ONNX
+Runtime and Python versions: only "Python 3.9 recommended" (TPSMM) and "TensorRT 8.x, not 10.x" (FasterLivePortrait).
+Automatic downloads: none of these is needed for realX, whose engine registry never downloads (`ensure_model(download=False)`).
+
+**Outcome.** No verified candidate exists. The adapter interface (`PortraitEngine`, `register_engine`) and the studio controller
+are ready: an engine needs a pinned manifest entry listed for portrait animation, and the controller falls back to the
+avatar for any failure. **Open questions for a lawyer, not answerable from these files:** (1) does a non-commercial or
+unstated training-data licence carry over to a trained network's weights; (2) do VoxCeleb-style clips taken from YouTube
+carry rights that matter; (3) does MIT on code plus "subject to their respective licenses" on models leave the weights
+unlicensed. Until those are answered, nothing here is cleared for commercial use, and a CPU-only UHD 620 target has
+no demonstrated engine at all.

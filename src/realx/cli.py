@@ -163,6 +163,13 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--seed", type=int, default=0)
     b.add_argument("--json", default=None, metavar="PATH", help="also write the full result as JSON")
 
+    bc = sub.add_parser("bench-camera", help="measure camera capture FPS and frame age (needs a camera, or --synthetic)")
+    bc.add_argument("--seconds", type=float, default=10.0)
+    bc.add_argument("--index", type=int, default=0, help="camera index")
+    bc.add_argument("--consumer-ms", type=float, default=0.0, help="simulate a consumer that takes this long per frame")
+    bc.add_argument("--synthetic", action="store_true", help="no hardware: a paced fake source, checks the harness only")
+    bc.add_argument("--json", default=None, metavar="PATH")
+
     s = sub.add_parser("serve", help="open the control room in your browser")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--source", default="demo:dance", help="camera or demo:<dance|jump|sprint|spin|static>")
@@ -193,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
         from realx.bench import run_cli
 
         return run_cli(args)
+    if args.command == "bench-camera":
+        from realx.bench_camera import run_cli as bench_camera
+
+        return bench_camera(args)
     if args.command == "serve":
         if args.offline:
             os.environ["REALX_OFFLINE"] = "1"

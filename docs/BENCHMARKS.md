@@ -185,3 +185,47 @@ model through ONNX Runtime on the CPU provider.
 * Only one resolution was run for the browser tracker, with a fake camera and no hands.
 * No microphone or audio/video-sync measurement here (see the audio work).
 * A real-webcam procedure is a separate document; these benchmarks use synthetic or fake input on purpose, so they can be repeated.
+
+## 3. Camera capture and live diagnostics
+
+The control room reads the camera on its own thread (`LatestFrameGrabber`): the newest frame wins, an unread
+frame is overwritten rather than queued, and every frame is stamped with when it arrived. A slow stage therefore
+makes the studio **skip** frames, never show old ones. `GET /api/stats` (with the access token) carries a `diag`
+block that is cheap to produce and never read inside the frame loop:
+
+| Field | Meaning |
+|---|---|
+| `diag.camera.capture_fps` | frames per second the capture thread receives (sliding mean over 60 intervals) |
+| `diag.camera.captured` / `skipped` | frames received / frames overwritten before anyone used them |
+| `diag.frame_age_ms` | p50, p95, max: time from a frame's arrival to the start of processing |
+| `diag.end_to_end_ms` | the same, to the moment the frame is published (arrival to output; excludes the browser) |
+| `diag.process_ms` | time inside the pipeline |
+| `diag.stage_mean_ms` | mean time per stage since the pipeline was built |
+| `diag.cpu_percent` | this process's CPU time over wall time (100 = one core fully busy), sampled every 2 s |
+| `diag.rss_mb` | this process's resident memory |
+| `diag.source_outages`, `last_outage_s` | camera losses that recovered, and the length of the last one |
+
+Each ring holds the last 120 frames, so nothing grows. The synthetic demo sources have no camera, so they leave
+the camera and age fields empty.
+
+```powershell
+realx bench-camera --seconds 20 --json camera.json                  # your camera, nothing else running
+realx bench-camera --seconds 20 --consumer-ms 80 --json slow.json   # a consumer slower than the camera
+realx bench-camera --synthetic --seconds 5                          # no camera: checks the harness only
+```
+
+`bench-camera` measures the capture path only. It adds the conditions (how busy the CPU was before the run)
+and the hardware, and refuses nothing silently: a camera that cannot be opened is an error, not a number.
+
+### What has been measured, and what has not
+
+* **Cloud container, synthetic source (harness check, not a camera):** at a 30 fps pace the harness reported
+  30.0 fps capture. With a consumer that takes 100 ms per frame it delivered about 10 fps, skipped about 70% of the
+  captured frames, and the frames it took were ~5 ms old at p50 (7.6 ms p95). That shows the *mechanism*
+  (skip, don't delay). It says nothing about a webcam, a driver or Windows.
+* **Not measured:** capture FPS, frame age, CPU or memory on the target laptop (Intel UHD 620, ~8 GB RAM) or with
+  any real camera; DirectShow behaviour; recovery after unplugging a real camera (the recovery logic is tested
+  with fakes in `tests/test_camera_grabber.py` and `tests/test_resilience.py`). Run the commands above on that
+  machine and record the output in this file next to the machine description before quoting any number.
+* **No target numbers are set here.** Targets should be written down only after real runs on the target hardware,
+  with the `conditions.warning` field empty.

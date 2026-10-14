@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+import threading
 import time
+from collections import deque
 from collections.abc import Iterator
 
 import numpy as np
@@ -41,25 +43,152 @@ def _open_camera(cv2, index: int):
     )
 
 
-def camera_frames(index: int = 0, size: tuple[int, int] = (640, 480)) -> Iterator[FrameContext]:
+CAMERA_STALE_SECONDS = 3.0  # no new frame for this long: the camera is treated as gone
+CAMERA_CLOSE_WAIT = 2.0     # how long close() waits for the capture thread; it never waits forever
+
+
+class LatestFrameGrabber:
+    """Reads a capture device on its own thread so the newest frame is always available.
+
+    A camera driver queues frames while the consumer is busy (DirectShow on Windows keeps several), so reading
+    from the same thread that runs tracking makes every frame older than the last. Here one thread only reads,
+    keeps a single slot (newest wins, the older frame is overwritten, never queued) and stamps each frame with the
+    time it arrived. The consumer takes the newest unseen frame, so a slow stage skips frames instead of delaying
+    them, and it can compute each frame's age. The thread owns the device: it alone releases it, so `close()` can
+    return even if the driver is stuck in `read()`.
+
+    `capture` is anything with `read() -> (ok, frame)` and `release()` (an OpenCV `VideoCapture`, or a fake).
+    """
+
+    def __init__(self, capture, stale_after: float = CAMERA_STALE_SECONDS, clock=time.perf_counter) -> None:
+        self._cap = capture
+        self._stale_after = stale_after
+        self._clock = clock
+        self._cond = threading.Condition()
+        self._slot: tuple[np.ndarray, float, int] | None = None  # frame, arrival time, sequence number
+        self._seq = -1
+        self._taken = -1  # sequence number last handed to the consumer
+        self._skipped = 0  # captured but overwritten before anyone took them
+        self._intervals: deque[float] = deque(maxlen=60)
+        self._last_arrival: float | None = None
+        self._error: SourceError | None = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="realx-camera", daemon=True)
+
+    def start(self) -> "LatestFrameGrabber":
+        self._thread.start()
+        return self
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.is_set():
+                try:
+                    ok, frame = self._cap.read()
+                except Exception as exc:  # a driver error ends capture; the consumer sees it as SourceError
+                    self._fail(f"camera read failed: {type(exc).__name__}")
+                    return
+                if not ok or frame is None:
+                    self._fail("camera stopped delivering frames")
+                    return
+                now = self._clock()
+                with self._cond:
+                    if self._slot is not None and self._slot[2] > self._taken:
+                        self._skipped += 1  # the previous frame was never taken
+                    self._seq += 1
+                    self._slot = (frame, now, self._seq)
+                    if self._last_arrival is not None:
+                        self._intervals.append(now - self._last_arrival)
+                    self._last_arrival = now
+                    self._cond.notify_all()
+        finally:
+            try:
+                self._cap.release()
+            except Exception:
+                pass
+
+    def _fail(self, message: str) -> None:
+        with self._cond:
+            self._error = SourceError(message)
+            self._cond.notify_all()
+
+    def next(self, timeout: float | None = None) -> tuple[np.ndarray, float, int]:
+        """The newest frame not yet taken, with its arrival time and sequence number.
+
+        Raises SourceError when the camera stopped, or when no new frame arrives within `timeout`
+        (default: the stale limit). Never blocks longer than that.
+        """
+        limit = self._stale_after if timeout is None else timeout
+        deadline = self._clock() + limit
+        with self._cond:
+            while True:
+                if self._slot is not None and self._slot[2] > self._taken:
+                    frame, arrived, seq = self._slot
+                    self._taken = seq
+                    return frame, arrived, seq
+                if self._error is not None:
+                    raise self._error
+                remaining = deadline - self._clock()
+                if remaining <= 0:
+                    raise SourceError("camera stopped delivering frames")
+                self._cond.wait(min(remaining, 0.25))
+
+    def stats(self) -> dict:
+        with self._cond:
+            mean = sum(self._intervals) / len(self._intervals) if self._intervals else 0.0
+            return {
+                "capture_fps": round(1.0 / mean, 1) if mean > 0 else 0.0,
+                "captured": self._seq + 1,
+                "skipped": self._skipped,
+                "alive": self._thread.is_alive() and self._error is None,
+            }
+
+    def close(self) -> None:
+        self._stop.set()
+        with self._cond:
+            self._cond.notify_all()
+        if self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(CAMERA_CLOSE_WAIT)  # a stuck driver call is left to finish on its own; it releases the device
+
+
+class CameraSource:
+    """Iterator of `FrameContext`s from a camera, always the newest frame, each stamped with when it arrived.
+
+    `meta["captured_at"]` is the arrival time (perf_counter), so a consumer can compute the frame's age.
+    """
+
+    def __init__(self, grabber: LatestFrameGrabber) -> None:
+        import cv2
+
+        self._cv2 = cv2
+        self._grabber = grabber
+        self._index = 0
+
+    def __iter__(self) -> "CameraSource":
+        return self
+
+    def __next__(self) -> FrameContext:
+        bgr, arrived, seq = self._grabber.next()
+        i, self._index = self._index, self._index + 1
+        return FrameContext(
+            pixels=self._cv2.cvtColor(bgr, self._cv2.COLOR_BGR2RGB), index=i, timestamp=arrived,
+            meta={"captured_at": arrived, "capture_seq": seq},
+        )
+
+    def capture_stats(self) -> dict:
+        return self._grabber.stats()
+
+    def close(self) -> None:
+        self._grabber.close()
+
+
+def camera_frames(index: int = 0, size: tuple[int, int] = (640, 480)) -> CameraSource:
     import cv2
 
     cap = _open_camera(cv2, index)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # latest frame wins
-    i = 0
-    try:
-        while True:
-            ok, bgr = cap.read()
-            if not ok:
-                raise SourceError("camera stopped delivering frames")
-            yield FrameContext(
-                pixels=cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), index=i, timestamp=time.perf_counter()
-            )
-            i += 1
-    finally:
-        cap.release()
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # ask the driver not to queue; the grabber does not rely on it
+    return CameraSource(LatestFrameGrabber(cap).start())
 
 
 def video_frames(path: str) -> Iterator[FrameContext]:
