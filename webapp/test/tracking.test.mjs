@@ -280,24 +280,58 @@ test("root: the first frames set the neutral spot, then moves come out as pictur
 });
 
 // --- sharing the CPU between three models -----------------------------------------------------------
-test("scheduler: face every frame when there is time, the others take turns, nothing starves", () => {
-  const s = new Stagger({ budgetMs: 30 });
-  const ran = { face: 0, pose: 0, hands: 0 };
-  for (let i = 0; i < 12; i++) { const p = s.plan(i); for (const k of Object.keys(ran)) ran[k] += p[k] ? 1 : 0; s.report(10); }
-  assert.equal(ran.face, 12);
-  assert.ok(ran.pose >= 5 && ran.hands >= 5 && ran.pose + ran.hands <= 14, JSON.stringify(ran));
+// A camera at ~30 fps and models that cost `cost` ms each. Returns how often each model ran per second.
+function simulate(stagger, cost, { seconds = 20, camMs = 33.3 } = {}) {
+  const runs = { face: 0, pose: 0, hands: 0 }, gaps = { face: [], pose: [], hands: [] }, last = {};
+  let now = 0;
+  while (now < seconds * 1000) {
+    const plan = stagger.plan(now);
+    const used = {};
+    let work = 0;
+    for (const k of Object.keys(runs)) if (plan[k]) {
+      runs[k]++; used[k] = cost[k]; work += cost[k];
+      if (last[k] !== undefined) gaps[k].push(now - last[k]);
+      last[k] = now;
+    }
+    stagger.report(used);
+    now += Math.max(camMs, work);      // the next frame comes when the camera has one and the work is done
+  }
+  const hz = Object.fromEntries(Object.keys(runs).map((k) => [k, runs[k] / seconds]));
+  return { hz, maxGap: Object.fromEntries(Object.keys(gaps).map((k) => [k, Math.max(...gaps[k])])) };
+}
+
+test("scheduler: cheap models all run on every frame", () => {
+  const { hz } = simulate(new Stagger({ budgetMs: 40 }), { face: 5, pose: 5, hands: 5 });
+  for (const k of ["face", "pose", "hands"]) assert.ok(hz[k] > 28, `${k} ${hz[k]}`);
 });
 
-test("scheduler: under load it does less per frame, and it recovers when the load goes", () => {
-  const s = new Stagger({ budgetMs: 30 });
-  const perFrame = () => { let n = 0; for (let i = 0; i < 24; i++) { const p = s.plan(i); n += (p.face ? 1 : 0) + (p.pose ? 1 : 0) + (p.hands ? 1 : 0); } return n / 24; };
-  const relaxed = perFrame();
-  for (let i = 0; i < 80; i++) s.report(80);
-  const loaded = perFrame();
-  assert.ok(loaded < relaxed, `${loaded} vs ${relaxed}`);
-  const seen = { face: 0, pose: 0, hands: 0 };
-  for (let i = 0; i < 12; i++) { const p = s.plan(i); for (const k of Object.keys(seen)) seen[k] += p[k] ? 1 : 0; }
-  assert.ok(seen.face > 0 && seen.pose > 0 && seen.hands > 0, "under load every model still runs");
-  for (let i = 0; i < 400; i++) s.report(5);
-  assert.ok(perFrame() >= relaxed - 1e-9, "back to full rate");
+test("scheduler: models that cost about a frame each take turns, pose most often, and nothing starves", () => {
+  const { hz, maxGap } = simulate(new Stagger({ budgetMs: 40 }), { face: 30, pose: 30, hands: 30 });
+  assert.ok(hz.pose > hz.face && hz.pose >= hz.hands, JSON.stringify(hz));
+  assert.ok(hz.pose >= 10, `arms update at least 10 times a second, got ${hz.pose}`);
+  assert.ok(hz.face >= 7 && hz.hands >= 7, JSON.stringify(hz));
+  for (const k of ["face", "pose", "hands"]) assert.ok(maxGap[k] < 400, `${k} waited ${maxGap[k]} ms`);
+});
+
+test("scheduler: a model that has never run goes first, and costs are learned as they change", () => {
+  const s = new Stagger({ budgetMs: 40 });
+  const first = s.plan(0);
+  assert.ok(first.face || first.pose || first.hands, "something runs on the first frame");
+  const slow = simulate(new Stagger({ budgetMs: 40 }), { face: 90, pose: 90, hands: 90 });
+  for (const k of ["face", "pose", "hands"]) assert.ok(slow.hz[k] > 1, `${k} still runs on a very slow machine`);
+  const mixed = new Stagger({ budgetMs: 40 });
+  simulate(mixed, { face: 30, pose: 30, hands: 30 }, { seconds: 5 });
+  const after = simulate(mixed, { face: 4, pose: 4, hands: 4 }, { seconds: 10 });
+  assert.ok(after.hz.face > 25 && after.hz.pose > 25 && after.hz.hands > 25, `recovers when the models get cheap: ${JSON.stringify(after.hz)}`);
+});
+
+test("a hand that the hand model confirms is used even when the pose model doubts the wrist", () => {
+  const pose = tPose(); pose.world[15].visibility = 0.3;           // doubtful, not hidden
+  const withHand = solve({ pose, hands: { left: hand() } });
+  assert.ok(withHand.solved.has("leftLowerArm") && withHand.solved.has("leftHand") && withHand.solved.has("leftIndexProximal"));
+  assert.ok(withHand.live.leftHand);
+  const alone = solve({ pose });
+  assert.ok(!alone.solved.has("leftLowerArm"), "with no hand to confirm it, a doubtful wrist is still not trusted");
+  const hidden = tPose(); hidden.world[15].visibility = 0.05;
+  assert.ok(!solve({ pose: hidden, hands: { left: hand() } }).solved.has("leftHand"), "a wrist that is really hidden stays ignored");
 });

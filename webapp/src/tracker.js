@@ -53,6 +53,7 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
       })),
       make("hands", (d) => HandLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: model("hand_landmarker.task"), delegate: d }, runningMode: "VIDEO", numHands: 2,
+        minHandDetectionConfidence: 0.4, minHandPresenceConfidence: 0.4,   // a little below the 0.5 default: small or tilted hands
       })),
     ]);
     const failure = loaded.find((r) => r.status === "rejected");
@@ -65,10 +66,11 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
 
   const filter = new BodyFilter({ legs });
   const root = new RootTracker({ mirror });
-  const stagger = new Stagger({ budgetMs: 40 }); // measured: ~28 ms per model on an integrated GPU, so one or two per frame
+  const stagger = new Stagger({ budgetMs: 40 }); // measured: ~28 ms per model on an integrated GPU, so about one per frame
   const latest = { face: null, pose: null, hands: null }; // { t, result } of the newest run of each model
-  const stats = { fps: 0, interval: 33, ms: { face: 0, pose: 0, hands: 0 }, level: 0, frames: 0, delegates: used };
-  let frame = 0, lastTs = 0, lastVideoTime = -1, lastFrameAt = 0, failures = 0;
+  const ran = { face: 0, pose: 0, hands: 0 };
+  const stats = { fps: 0, interval: 33, ms: { face: 0, pose: 0, hands: 0 }, hz: { face: 0, pose: 0, hands: 0 }, frames: 0, delegates: used, diag: null };
+  let lastTs = 0, lastVideoTime = -1, lastFrameAt = 0, failures = 0, hzSince = performance.now();
 
   function step() {
     if (stopped) return;
@@ -97,17 +99,22 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
   function process() {
     const now = performance.now();
     lastTs = Math.max(lastTs + 1, now); // MediaPipe wants strictly increasing timestamps
-    const plan = stagger.plan(frame++);
-    const t0 = performance.now();
-    for (const key of ["face", "pose", "hands"]) {
+    const plan = stagger.plan(now);
+    const took = {};
+    for (const key of ["pose", "face", "hands"]) {
       if (!plan[key]) continue;
       const a = performance.now();
       const result = tasks[key].detectForVideo(video, lastTs);
-      stats.ms[key] = 0.8 * stats.ms[key] + 0.2 * (performance.now() - a);
+      took[key] = performance.now() - a;
+      stats.ms[key] = 0.8 * stats.ms[key] + 0.2 * took[key];
       latest[key] = { t: now, result };
+      ran[key]++;
     }
-    stagger.report(performance.now() - t0);
-    stats.level = stagger.level;
+    stagger.report(took);
+    if (now - hzSince >= 1000) {       // how often each model really ran over the last second
+      for (const key of Object.keys(ran)) { stats.hz[key] = Math.round((ran[key] * 1000) / (now - hzSince)); ran[key] = 0; }
+      hzSince = now;
+    }
 
     const aspect = video.videoWidth / Math.max(1, video.videoHeight);
     // a slow machine means older results between runs of a model; that is still tracking, not loss
@@ -127,11 +134,9 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
       aspect,
     } : null;
 
-    const solved = solver.solve({
-      pose: poseWorld ? { world: poseWorld } : null,
-      hands: assignHands(hands, poseImage, { aspect }),
-      face,
-    });
+    const assigned = assignHands(hands, poseImage, { aspect });
+    const solved = solver.solve({ pose: poseWorld ? { world: poseWorld } : null, hands: assigned, face });
+    stats.diag = diagnose({ face, poseWorld, hands, assigned, solved, poseImage });
     const msg = packBody(filter.update(solved, now, root.update(poseImage, aspect)));
     stats.frames++;
     if (lastFrameAt) {
@@ -176,6 +181,18 @@ async function build(key, factory, delegate, used, tasks) {
     try { tasks[key] = await factory(d); used[key] = d; return; } catch (err) { lastErr = err; }
   }
   throw lastErr;
+}
+
+// A plain-language account of what the models see right now, so "my hand is not tracked" has a visible reason.
+export function diagnose({ face, poseWorld, hands, assigned, solved, poseImage }) {
+  const wrist = (i) => (poseImage && poseImage[i] ? Math.round((poseImage[i].visibility ?? 1) * 100) / 100 : null);
+  let handHint;
+  if (!poseWorld) handHint = "no body seen";
+  else if (hands.length === 0) handHint = "no hand seen: raise it into view, palm toward the camera";
+  else if (!assigned.left && !assigned.right) handHint = "hand seen, but it is not next to a wrist the body model found";
+  else if (!solved.live.leftHand && !solved.live.rightHand) handHint = "hand found, but its arm is not visible enough";
+  else handHint = `${(solved.live.leftHand ? 1 : 0) + (solved.live.rightHand ? 1 : 0)} hand(s) tracked`;
+  return { face: !!face, pose: !!poseWorld, hands: hands.length, handHint, wrists: [wrist(15), wrist(16)] };
 }
 
 function describe(err) {

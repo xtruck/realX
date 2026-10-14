@@ -241,33 +241,38 @@ export class RootTracker {
 }
 
 // --- scheduling ---------------------------------------------------------------------------------------
-// [period, offset] for face, pose, hands at each load level. Level 0 runs the face every frame and
-// alternates pose and hands; heavier levels stretch the periods so no model ever starves.
-const LEVELS = [
-  { face: [1, 0], pose: [2, 0], hands: [2, 1] },
-  { face: [1, 0], pose: [3, 1], hands: [3, 2] },
-  { face: [2, 0], pose: [4, 1], hands: [4, 3] },
-  { face: [4, 0], pose: [4, 1], hands: [4, 2] },
-];
+// Each frame, run the models that are most overdue and that fit the time budget. Cheap models all run
+// every frame; when each costs about a frame they take turns, and the one whose result goes stale
+// soonest (pose: arms show lag the most) runs most often. Costs are measured, not assumed.
+const KEYS = ["pose", "face", "hands"];
+const TARGET_MS = { pose: 70, face: 100, hands: 90 }; // how old each result may get before it is due again
 
 export class Stagger {
-  /** budgetMs: how long the models may take per frame, in total, before work is spread thinner */
-  constructor({ budgetMs = 30 } = {}) {
-    this.budget = budgetMs; this.level = 0; this.ema = null; this.since = 0;
+  /** budgetMs: the most model work to start in one frame (one model always runs, however slow) */
+  constructor({ budgetMs = 40, targets = TARGET_MS } = {}) {
+    this.budget = budgetMs; this.targets = targets;
+    this.cost = { pose: 30, face: 30, hands: 30 };                  // ms, learned from report()
+    this.last = { pose: -Infinity, face: -Infinity, hands: -Infinity };
   }
 
-  plan(frame) {
-    const L = LEVELS[this.level];
-    const on = ([period, offset]) => frame % period === offset;
-    return { face: on(L.face), pose: on(L.pose), hands: on(L.hands) };
+  due(key, now) {
+    const age = now - this.last[key];
+    return Number.isFinite(age) ? age / this.targets[key] : 1e9 - KEYS.indexOf(key); // never run: first, pose first
   }
 
-  /** ms the models actually took this frame */
+  /** which models to run for the camera frame at `now` (ms) */
+  plan(now) {
+    const out = { face: false, pose: false, hands: false };
+    let spent = 0;
+    for (const key of KEYS.slice().sort((a, b) => this.due(b, now) - this.due(a, now))) {
+      if (spent > 0 && spent + this.cost[key] > this.budget) continue;
+      out[key] = true; spent += this.cost[key]; this.last[key] = now;
+    }
+    return out;
+  }
+
+  /** ms each model that ran really took: { pose?, face?, hands? } */
   report(ms) {
-    this.ema = this.ema === null ? ms : 0.9 * this.ema + 0.1 * ms;
-    this.since++;
-    // the average lags about 25 frames behind a change of level, so wait for it before judging the new level
-    if (this.ema > this.budget * 1.15 && this.level < LEVELS.length - 1 && this.since >= 30) { this.level++; this.since = 0; }
-    else if (this.ema < this.budget * 0.6 && this.level > 0 && this.since >= 60) { this.level--; this.since = 0; }
+    for (const key of KEYS) if (Number.isFinite(ms[key])) this.cost[key] = 0.8 * this.cost[key] + 0.2 * ms[key];
   }
 }

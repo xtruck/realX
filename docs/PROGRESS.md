@@ -51,10 +51,14 @@ each step so a resumed session knows exactly where to continue.
       after 0.6 s of good visibility, hands assigned to arms by nearest wrist, One-Euro filtering,
       adaptive model scheduling, 60 fps display interpolation. Control room "Full body" mode; a validated
       `/ws/rig?publish=1` relay shows the body in an OBS Browser Source. MediaPipe model licenses
-      verified from the model cards (Apache-2.0). Tests: 36 node, 273 Python (browser tests use Chrome with
-      a fake camera). Measured on the dev laptop (windowed Chrome, integrated GPU, fake camera):
-      tracker 25 fps, ~28-34 ms per model, face ~12 Hz and pose/hands ~6 Hz at the sustainable level,
-      character renders at ~48 fps meanwhile.
+      verified from the model cards (Apache-2.0). Tests: 38 node, 273 Python (browser tests use Chrome with
+      a fake camera). Measured on the dev laptop (windowed Chrome, integrated GPU, fake camera) with
+      the FIRST scheduler: tracker 25 fps, ~28-34 ms per model, pose/hands only ~6 Hz, character
+      rendering at ~48 fps. The owner then reported lagging arms and untracked hands on a real
+      webcam; the scheduler was rewritten (time budget, pose favoured, simulated ~12 Hz for pose at
+      30 ms per model) and a hand is no longer discarded when the body model doubts its wrist. Both
+      are tested on synthetic data only. **Not yet re-measured on an idle machine or confirmed on a
+      real person**; the preview now shows why a hand is not tracked. See `AUDIT.md`.
 - [x] Research pass (2026-10-14) on how existing capture apps work: see the backlog in `IDEAS.md`.
       REA could not read script bodies of the public Kalidokit demo, so constants from other apps are
       unverified.

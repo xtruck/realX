@@ -187,6 +187,7 @@ const bone = (name) => (vrm ? vrm.humanoid.getNormalizedBoneNode(name) : null);
 // --- tracking: this page's own camera. The picture goes to MediaPipe in this page and nowhere else. ---
 async function beginTracking() {
   const cam = document.getElementById("cam"), note = document.getElementById("trackstate");
+  let lastReadout = 0;
   if (PREVIEW && cam) {
     cam.hidden = false;
     if (MIRROR) cam.classList.add("mirror");
@@ -202,8 +203,15 @@ async function beginTracking() {
     solver, mirror: MIRROR, legs: LEGS, delegate: DELEGATE, video: PREVIEW ? cam : null,
     onStatus: say,
     onFrame: (msg, info) => {
-      probe.tracking = { ...probe.tracking, frames: info.frames, fps: Math.round(info.fps), ms: info.ms, level: info.level, delegates: info.delegates };
+      probe.tracking = { ...probe.tracking, frames: info.frames, fps: Math.round(info.fps), ms: info.ms, hz: info.hz, diag: info.diag, delegates: info.delegates };
       onBody(msg);
+      const now = performance.now();
+      if (PREVIEW && note && info.diag && now - lastReadout > 400) {   // a live account of what the models see, for the person being tracked
+        lastReadout = now;
+        const d = info.diag, tick = (ok) => (ok ? "yes" : "no");
+        note.hidden = false;
+        note.textContent = `body: ${tick(d.pose)} · face: ${tick(d.face)} · hands: ${d.handHint} · updates/s pose ${info.hz.pose}, face ${info.hz.face}, hands ${info.hz.hands}`;
+      }
       if (PUBLISH && socket && socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 65536) {
         socket.send(JSON.stringify(msg));        // numbers only; never a picture
         probe.sent++;

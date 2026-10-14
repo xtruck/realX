@@ -132,7 +132,7 @@ def test_camera_page_tracks_publishes_numbers_only_and_a_viewer_sees_it(stack):
         assert faces > 0, f"the portrait's face was never tracked (flags {state['bodyFlags']})"
         t = state["tracking"]  # shown with `pytest -s`: speed on this machine's CPU path
         print(f"\ntracking: {t['fps']} fps, ms/model {({k: round(v, 1) for k, v in t['ms'].items()})}, "
-              f"level {t['level']}, flags {state['bodyFlags']}, sent {state['sent']}")
+              f"updates/s {t['hz']}, hands: {t['diag']['handHint']}, flags {state['bodyFlags']}, sent {state['sent']}")
 
         viewer.goto(f"{base}/avatar")
         _wait(viewer, "window.__realx && window.__realx.modelLoaded", 60)

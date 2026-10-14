@@ -11,6 +11,7 @@ const cap = (s) => s[0].toUpperCase() + s.slice(1);
 const V = (x, y, z) => new Vector3(x, y, z);
 const I = () => new Quaternion();
 const MIN_VIS = 0.5; // below this a body point is a guess, not a measurement
+const MIN_VIS_WITH_HAND = 0.2; // ...except a wrist the hand model has also found
 
 // subject's left landmarks in MediaPipe pose order
 const POSE = { shoulder: [11, 12], elbow: [13, 14], wrist: [15, 16], hip: [23, 24], knee: [25, 26], ankle: [27, 28], heel: [29, 30], toe: [31, 32] };
@@ -70,6 +71,8 @@ export class BodySolver {
     const q = {}; // bone -> Quaternion (local)
     for (const b of BONES) q[b] = I();
     this.solved = new Set(); // bones measured this frame; the rest stay at identity and mean "no data"
+    // a hand the hand model has found proves the wrist is there, so the pose model's doubt about it counts for less
+    const handFor = (s) => { const h = hands[this.mirror ? (s === "left" ? "right" : "left") : s]; return !!(h && h.length >= 21); };
     const live = { face: false, pose: false, legs: false, leftHand: false, rightHand: false };
     const world = {};  // bone -> world quaternion, for chaining
     world.hips = I();
@@ -94,7 +97,7 @@ export class BodySolver {
           this.put(q, "chest", local(spineW, chestQ));
           world.hips = hipsQ; world.spine = spineW; world.chest = chestQ;
           world.neck = chestQ; world.head = chestQ;
-          for (const s of ["left", "right"]) this.arm(s, P, vis, q, world, chestQ);
+          for (const s of ["left", "right"]) this.arm(s, P, vis, q, world, chestQ, handFor(s));
           this.legs(P, vis, q, world, hipsQ, live);
         }
       } else if (shouldersOk) {
@@ -108,7 +111,7 @@ export class BodySolver {
           this.put(q, "chest", local(spineW, chestQ));
           world.hips = I(); world.spine = spineW; world.chest = chestQ;
           world.neck = chestQ; world.head = chestQ;
-          for (const s of ["left", "right"]) this.arm(s, P, vis, q, world, chestQ);
+          for (const s of ["left", "right"]) this.arm(s, P, vis, q, world, chestQ, handFor(s));
         }
       }
     }
@@ -119,7 +122,7 @@ export class BodySolver {
     return out;
   }
 
-  arm(s, P, vis, q, world, chestQ) {
+  arm(s, P, vis, q, world, chestQ, hasHand = false) {
     const sh = this.conv(P("shoulder", s)), el = this.conv(P("elbow", s)), wr = this.conv(P("wrist", s));
     const rest = this.rest.dir;
     if (vis("elbow", s) < MIN_VIS || vis("shoulder", s) < MIN_VIS) return;
@@ -128,7 +131,7 @@ export class BodySolver {
     this.put(q, `${s}UpperArm`, aim(rest[`${s}UpperArm`], toUpper));
     const upperWorld = upW.clone().multiply(q[`${s}UpperArm`]);
     world[`${s}UpperArm`] = upperWorld;
-    if (vis("wrist", s) < MIN_VIS) return;
+    if (vis("wrist", s) < (hasHand ? MIN_VIS_WITH_HAND : MIN_VIS)) return;
     const toLower = wr.clone().sub(el).applyQuaternion(upperWorld.clone().invert());
     this.put(q, `${s}LowerArm`, aim(rest[`${s}LowerArm`], toLower));
     world[`${s}LowerArm`] = upperWorld.clone().multiply(q[`${s}LowerArm`]);

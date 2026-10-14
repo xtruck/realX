@@ -6,7 +6,7 @@ server can serve one script under a strict Content-Security-Policy. The bundle i
 users need no Node.
 
     cd webapp && npm ci && npm run build
-    node --test test/*.test.mjs        # 36 tests, no browser or camera needed
+    node --test test/*.test.mjs        # 38 tests, no browser or camera needed
 
 Versions are pinned in `package.json` and `package-lock.json`. Rebuild and re-run the
 tests (`tests/test_character.py` and `tests/test_tracking_browser.py` drive the bundle in a real

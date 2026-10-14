@@ -18,7 +18,7 @@ research. **Verify each license file before adding a model to `MANIFEST`.**
 | Rig over WebSocket + browser VRM renderer (#1) | 60 fps display from 15-30 Hz rig, no JPEG in character mode |
 | Background replacement with PP-HumanSeg | 10 ms/frame; kept person 0.9+, replaced room 0.9+ on test photos |
 | Character voice presets with formant control | each preset tested for pitch, brightness, band limits, chunking |
-| Full-body tracking in the browser (face, 52 blendshapes, gaze, spine, arms, hands, fingers, legs, feet) | 36 node tests on synthetic landmarks; Chromium test with a fake camera; camera pixels never leave the page |
+| Full-body tracking in the browser (face, 52 blendshapes, gaze, spine, arms, hands, fingers, legs, feet) | 38 node tests on synthetic landmarks; Chromium test with a fake camera; camera pixels never leave the page |
 | Per-limb hold-and-fade, relaxed idle pose, seated upper-body mode, legs only after 0.6 s of good visibility | tests; Kalidokit's demo (the common baseline) holds a lost bone forever and uses a fixed lerp of 0.3 |
 | Hands assigned to arms by nearest pose wrist (MediaPipe's own left/right label is only a fallback) | tests, including swapped labels and a stray hand |
 
