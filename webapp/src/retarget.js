@@ -69,6 +69,7 @@ export class BodySolver {
   solve({ pose = null, hands = {}, face = null } = {}) {
     const q = {}; // bone -> Quaternion (local)
     for (const b of BONES) q[b] = I();
+    this.solved = new Set(); // bones measured this frame; the rest stay at identity and mean "no data"
     const live = { face: false, pose: false, legs: false, leftHand: false, rightHand: false };
     const world = {};  // bone -> world quaternion, for chaining
     world.hips = I();
@@ -80,25 +81,39 @@ export class BodySolver {
       const hipL = this.conv(P("hip", "left")), hipR = this.conv(P("hip", "right"));
       const shL = this.conv(P("shoulder", "left")), shR = this.conv(P("shoulder", "right"));
       const torsoOk = [P("hip", "left"), P("hip", "right"), P("shoulder", "left"), P("shoulder", "right")].every((p) => (p.visibility ?? 1) >= MIN_VIS);
+      const shouldersOk = [P("shoulder", "left"), P("shoulder", "right")].every((p) => (p.visibility ?? 1) >= MIN_VIS);
       if (torsoOk) {
         const hipMid = hipL.clone().add(hipR).multiplyScalar(0.5), shMid = shL.clone().add(shR).multiplyScalar(0.5);
         const up = shMid.clone().sub(hipMid);
         const hipsQ = basisQuat(hipL.clone().sub(hipR), up), chestQ = basisQuat(shL.clone().sub(shR), up);
         if (hipsQ && chestQ) {
           live.pose = true;
-          q.hips.copy(hipsQ);
+          this.put(q, "hips", hipsQ);
           const spineW = hipsQ.clone().slerp(chestQ, 0.45);
-          q.spine.copy(local(hipsQ, spineW));
-          q.chest.copy(local(spineW, chestQ));
+          this.put(q, "spine", local(hipsQ, spineW));
+          this.put(q, "chest", local(spineW, chestQ));
           world.hips = hipsQ; world.spine = spineW; world.chest = chestQ;
           world.neck = chestQ; world.head = chestQ;
           for (const s of ["left", "right"]) this.arm(s, P, vis, q, world, chestQ);
           this.legs(P, vis, q, world, hipsQ, live);
         }
+      } else if (shouldersOk) {
+        // seated or close to the camera: the desk hides the hips. The shoulder line gives the chest its
+        // turn and tilt; with no hips there is no lean, so "up" is plain up and the hips are not touched.
+        const chestQ = basisQuat(shL.clone().sub(shR), V(0, 1, 0));
+        if (chestQ) {
+          live.pose = true;
+          const spineW = I().slerp(chestQ, 0.45);
+          this.put(q, "spine", spineW);
+          this.put(q, "chest", local(spineW, chestQ));
+          world.hips = I(); world.spine = spineW; world.chest = chestQ;
+          world.neck = chestQ; world.head = chestQ;
+          for (const s of ["left", "right"]) this.arm(s, P, vis, q, world, chestQ);
+        }
       }
     }
     this.handsAndFingers(hands, pose && live.pose, q, world, live);
-    const out = { quats: q, expr: {}, live, root: null };
+    const out = { quats: q, expr: {}, live, root: null, solved: this.solved };
     if (face) this.faceSolve(face, q, world, live, out);
     if (pose && live.pose) out.root = this.rootFrom(pose);
     return out;
@@ -110,12 +125,12 @@ export class BodySolver {
     if (vis("elbow", s) < MIN_VIS || vis("shoulder", s) < MIN_VIS) return;
     const upW = chestQ.clone();
     const toUpper = el.clone().sub(sh).applyQuaternion(chestQ.clone().invert());
-    q[`${s}UpperArm`].copy(aim(rest[`${s}UpperArm`], toUpper));
+    this.put(q, `${s}UpperArm`, aim(rest[`${s}UpperArm`], toUpper));
     const upperWorld = upW.clone().multiply(q[`${s}UpperArm`]);
     world[`${s}UpperArm`] = upperWorld;
     if (vis("wrist", s) < MIN_VIS) return;
     const toLower = wr.clone().sub(el).applyQuaternion(upperWorld.clone().invert());
-    q[`${s}LowerArm`].copy(aim(rest[`${s}LowerArm`], toLower));
+    this.put(q, `${s}LowerArm`, aim(rest[`${s}LowerArm`], toLower));
     world[`${s}LowerArm`] = upperWorld.clone().multiply(q[`${s}LowerArm`]);
     world[`${s}Hand`] = world[`${s}LowerArm`]; // until a detected hand says more
   }
@@ -128,14 +143,14 @@ export class BodySolver {
       live.legs = true;
       const hip = this.conv(P("hip", s)), kn = this.conv(P("knee", s)), an = this.conv(P("ankle", s)), toe = this.conv(P("toe", s));
       const toUpper = kn.clone().sub(hip).applyQuaternion(hipsQ.clone().invert());
-      q[`${s}UpperLeg`].copy(aim(rest[`${s}UpperLeg`], toUpper));
+      this.put(q, `${s}UpperLeg`, aim(rest[`${s}UpperLeg`], toUpper));
       const upW = hipsQ.clone().multiply(q[`${s}UpperLeg`]);
       const toLower = an.clone().sub(kn).applyQuaternion(upW.clone().invert());
-      q[`${s}LowerLeg`].copy(aim(rest[`${s}LowerLeg`], toLower));
+      this.put(q, `${s}LowerLeg`, aim(rest[`${s}LowerLeg`], toLower));
       const lowW = upW.clone().multiply(q[`${s}LowerLeg`]);
       if (vis("toe", s) >= 0.5 && rest[`${s}Foot`]) {  // the foot follows the toes: tiptoes and steps
         const toFoot = toe.clone().sub(an).applyQuaternion(lowW.clone().invert());
-        q[`${s}Foot`].copy(aim(rest[`${s}Foot`], toFoot));
+        this.put(q, `${s}Foot`, aim(rest[`${s}Foot`], toFoot));
       }
     }
   }
@@ -155,14 +170,14 @@ export class BodySolver {
         const Fr = frameMatrix(fr.axis, fr.side);
         if (Ft && Fr) handW = new Quaternion().setFromRotationMatrix(Ft.clone().multiply(Fr.clone().transpose()));
       }
-      q[`${s}Hand`].copy(local(parent, handW));
+      this.put(q, `${s}Hand`, local(parent, handW));
       world[`${s}Hand`] = handW;
       live[`${s}Hand`] = true;
       const place = (bone, from, to, parentW) => {
         const r = this.rest.dir[bone];
         if (!r) return parentW;
         const dirLocal = c[to].clone().sub(c[from]).applyQuaternion(parentW.clone().invert());
-        q[bone].copy(aim(r, dirLocal));
+        this.put(q, bone, aim(r, dirLocal));
         return parentW.clone().multiply(q[bone]);
       };
       let pw = handW;
@@ -180,6 +195,7 @@ export class BodySolver {
       const g = gaze(blend, this.mirror);
       q.leftEye.setFromEuler({ x: g.left[0], y: g.left[1], z: 0, order: "XYZ", isEuler: true });
       q.rightEye.setFromEuler({ x: g.right[0], y: g.right[1], z: 0, order: "XYZ", isEuler: true });
+      this.solved.add("leftEye"); this.solved.add("rightEye");
     }
     if (!landmarks || landmarks.length < 400) return;
     const pt = (i) => this.conv({ x: landmarks[i].x * aspect, y: landmarks[i].y, z: landmarks[i].z * aspect });
@@ -191,9 +207,15 @@ export class BodySolver {
     live.face = true;
     const chest = world.chest || I();
     const rel = local(chest, headW);
-    q.neck.copy(I().slerp(rel, 0.4));
+    this.put(q, "neck", I().slerp(rel, 0.4));
     const neckW = chest.clone().multiply(q.neck);
-    q.head.copy(local(neckW, headW));
+    this.put(q, "head", local(neckW, headW));
+  }
+
+  /** Set a bone's local rotation and remember it was measured, not defaulted. */
+  put(q, bone, quat) {
+    q[bone].copy(quat);
+    this.solved.add(bone);
   }
 
   /** where the body sits in the picture: x,y in [-1,1] (character's view), depth relative to shoulder width */

@@ -165,7 +165,7 @@ def test_cli_grant_needs_the_friend_flag_and_revoke_works(tmp_path, monkeypatch,
     out = capsys.readouterr().out
     code = out.split("shown only once): ")[1].split()[0]
     path = out.split("consent saved: ")[1].split()[0]
-    rid = path.rsplit("/", 1)[1][:-5]
+    rid = os.path.basename(path)[:-5]  # portable: Windows paths use backslashes
     assert main(["cohost", "check", "--file", path]) == 0
     assert main(["cohost", "revoke", "--id", rid, "--code", "nope"]) == 2
     assert main(["cohost", "revoke", "--id", rid, "--code", code]) == 0

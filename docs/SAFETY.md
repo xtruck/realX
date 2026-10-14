@@ -31,6 +31,32 @@ and most jurisdictions now expect them.
   needs a consent gate before it and a watermark after it. `inswapper_128` and `buffalo_l`
   stay blocked.
 
+## Full-body tracking (camera to character)
+
+- **The camera picture stays in the page.** `/avatar?track=1` opens the camera with `getUserMedia`
+  and gives each frame to MediaPipe (face, pose, hands) running in that page. The tracker source never
+  draws the video to a canvas, reads pixels back, records, encodes or sends it; a test greps the
+  source for those calls, and a Chromium test with a fake camera records every request and WebSocket
+  frame the page makes. Models and the WASM runtime are served by this computer, so no third party
+  sees the camera or loads code at run time.
+- **What leaves the page is numbers.** One message, `{type:"body", f, q, e, r}`: group flags, one
+  rotation per bone (212 numbers), 9 expression weights and a position. About 2 KB. Nothing in it
+  identifies a person or carries an image. The server checks size, structure and that every number is
+  finite and in range before it forwards anything, and it re-serialises the message itself.
+- **The relay (OBS Browser Source).** A tracking page publishes to `/ws/rig?publish=1`; a plain `/avatar`
+  page shows it. Same-origin only (Origin header and Host checks), one publisher at a time, rate
+  limited, closed on a bad message. The control-room tab must stay open while streaming, because the
+  camera and the models run in it. In Full body mode the server releases its own camera.
+- **Still labelled.** The character page keeps its "Virtual character" badge; the tracking page gets
+  it too. The character is an original cartoon, so tracking your body does not make anyone look like
+  a real person. Using someone else's likeness still needs the consent gate, the DIGITAL HOST bar and the
+  watermark described below. Platform rules still apply: TikTok requires AI-avatar disclosure, and its
+  LIVE rules limit AI-generated voices and animated figures that cover more than half the screen.
+- **Limits.** A webcam sees one side of you. Hidden or fast hands, crossed arms and legs behind a desk are
+  estimated from one view, so those moves can look wrong for a moment; the filter holds a lost limb for
+  a quarter of a second and then lets it relax rather than showing a guess. Legs are used only after
+  they have stayed well visible for 0.6 s (the default for seated people).
+
 ## Digital co-host (a real person who agrees)
 
 - `realx cohost grant --name "Kofi" --friend-agreed` issues a signed, scoped, expiring consent

@@ -7,33 +7,45 @@ and CSRF), strict CSP, request size and time limits, and a connection cap.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import secrets
 import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
 from realx import __version__
 from realx.audio import offline, presets
-from realx.models import BLOCKED, MANIFEST
+from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model
 from realx import ws
 from realx.pipeline import Pipeline
-from realx.rig import EMOTES, hello_message, rig_message
+from realx.rig import EMOTES, MAX_BODY_BYTES, hello_message, parse_body_message, rig_message
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
 from realx.stages.background import MAX_IMAGE_BYTES, BackgroundError, decode_background
 from realx.stages import create
 
-MODES = ("avatar", "character", "boxes", "original")
+# "body": the browser tracks the camera (full body) and publishes it; the Python side releases the camera
+MODES = ("avatar", "character", "boxes", "original", "body")
 BACKGROUNDS = ("off", "blur", "photo")
 MAX_JSON = 4096
 MAX_AVATAR_BYTES = 32 * 1024 * 1024
 MAX_CONNECTIONS = 16
 SOCKET_TIMEOUT = 15.0
+BODY_MAX_AGE = 1.0            # seconds: an older body message is never (re)sent to a viewer
+PUBLISH_IDLE_SECONDS = 15.0   # a publisher that sends nothing this long is dropped
+PUBLISH_RATE_LIMIT = 200      # messages per second from one publisher before it is cut off
+HEARTBEAT_SECONDS = 0.1       # rig messages while the engine has no video of its own (body mode)
+PERMISSIONS = "camera=(self), microphone=(), geolocation=()"  # only this origin's own pages may ask for the camera
+ASSET_MAX_AGE = 3600  # seconds: MediaPipe runtime and models are pinned by hash, so they cannot change within a release
+MP_MODELS = ("mp_face", "mp_pose", "mp_hand")  # the only models /mp/models serves
+_WASM_NAME = re.compile(r"[a-z0-9_]+\.(js|wasm)")
 
 CSP = (
     "default-src 'none'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; "
@@ -43,11 +55,14 @@ CSP = (
 
 
 def avatar_csp(port: int) -> str:
-    """The avatar page loads one model file and listens to one WebSocket, nothing else."""
+    """The avatar page loads its model, the MediaPipe runtime and models from this server, and one WebSocket.
+
+    'wasm-unsafe-eval' lets it compile WebAssembly (the MediaPipe runtime) and nothing else; 'unsafe-eval' stays off.
+    """
     sockets = f"ws://127.0.0.1:{port} ws://localhost:{port}"
     return (
         f"default-src 'none'; img-src 'self' blob: data:; connect-src 'self' {sockets}; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; base-uri 'none'; form-action 'none'; "
         "object-src 'none'; frame-ancestors 'self'"
     )
 
@@ -69,6 +84,16 @@ def _smoothing_to_cutoff(s: float) -> float:
     return 3.0 - 2.5 * min(1.0, max(0.0, s))
 
 
+class Update(NamedTuple):
+    """What a viewer socket may need to send: the newest rig and body messages, each with its own counter."""
+
+    rev: int
+    rig: str
+    rig_seq: int
+    body: str | None
+    body_seq: int
+
+
 class Engine:
     """Runs the video pipeline on a background thread and keeps the latest frame."""
 
@@ -78,6 +103,12 @@ class Engine:
         self._cond = threading.Condition(self._lock)
         self._jpeg: bytes | None = None
         self._seq = 0
+        self._rev = 0  # bumps on every change a viewer socket cares about: a frame, a heartbeat, a body message
+        self._body: str | None = None  # newest validated body message from a tracking page
+        self._body_seq = 0
+        self._body_time = 0.0
+        self._publishing = False
+        self._viewers = 0
         self._rig = json.dumps(rig_message(0, 0.0, (0, 0), []))
         self._emote: tuple[str, int, float] | None = None  # name, id, time pressed
         self._epoch = secrets.token_hex(4)  # changes on every server start, so ids never collide across restarts
@@ -164,7 +195,51 @@ class Engine:
             out["ribbon"] = list(self._ribbon)
             out["config"] = dict(self._config)
             out["version"] = __version__
+            out["body"] = {"publishing": self._publishing, "viewers": self._viewers}
         return out
+
+    # -- full-body relay -------------------------------------------------------------
+    def claim_publisher(self) -> bool:
+        """One tracking page at a time may publish. False when someone already does."""
+        with self._lock:
+            if self._publishing:
+                return False
+            self._publishing = True
+            return True
+
+    def release_publisher(self) -> None:
+        with self._cond:
+            self._publishing = False
+            self._body = None  # a gone tracker leaves no stale pose behind
+            self._body_seq += 1
+            self._rev += 1
+            self._cond.notify_all()
+
+    def publish_body(self, text: str) -> None:
+        """Keep the newest validated body message (`parse_body_message` output) and wake the viewers."""
+        with self._cond:
+            self._body = text
+            self._body_time = time.monotonic()
+            self._body_seq += 1
+            self._rev += 1
+            self._cond.notify_all()
+
+    def body_snapshot(self) -> str | None:
+        with self._lock:
+            return self._fresh_body()
+
+    def _fresh_body(self) -> str | None:  # caller holds the lock
+        if self._body is not None and time.monotonic() - self._body_time <= BODY_MAX_AGE:
+            return self._body
+        return None
+
+    def viewer_joined(self) -> None:
+        with self._lock:
+            self._viewers += 1
+
+    def viewer_left(self) -> None:
+        with self._lock:
+            self._viewers = max(0, self._viewers - 1)
 
     def wait_frame(self, last_seq: int, timeout: float = 2.0) -> tuple[bytes | None, int]:
         with self._cond:
@@ -172,12 +247,32 @@ class Engine:
                 self._cond.wait(timeout)
             return self._jpeg, self._seq
 
-    def wait_rig(self, last_seq: int, timeout: float = 1.0) -> tuple[str, int]:
-        """Latest rig message; blocks until a frame newer than `last_seq` or timeout."""
+    def wait_rig(self, last_rev: int, timeout: float = 1.0) -> tuple[str, int]:
+        """Latest rig message; blocks until something newer than `last_rev` happened or timeout."""
+        update = self.wait_update(last_rev, timeout)
+        return update.rig, update.rev
+
+    def wait_update(self, last_rev: int, timeout: float = 1.0) -> Update:
+        """Blocks until a frame, heartbeat or body message newer than `last_rev` exists, or timeout."""
         with self._cond:
-            if self._seq == last_seq and not self._stop.is_set():
+            if self._rev == last_rev and not self._stop.is_set():
                 self._cond.wait(timeout)
-            return self._rig, self._seq
+            return Update(self._rev, self._rig, self._seq, self._fresh_body(), self._body_seq)
+
+    def _heartbeat(self) -> None:
+        """Body mode has no video: keep rig messages (and so gestures and socket liveness) flowing."""
+        now = time.perf_counter()
+        with self._cond:
+            self._jpeg = None  # no stale picture for the MJPEG stream
+            self._seq += 1
+            self._rev += 1
+            self._rig = json.dumps(rig_message(self._seq, now, (0, 0), [], self._emote_state()))
+            self._cond.notify_all()
+
+    def _emote_state(self) -> dict | None:  # caller holds the lock (or is the only writer)
+        if not self._emote:
+            return None
+        return {"name": self._emote[0], "id": f"{self._epoch}-{self._emote[1]}", "age": round(time.monotonic() - self._emote[2], 2)}
 
     # -- internals ----------------------------------------------------------------
     def _snapshot(self) -> tuple[dict, int]:
@@ -234,6 +329,20 @@ class Engine:
             while not self._stop.is_set():
                 try:
                     cfg, current = self._snapshot()
+                    if cfg["mode"] == "body":
+                        # the browser owns the camera now: let go of ours so it can be opened there
+                        if pipe:
+                            pipe.close()
+                            pipe = None
+                        if frames is not None:
+                            self._close_source(frames)
+                            frames, self._open_source = None, None
+                        version = current
+                        self._set_error(None)
+                        self._heartbeat()
+                        backoff = 0.5
+                        self._stop.wait(HEARTBEAT_SECONDS)
+                        continue
                     if current != version:
                         if pipe:
                             pipe.close()
@@ -289,9 +398,8 @@ class Engine:
                         self._ribbon.append(state)
                         self._jpeg = None if buf is None else buf.tobytes()
                         self._seq += 1
-                        em = None
-                        if self._emote:
-                            em = {"name": self._emote[0], "id": f"{self._epoch}-{self._emote[1]}", "age": round(time.monotonic() - self._emote[2], 2)}
+                        self._rev += 1
+                        em = self._emote_state()
                         self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces, em))
                         self._cond.notify_all()
                 except (SourceError, StopIteration) as exc:
@@ -346,6 +454,43 @@ class _BoundedServer(ThreadingHTTPServer):
 
 
 def make_handler(engine: Engine, port_getter, avatar: bytes):
+    # MediaPipe runtime files: exactly the ones bundled in the package, by name. Nothing else under /mp is served.
+    wasm_root = resources.files("realx.web").joinpath("mp/wasm")
+    wasm_files = {p.name: p for p in wasm_root.iterdir() if _WASM_NAME.fullmatch(p.name)} if wasm_root.is_dir() else {}
+    model_cache: dict[str, bytes] = {}  # verified model bytes, kept in memory
+    # one lock per model: a slow download of one never makes a request for another wait, and no lock is
+    # ever held while a different model downloads
+    model_locks = {key: threading.Lock() for key in MP_MODELS}
+    prefetch_gate = threading.Lock()  # taken once and never released: the prefetch runs once per server
+
+    def verified_model(key: str) -> bytes:
+        """The model's bytes, read once and checked against the pinned SHA-256 before anyone gets them."""
+        spec = MANIFEST[key]
+        with model_locks[key]:
+            cached = model_cache.get(spec.sha256)
+            if cached is not None:
+                return cached
+            data = ensure_model(key).read_bytes()  # downloads on first use; checks the hash itself too
+            if hashlib.sha256(data).hexdigest() != spec.sha256:
+                raise ModelError(f"{spec.filename}: checksum mismatch")
+            model_cache[spec.sha256] = data
+            return data
+
+    def prefetch_models() -> None:
+        """Best effort, once: fetch and verify the three models in the background so the first tracking
+        page does not wait on a download. Failures are ignored; the page's own request reports them."""
+        if not prefetch_gate.acquire(blocking=False):
+            return
+
+        def run() -> None:
+            for key in MP_MODELS:
+                try:
+                    verified_model(key)
+                except Exception:
+                    pass
+
+        threading.Thread(target=run, name="realx-model-prefetch", daemon=True).start()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "realX"
         sys_version = ""
@@ -354,14 +499,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
         def log_message(self, *args) -> None:  # quiet
             pass
 
-        def _headers(self, content_type: str, length: int | None = None, cache: bool = True) -> None:
+        def _headers(self, content_type: str, length: int | None = None, cache: bool = True, max_age: int | None = None) -> None:
             self.send_header("Content-Type", content_type)
             if length is not None:
                 self.send_header("Content-Length", str(length))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.send_header("Referrer-Policy", "no-referrer")
-            if cache:
+            if max_age is not None:  # only for content that cannot change: hash-pinned assets
+                self.send_header("Cache-Control", f"private, max-age={max_age}")
+            elif cache:
                 self.send_header("Cache-Control", "no-store")
 
         # request screening ------------------------------------------------------
@@ -417,6 +564,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self.send_response(200)
                 self._headers("text/html; charset=utf-8", len(page))
                 self.send_header("Content-Security-Policy", CSP)
+                self.send_header("Permissions-Policy", PERMISSIONS)
                 self.send_header("X-Frame-Options", "DENY")
                 self.end_headers()
                 self.wfile.write(page)
@@ -431,6 +579,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self.send_response(200)
                 self._headers("text/html; charset=utf-8", len(page))
                 self.send_header("Content-Security-Policy", avatar_csp(port_getter()))
+                self.send_header("Permissions-Policy", PERMISSIONS)
                 self.send_header("X-Frame-Options", "SAMEORIGIN")
                 self.end_headers()
                 self.wfile.write(page)
@@ -445,6 +594,10 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self._headers("model/gltf-binary", len(avatar))
                 self.end_headers()
                 self.wfile.write(avatar)
+            elif path.startswith("/mp/wasm/"):
+                self._mp_wasm(path[len("/mp/wasm/") :])
+            elif path.startswith("/mp/models/"):
+                self._mp_model(path[len("/mp/models/") :])
             elif path == "/favicon.ico":
                 self.send_response(204)
                 self._headers("image/x-icon", 0)
@@ -471,6 +624,31 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self._stream()
             else:
                 self._deny(404, "not found")
+
+        def _mp_wasm(self, name: str) -> None:
+            entry = wasm_files.get(name)
+            if entry is None:
+                return self._deny(404, "not found")
+            data = entry.read_bytes()
+            self.send_response(200)
+            self._headers(
+                "application/wasm" if name.endswith(".wasm") else "text/javascript; charset=utf-8", len(data), max_age=ASSET_MAX_AGE
+            )
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _mp_model(self, name: str) -> None:
+            key = next((k for k in MP_MODELS if MANIFEST[k].filename == name), None)
+            if key is None:
+                return self._deny(404, "not found")
+            try:
+                data = verified_model(key)
+            except (ModelError, OSError):
+                return self._deny(503, "model unavailable; run `realx models fetch` and reload")
+            self.send_response(200)
+            self._headers("application/octet-stream", len(data), max_age=ASSET_MAX_AGE)
+            self.end_headers()
+            self.wfile.write(data)
 
         def _stream(self) -> None:
             self.send_response(200)
@@ -499,27 +677,87 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 return self._deny(400, "expected a WebSocket upgrade")
             if not self._same_origin() or h.get("Origin") is None:
                 return self._deny(403, "forbidden origin")  # browsers always send Origin on WebSockets
-            self.protocol_version = "HTTP/1.1"  # the WebSocket handshake requires it
-            self.send_response(101)
-            self.send_header("Upgrade", "websocket")
-            self.send_header("Connection", "Upgrade")
-            self.send_header("Sec-WebSocket-Accept", ws.accept_key(h["Sec-WebSocket-Key"]))
-            self.end_headers()
-            self.close_connection = True
-            conn = ws.Connection(self.connection)
-            seq = -1
+            publish = parse_qs(urlparse(self.path).query).get("publish") == ["1"]
+            if publish and not engine.claim_publisher():
+                return self._deny(409, "another tracker is already publishing")
+            conn = None
             try:
+                self.protocol_version = "HTTP/1.1"  # the WebSocket handshake requires it
+                self.send_response(101)
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", ws.accept_key(h["Sec-WebSocket-Key"]))
+                self.end_headers()
+                self.close_connection = True
+                conn = ws.Connection(self.connection, max_payload=MAX_BODY_BYTES if publish else ws.MAX_CLIENT_PAYLOAD)
                 conn.send_text(json.dumps(hello_message(__version__)))
+                if publish:
+                    self._publish_loop(conn)
+                else:
+                    self._view_loop(conn)
+            except ws.WebSocketError as exc:
+                if conn is not None:
+                    conn.send_close(exc.code)
+            except OSError:
+                return
+            except Exception:  # a bug must end this one connection cleanly, not kill the thread silently
+                if conn is not None:
+                    conn.send_close(1011)
+            finally:
+                if publish:
+                    engine.release_publisher()
+
+        def _view_loop(self, conn: "ws.Connection") -> None:
+            """Forward the newest rig and body messages. Latest value wins; nothing queues."""
+            engine.viewer_joined()
+            rev = rig_seq = body_seq = -1
+            try:
                 while not engine.stopped and not conn.closed:
-                    message, new = engine.wait_rig(seq)
+                    update = engine.wait_update(rev)
                     conn.poll()
                     if conn.closed:
                         break
-                    if new != seq:
-                        seq = new
-                        conn.send_text(message)
-            except (OSError, ws.WebSocketError):
-                return
+                    rev = update.rev
+                    if update.rig_seq != rig_seq:
+                        rig_seq = update.rig_seq
+                        conn.send_text(update.rig)
+                    if update.body_seq != body_seq:
+                        body_seq = update.body_seq
+                        if update.body is not None:  # a cleared or stale body is simply not sent
+                            conn.send_text(update.body)
+            finally:
+                engine.viewer_left()
+
+        def _publish_loop(self, conn: "ws.Connection") -> None:
+            """Take body messages from the one tracking page. Anything invalid, too fast or too quiet ends it."""
+            window_start = last_message = time.monotonic()
+            count = 0
+            try:
+                while not engine.stopped and not conn.closed:
+                    before = conn.frames
+                    texts = conn.poll(timeout=0.25)
+                    now = time.monotonic()
+                    arrived = conn.frames - before  # frames of every kind (text, ping, pong, anything) count toward the cap
+                    if arrived:
+                        if now - window_start >= 1.0:
+                            window_start, count = now, 0
+                        count += arrived
+                        if count > PUBLISH_RATE_LIMIT:
+                            return conn.send_close(1008)
+                    for text in texts:
+                        try:
+                            engine.publish_body(parse_body_message(text))
+                        except ValueError:
+                            return conn.send_close(1008)
+                        last_message = now  # only a valid body message counts as activity; pings alone do not
+                    if now - last_message > PUBLISH_IDLE_SECONDS:
+                        return conn.send_close(1001)
+            except ws.WebSocketError as exc:
+                conn.send_close(exc.code)
+            except OSError:
+                raise
+            except Exception:
+                conn.send_close(1011)
 
         def do_POST(self) -> None:
             if not self._local_host() or not self._same_origin() or not self._not_cross_site():
@@ -532,7 +770,10 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                     changes = json.loads(self._body(MAX_JSON) or b"{}")
                     if not isinstance(changes, dict):
                         raise ValueError("expected a JSON object")
-                    self._json(engine.update(changes))
+                    result = engine.update(changes)
+                    if changes.get("mode") == "body":
+                        prefetch_models()
+                    self._json(result)
                 elif parsed.path == "/api/emote":
                     if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
                         raise ValueError("Content-Type must be application/json")

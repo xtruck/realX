@@ -44,9 +44,25 @@ each step so a resumed session knows exactly where to continue.
 - [x] Disclosed co-host machinery: `realx cohost` consent vault with friend-held revoke code,
       mandatory visible disclosure stage, pipeline rule (gate -> likeness -> label -> mark)
 
+- [x] Full-body tracking in the browser (2026-10-14): MediaPipe face (52 blendshapes, gaze), pose and
+      hand landmarkers run inside the tracking page (`/avatar?track=1`); the camera picture never leaves
+      it. A clean-room solver turns landmarks into bone rotations (head, eyes, spine, arms, hands, every
+      finger, legs, feet). Per-limb hold-and-fade to a relaxed pose, seated upper-body mode, legs only
+      after 0.6 s of good visibility, hands assigned to arms by nearest wrist, One-Euro filtering,
+      adaptive model scheduling, 60 fps display interpolation. Control room "Full body" mode; a validated
+      `/ws/rig?publish=1` relay shows the body in an OBS Browser Source. MediaPipe model licenses
+      verified from the model cards (Apache-2.0). Tests: 36 node, 273 Python (browser tests use Chrome with
+      a fake camera). Measured on the dev laptop (windowed Chrome, integrated GPU, fake camera):
+      tracker 25 fps, ~28-34 ms per model, face ~12 Hz and pose/hands ~6 Hz at the sustainable level,
+      character renders at ~48 fps meanwhile.
+- [x] Research pass (2026-10-14) on how existing capture apps work: see the backlog in `IDEAS.md`.
+      REA could not read script bodies of the public Kalidokit demo, so constants from other apps are
+      unverified.
+
 ## Next (in order)
 
-- [ ] MediaPipe face/pose landmarker backend (verify model licenses first)
+- [ ] Tune the filter constants and hold/fade times with a real person on a real webcam (never done)
+- [ ] Full-body backlog in `IDEAS.md`: IK pole hints, wrist twist, foot locking, finger limits, RTMW toes
 - [ ] Silero VAD + RNNoise voice chain, live microphone input
 - [ ] Audio-driven mouth fallback
 - [ ] Robust watermark (TrustMark/AudioSeal) and C2PA export
@@ -67,8 +83,16 @@ each step so a resumed session knows exactly where to continue.
 - Demo footage is synthetic (a public-domain portrait moved around). Real webcam
   behaviour is covered by the same code path but has not been recorded here, because
   the owner's camera was not available overnight.
-- Rig comes from 5 YuNet landmarks: head pose and smile width only. No blink or mouth
-  opening is tracked, so Pip blinks on a timer until the MediaPipe backend lands.
+- The Cartoon/Character modes that use the server's own camera still take a rig from 5 YuNet
+  landmarks: head pose and smile width only, with Pip blinking on a timer. Blinks, mouth shapes, gaze,
+  arms, hands, fingers and legs come only from the **Full body** mode (browser tracking).
+- Full body is checked on synthetic landmarks and on a fake camera playing a portrait photo
+  (face and pose tracked in every sample). Hands, legs and fast motion have not been tried on a real
+  person, and the filter constants are untuned. Toes are weak: the pose model gives only heel and
+  toe-tip points. One webcam view means hidden hands, crossed arms and depth are estimated.
+- Browser tracking needs the control-room tab open while streaming. On the dev laptop's integrated
+  GPU each model costs ~30 ms, so face updates ~12 times a second and pose/hands ~6, with the display
+  interpolating at 48-60 fps; a faster GPU should raise those rates.
 - The character's pose maths is checked on synthetic landmarks and on the demo footage;
   it has not been tuned on a live webcam.
 - Background matte is a 192 px model: good on a person against a plain room, soft on

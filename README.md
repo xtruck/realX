@@ -20,6 +20,11 @@ with **consent, provenance and license checks built in**.
   three.js and @pixiv/three-vrm and driven by head pose over a local WebSocket. Add
   `http://127.0.0.1:8765/avatar` as an OBS Browser Source (transparent background).
   Bring your own model with `realx serve --avatar my.vrm`.
+- **Full-body tracking**: choose "Full body" in the control room and the character copies your
+  head, eyes, 52 face expressions, spine, arms, hands and every finger, and (when they stay
+  well visible) your legs and feet. It works seated, with hands or legs out of view. MediaPipe
+  (Apache-2.0) runs in the control-room tab, so your camera picture never leaves that page; the
+  OBS Browser Source receives only joint angles. The character is always labelled as virtual.
 - **Background replacement**: cut yourself out of your own camera picture and put a
   photo, a blur or a colour behind you (PP-HumanSeg, Apache-2.0). Nothing is generated.
 - **Character voices**: `realx voices` lists presets (pip, bear, imp, robot, radio).

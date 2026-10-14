@@ -123,6 +123,7 @@
         <div class="screen">
           <img id="view" alt="Live preview with tracked faces" hidden>
           <iframe id="character" title="3D character preview" hidden></iframe>
+          <iframe id="tracker" title="Full-body tracking: character with your camera preview" allow="camera" hidden></iframe>
           <div class="guides" id="guides"></div>
           <div class="notice" id="notice">Starting the video pipeline…</div>
         </div>
@@ -137,7 +138,8 @@
 
       <div class="obs" id="obs" hidden>
         <h2>Use the character in OBS</h2>
-        <p class="hint">Add a Browser Source with this address, 1280 by 720. The background is transparent. The page only receives head-pose numbers, never camera pictures.</p>
+        <p class="hint">Add a Browser Source with this address, 1280 by 720. The background is transparent. The page only receives body-pose numbers, never camera pictures.</p>
+        <p class="hint" id="obsBodyNote" hidden>In Full body mode the Browser Source shows what this tab tracks, so keep this control room tab open while you stream.</p>
         <input id="obsUrl" readonly aria-label="Browser Source address" value="">
         <div class="actions"><button id="obsCopy" class="ghost">Copy address</button></div>
         <div class="actions" role="group" aria-label="Character gestures">
@@ -179,6 +181,7 @@
           <div class="seg" id="modeSeg">
             <label><input type="radio" name="mode" value="avatar" checked><span>Cartoon</span></label>
             <label><input type="radio" name="mode" value="character"><span>Character</span></label>
+            <label><input type="radio" name="mode" value="body"><span>Full body</span></label>
             <label><input type="radio" name="mode" value="boxes"><span>Tracking</span></label>
             <label><input type="radio" name="mode" value="original"><span>Original</span></label>
           </div>
@@ -199,6 +202,23 @@
           <p class="hint">Higher is calmer but trails fast moves a little.</p>
         </fieldset>
         <p class="msg" id="cfgMsg" role="status"></p>
+      </section>
+
+      <section aria-labelledby="fullbody" id="bodyPanel" hidden>
+        <h2 id="fullbody">Full body</h2>
+        <p class="hint">Your camera stays in this page. The character receives only joint angles, never pictures.</p>
+        <fieldset>
+          <legend>Legs</legend>
+          <select id="legsMode" aria-label="When the legs move">
+            <option value="auto">Auto: only when clearly in view</option>
+            <option value="off">Off: upper body only</option>
+          </select>
+          <p class="hint">Auto suits sitting at a desk: the legs stay relaxed until the camera sees them well.</p>
+        </fieldset>
+        <label class="hint"><input type="checkbox" id="frameFull"> Show the whole character, legs included</label>
+        <div class="actions"><button id="recenter" class="ghost">Recenter</button></div>
+        <p class="hint">Sit or stand the way you will during the stream, then press Recenter.</p>
+        <p class="msg" id="bodyStatus" role="status">Waiting for the camera…</p>
       </section>
 
       <section aria-labelledby="bg">

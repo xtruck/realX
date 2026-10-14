@@ -11,23 +11,55 @@ const api = async (path, opts = {}) => {
 };
 
 // --- live view and measurements -------------------------------------------------
-const view = $("view"), character = $("character");
+const view = $("view"), character = $("character"), tracker = $("tracker");
 let lastFrames = -1, stalled = 0, mode = null;
 view.addEventListener("load", () => { $("notice").hidden = true; applyMode(mode); }, { once: true });
 
 // The 3D character is its own page (also used as an OBS Browser Source); the camera
 // preview is the MJPEG image. Only one of them shows at a time.
+// Full body mode is a third page: the same character plus this computer's camera, tracked inside
+// that page. The server's own camera is released, and the OBS source receives the relayed numbers.
+function trackerUrl() {
+  const legs = $("legsMode").value === "off" ? "off" : "auto";
+  const frame = $("frameFull").checked ? "full" : "half";
+  return `/avatar?track=1&publish=1&preview=1&frame=${frame}&legs=${legs}`;
+}
+function releaseTracker() {
+  if (!tracker.getAttribute("src")) return;
+  // removing the attribute alone would leave the old page (and its camera) running
+  try { tracker.contentWindow.location.replace("about:blank"); } catch (e) { /* already gone */ }
+  tracker.removeAttribute("src");
+}
 function applyMode(next) {
   mode = next;
-  const isCharacter = mode === "character";
+  const isCharacter = mode === "character", isBody = mode === "body";
+  const noPicture = isCharacter || isBody;   // neither draws the server's MJPEG picture
   if (isCharacter && !character.getAttribute("src")) character.src = "/avatar";
-  // the video stream only exists outside character mode; drop it so it frees its connection
-  if (isCharacter && view.getAttribute("src")) view.removeAttribute("src");
-  if (!isCharacter && !view.getAttribute("src")) view.src = "/stream.mjpg";
+  if (isBody) {
+    if (!tracker.getAttribute("src")) tracker.setAttribute("src", trackerUrl());
+  } else {
+    releaseTracker();
+  }
+  // the video stream only exists outside these modes; drop it so it frees its connection
+  if (noPicture && view.getAttribute("src")) view.removeAttribute("src");
+  if (!noPicture && !view.getAttribute("src")) view.src = "/stream.mjpg";
   character.hidden = !isCharacter;
-  view.hidden = isCharacter || lastFrames < 1;
-  $("obs").hidden = !isCharacter;
+  tracker.hidden = !isBody;
+  view.hidden = noPicture || lastFrames < 1;
+  if (isBody) $("notice").hidden = true;
+  $("obs").hidden = !noPicture;
+  $("obsBodyNote").hidden = !isBody;
+  $("bodyPanel").hidden = !isBody;
   $("obsUrl").value = location.origin + "/avatar";
+}
+const tellTracker = (message) => { if (tracker.contentWindow) tracker.contentWindow.postMessage(message, location.origin); };
+$("legsMode").addEventListener("change", (e) => tellTracker({ type: "realx-legs", mode: e.target.value === "off" ? "off" : "auto" }));
+$("recenter").addEventListener("click", () => tellTracker({ type: "realx-recenter" }));
+$("frameFull").addEventListener("change", () => { if (mode === "body") tracker.setAttribute("src", trackerUrl()); });
+function bodyStatusText(s) {
+  const b = s.body;
+  if (!b || !b.publishing) return "Waiting for the camera…";
+  return `Tracking is live. Viewers connected: ${Number.isFinite(b.viewers) ? b.viewers : 0}`;
 }
 document.querySelectorAll(".emote").forEach((b) => b.addEventListener("click", () =>
   api("/api/emote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: b.dataset.emote }) }).catch(() => {})));
@@ -63,15 +95,21 @@ async function poll() {
     drawRibbon(s.ribbon);
     stalled = s.frames === lastFrames ? stalled + 1 : 0;
     lastFrames = s.frames;
-    const live = s.frames > 0 && stalled < 3 && !s.error;
+    const inBody = s.config.mode === "body";
+    // in Full body mode the server has no picture of its own: "live" means a tracker page is publishing
+    const live = inBody ? !!(s.body && s.body.publishing) : s.frames > 0 && stalled < 3 && !s.error;
     $("tally").classList.toggle("live", live);
-    if (live) { $("notice").hidden = true; applyMode(s.config.mode); }
-    $("state").textContent = s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
-    if (s.error) {
+    if (inBody) {
+      applyMode("body");
+      $("bodyStatus").textContent = bodyStatusText(s);
+    } else if (live) { $("notice").hidden = true; applyMode(s.config.mode); }
+    $("state").textContent = inBody ? (live ? "Live" : "Waiting for the camera")
+      : s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
+    if (s.error && !inBody) {
       $("notice").hidden = false;
       $("notice").textContent = s.error + " Choose a demo source or check your camera.";
     }
-    $("srcLabel").textContent = s.config.source === "camera" ? "Camera" : "Demo footage";
+    $("srcLabel").textContent = inBody ? "This computer's camera" : s.config.source === "camera" ? "Camera" : "Demo footage";
     syncControls(s.config);
   } catch (e) {
     $("tally").classList.remove("live");

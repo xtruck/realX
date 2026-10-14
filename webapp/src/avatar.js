@@ -3,10 +3,23 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin } from "@pixiv/three-vrm";
+import { BodySolver, restFrom } from "./retarget.js";
+import { startTracker } from "./tracker.js";
+import { unpackBody } from "./body.js";
+import { idleQuats } from "./idle.js";
+import { BONES } from "./skeleton.js";
 
 const params = new URLSearchParams(location.search);
 const MIRROR = params.get("mirror") !== "0"; // selfie view: the character moves like your reflection
-const SHOW_BADGE = params.get("badge") !== "off";
+// ?track=1 turns on this page's own camera and drives the character from it; ?publish=1 also shares the
+// result with other pages (an OBS Browser Source); ?preview=1 shows the camera in a corner
+const TRACK = params.get("track") === "1";
+const PUBLISH = TRACK && params.get("publish") === "1";
+const PREVIEW = TRACK && params.get("preview") === "1";
+const LEGS = ["auto", "off", "on"].includes(params.get("legs")) ? params.get("legs") : "auto";
+const DELEGATE = ["auto", "cpu", "gpu"].includes(params.get("delegate")) ? params.get("delegate") : "auto";
+// the label can be hidden for a plain OBS view, but never on a page that is running someone's camera
+const SHOW_BADGE = params.get("badge") !== "off" || params.get("track") === "1";
 const FRAMING = params.get("frame") === "full" ? { dist: 2.7, y: 0.68 } : { dist: 1.75, y: 0.86 };
 
 const OUTFITS = { // [outfit, accent]; the character's skin and face never change
@@ -18,7 +31,29 @@ const clip = (v, n) => (v || "").replace(/[\u0000-\u001f]/g, "").slice(0, n);
 const SHOP = clip(params.get("name"), 40), TAGLINE = clip(params.get("tagline"), 80);
 
 // test and debugging hook; holds numbers only
-const probe = (window.__realx = { outfit: OUTFIT, emotes: [], connected: false, modelLoaded: false, error: null, frames: 0, rigMessages: 0, pose: null });
+const probe = (window.__realx = {
+  outfit: OUTFIT, emotes: [], connected: false, modelLoaded: false, error: null, frames: 0, rigMessages: 0, pose: null,
+  tracking: null, bodyMessages: 0, bodyLive: false, bodyFlags: null, rejected: 0, sent: 0, recenter: () => {},
+});
+
+// --- full-body state: the newest validated body message, from this page's tracker or from the relay ---
+const body = { t: -Infinity, quats: null, expr: null, root: [0, 0, 1], flags: null };
+const shownQ = Object.fromEntries(BONES.map((b) => [b, new THREE.Quaternion()]));
+const targetQ = Object.fromEntries(BONES.map((b) => [b, new THREE.Quaternion()]));
+const shownRoot = [0, 0, 1], shownExpr = {};
+const IDLE = idleQuats();
+let bodyWasLive = false;
+let tracker = null, socket = null;
+
+function onBody(raw) {
+  const msg = unpackBody(raw);
+  if (!msg) { probe.rejected++; return; }       // anything malformed is dropped, never applied
+  probe.bodyMessages++;
+  body.t = performance.now() / 1000;
+  body.quats = msg.quats; body.expr = msg.expr; body.root = msg.root; body.flags = msg.flags;
+  probe.bodyFlags = msg.flags;
+  for (const b of BONES) targetQ[b].set(...msg.quats[b]);
+}
 
 const canvas = document.getElementById("stage");
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, premultipliedAlpha: true });
@@ -75,16 +110,19 @@ function onRig(msg) {
 }
 
 function connect(delay = 500) {
-  const ws = new WebSocket(`ws://${location.host}/ws/rig`);
+  const ws = new WebSocket(`ws://${location.host}/ws/rig${PUBLISH ? "?publish=1" : ""}`);
+  socket = ws;
   ws.onopen = () => { probe.connected = true; delay = 500; };
   ws.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
     if (msg.type === "hello") showBadge(msg.provenance);
     else if (msg.type === "rig") onRig(msg);
+    else if (msg.type === "body" && !TRACK) onBody(msg);   // a tracking page trusts its own camera, not the relay
   };
   ws.onclose = () => {
     probe.connected = false;
+    socket = null;
     present = false;
     setTimeout(() => connect(Math.min(delay * 2, 5000)), delay);
   };
@@ -120,6 +158,12 @@ loader.load(
     dress(vrm);
     scene.add(vrm.scene);
     probe.modelLoaded = true;
+    if (TRACK) {
+      beginTracking().catch((e) => {   // e.g. a VRM without the humanoid bones the solver needs
+        probe.error = String((e && e.message) || e);
+        probe.tracking = { ...(probe.tracking || {}), state: "error", detail: probe.error };
+      });
+    }
   },
   undefined,
   (err) => { probe.error = String((err && err.message) || err); },
@@ -139,6 +183,41 @@ function dress(model) {
 }
 
 const bone = (name) => (vrm ? vrm.humanoid.getNormalizedBoneNode(name) : null);
+
+// --- tracking: this page's own camera. The picture goes to MediaPipe in this page and nowhere else. ---
+async function beginTracking() {
+  const cam = document.getElementById("cam"), note = document.getElementById("trackstate");
+  if (PREVIEW && cam) {
+    cam.hidden = false;
+    if (MIRROR) cam.classList.add("mirror");
+  }
+  const say = (state, detail) => {
+    probe.tracking = { ...(probe.tracking || {}), state, detail };
+    if (note && PREVIEW) { note.hidden = state === "running"; note.textContent = state === "error" ? detail : `Camera: ${state}…`; }
+  };
+  // rest directions come from the model itself, so any VRM humanoid works, not just Pip
+  const rest = restFrom((name) => { const n = bone(name); return n ? n.position.clone() : null; });
+  const solver = new BodySolver(rest, { mirror: MIRROR });
+  tracker = await startTracker({
+    solver, mirror: MIRROR, legs: LEGS, delegate: DELEGATE, video: PREVIEW ? cam : null,
+    onStatus: say,
+    onFrame: (msg, info) => {
+      probe.tracking = { ...probe.tracking, frames: info.frames, fps: Math.round(info.fps), ms: info.ms, level: info.level, delegates: info.delegates };
+      onBody(msg);
+      if (PUBLISH && socket && socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 65536) {
+        socket.send(JSON.stringify(msg));        // numbers only; never a picture
+        probe.sent++;
+      }
+    },
+  });
+  probe.recenter = () => tracker.recenter();
+}
+// the control room (same origin) can ask this page to recenter or change the legs setting
+window.addEventListener("message", (ev) => {
+  if (ev.origin !== location.origin || !ev.data || !tracker) return;
+  if (ev.data.type === "realx-recenter") tracker.recenter();
+  else if (ev.data.type === "realx-legs" && ["auto", "off", "on"].includes(ev.data.mode)) tracker.setLegs(ev.data.mode);
+});
 const damp = (cur, goal, dt, tau) => cur + (goal - cur) * (1 - Math.exp(-dt / tau));
 
 let nextBlink = 2.5, blinkStart = -1;
@@ -161,15 +240,23 @@ function pose(t, dt) {
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const set = (name, x, y, z) => { const b = bone(name); if (b) b.rotation.set(x, y, z, "YXZ"); };
 
-  set("head", -s.pitch * 0.6, s.yaw * 0.6, -s.roll * 0.65);
-  set("neck", -s.pitch * 0.4, s.yaw * 0.4, -s.roll * 0.35);
+  const bodyLive = body.quats !== null && t - body.t < 0.6;
+  probe.bodyLive = bodyLive;
   const breath = Math.sin(t * 1.7);
-  set("chest", 0.015 * breath + clamp(s.depth - 1, -0.5, 0.5) * 0.25, s.yaw * 0.12, -s.x * 0.12);
-  set("spine", 0, s.yaw * 0.08, -s.x * 0.10);
-  set("leftUpperArm", 0, 0, -1.15 + 0.02 * breath);
-  set("rightUpperArm", 0, 0, 1.15 - 0.02 * breath);
-  set("leftLowerArm", 0, 0.1, 0.12);
-  set("rightLowerArm", 0, -0.1, -0.12);
+  if (bodyLive) {
+    applyBody(dt, !bodyWasLive);
+  } else {
+    if (bodyWasLive) releaseBody();     // the tracker went quiet: hands, legs and fingers go back to rest
+    set("head", -s.pitch * 0.6, s.yaw * 0.6, -s.roll * 0.65);
+    set("neck", -s.pitch * 0.4, s.yaw * 0.4, -s.roll * 0.35);
+    set("chest", 0.015 * breath + clamp(s.depth - 1, -0.5, 0.5) * 0.25, s.yaw * 0.12, -s.x * 0.12);
+    set("spine", 0, s.yaw * 0.08, -s.x * 0.10);
+    set("leftUpperArm", 0, 0, -1.15 + 0.02 * breath);
+    set("rightUpperArm", 0, 0, 1.15 - 0.02 * breath);
+    set("leftLowerArm", 0, 0.1, 0.12);
+    set("rightLowerArm", 0, -0.1, -0.12);
+  }
+  bodyWasLive = bodyLive;
   let bounce = 0, happyBoost = 0, ohBoost = 0;
   if (emote) {
     const p = (t - emote.start) / EMOTE_SECONDS[emote.name];
@@ -191,13 +278,46 @@ function pose(t, dt) {
       }
     }
   }
-  vrm.scene.position.set(clamp(s.x, -1.2, 1.2) * 0.28, -clamp(s.y, -1, 1) * 0.12 + bounce, clamp((s.depth - 1) * 0.5, -0.4, 0.4));
+  const where = bodyLive ? { x: shownRoot[0], y: shownRoot[1], depth: shownRoot[2] } : s;
+  vrm.scene.position.set(clamp(where.x, -1.2, 1.2) * 0.28, -clamp(where.y, -1, 1) * 0.12 + bounce, clamp((where.depth - 1) * 0.5, -0.4, 0.4));
 
   const em = vrm.expressionManager;
-  em.setValue("blink", blinkValue(t));
-  em.setValue("happy", clamp(clamp(s.smile, 0, 1) * 0.9 + happyBoost, 0, 1));
-  em.setValue("oh", ohBoost);
-  probe.pose = { ...s, live };
+  if (bodyLive) {
+    // tracked face: blinks, mouth shapes and smile come from the 52 blendshapes; with no face in view the
+    // character keeps its own idle blink instead of staring
+    const faceSeen = body.flags && body.flags.face;
+    em.setValue("blink", Math.max(shownExpr.blink || 0, faceSeen ? 0 : blinkValue(t)));
+    for (const name of ["blinkLeft", "blinkRight", "aa", "ih", "ou", "ee"]) em.setValue(name, shownExpr[name] || 0);
+    em.setValue("happy", clamp(Math.max(shownExpr.happy || 0, happyBoost), 0, 1));
+    em.setValue("oh", Math.max(shownExpr.oh || 0, ohBoost));
+  } else {
+    em.setValue("blink", blinkValue(t));
+    em.setValue("happy", clamp(clamp(s.smile, 0, 1) * 0.9 + happyBoost, 0, 1));
+    em.setValue("oh", ohBoost);
+  }
+  probe.pose = { ...s, live: live || bodyLive };
+}
+
+// The tracker updates 15-30 times a second, the screen 60: ease toward the newest values in between.
+function applyBody(dt, snap) {
+  const k = snap ? 1 : 1 - Math.exp(-dt / 0.035);
+  for (const name of BONES) {
+    shownQ[name].slerp(targetQ[name], k);
+    const node = bone(name);
+    if (node) node.quaternion.copy(shownQ[name]);
+  }
+  for (let i = 0; i < 3; i++) shownRoot[i] = snap ? body.root[i] : damp(shownRoot[i], body.root[i], dt, 0.08);
+  for (const [name, v] of Object.entries(body.expr)) shownExpr[name] = snap ? v : damp(shownExpr[name] ?? v, v, dt, 0.03);
+}
+
+// Leave the body to the legacy pose: everything it does not set itself returns to the relaxed stance.
+function releaseBody() {
+  const legacy = new Set(["head", "neck", "chest", "spine", "leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm"]);
+  for (const name of BONES) {
+    const node = bone(name);
+    if (node && !legacy.has(name)) node.quaternion.copy(IDLE[name]);
+  }
+  body.quats = null;
 }
 
 // --- loop ---

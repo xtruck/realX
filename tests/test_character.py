@@ -88,7 +88,8 @@ def test_custom_avatar_must_be_a_small_glb(tmp_path):
 
 def test_bundle_has_no_hardcoded_external_hosts():
     js = (ROOT / "src/realx/web/avatar.bundle.js").read_text(encoding="utf-8", errors="ignore")
-    for needle in ("https://cdn", "http://cdn", "googleapis", "analytics"):
+    # real hosts only: MediaPipe's protobuf type names contain "type.googleapis.com/..." but are never requested
+    for needle in ("https://cdn", "http://cdn", "storage.googleapis.com", "fonts.googleapis.com", "www.googleapis.com", "analytics"):
         assert needle not in js
 
 

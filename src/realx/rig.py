@@ -13,6 +13,7 @@ with idle animation until a landmark model with more points is added.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 
@@ -175,6 +176,78 @@ def rig_message(
     if emote:
         msg["emote"] = emote  # {"name", "id", "age"}: a button the streamer pressed, not tracked data
     return msg
+
+
+# --- full-body messages from a tracking page -------------------------------------------------------------
+# A tracking page (the browser, with the camera) publishes {"type":"body","f","q","e","r"}: group flags, every
+# bone's quaternion, the expressions and the position in the picture. Numbers only. The server never relays the
+# raw text: it re-serialises what it validated. Limits mirror LIMITS in webapp/src/body.js; a test compares the counts.
+BODY_BONES = 53
+BODY_EXPRESSIONS = 9
+BODY_GROUPS = 5
+MAX_BODY_BYTES = 6144
+_QUAT_BOUND = 1.0001
+_NORM_MIN, _NORM_MAX = 0.9, 1.1
+_EXPR_MIN, _EXPR_MAX = -0.01, 1.01
+_ROOT_XY = 4.0
+_DEPTH_MIN, _DEPTH_MAX = 0.05, 6.0
+_BODY_KEYS = ("type", "f", "q", "e", "r")
+
+
+def _numbers(value, count: int, name: str) -> list[float]:
+    if not isinstance(value, list) or len(value) != count:
+        raise ValueError(f"{name} must be a list of {count} numbers")
+    out = []
+    for v in value:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(f"{name} must hold finite numbers only")
+        try:
+            f = float(v)  # a 400-digit integer overflows here, not in isfinite
+        except (OverflowError, TypeError, ValueError):
+            raise ValueError(f"{name} must hold finite numbers only") from None
+        if not math.isfinite(f):
+            raise ValueError(f"{name} must hold finite numbers only")
+        out.append(f)
+    return out
+
+
+def parse_body_message(text: str) -> str:
+    """Validate one body message and return it as canonical compact JSON. Raises ValueError on anything off."""
+    if not isinstance(text, str):
+        raise ValueError("body message must be text")
+    if len(text.encode("utf-8", "surrogatepass")) > MAX_BODY_BYTES:
+        raise ValueError("body message is too large")
+    try:
+        msg = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        raise ValueError("body message is not valid JSON") from exc
+    if not isinstance(msg, dict) or set(msg) != set(_BODY_KEYS):
+        raise ValueError(f"body message must have exactly the keys {_BODY_KEYS}")
+    if msg["type"] != "body":
+        raise ValueError("body message has the wrong type")
+    f = msg["f"]
+    if isinstance(f, bool) or not isinstance(f, int) or not 0 <= f < 1 << BODY_GROUPS:
+        raise ValueError("f must be an integer flag set")
+    q = _numbers(msg["q"], 4 * BODY_BONES, "q")
+    if any(abs(v) > _QUAT_BOUND for v in q):
+        raise ValueError("q values are out of range")
+    for i in range(0, len(q), 4):
+        if not _NORM_MIN <= math.sqrt(sum(v * v for v in q[i : i + 4])) <= _NORM_MAX:
+            raise ValueError("q must hold unit quaternions")
+    e = _numbers(msg["e"], BODY_EXPRESSIONS, "e")
+    if any(not _EXPR_MIN <= v <= _EXPR_MAX for v in e):
+        raise ValueError("e values are out of range")
+    r = _numbers(msg["r"], 3, "r")
+    if abs(r[0]) > _ROOT_XY or abs(r[1]) > _ROOT_XY or not _DEPTH_MIN <= r[2] <= _DEPTH_MAX:
+        raise ValueError("r is out of range")
+    canonical = {
+        "type": "body",
+        "f": f,
+        "q": [round(v, 4) for v in q],
+        "e": [round(v, 3) for v in e],
+        "r": [round(v, 3) for v in r],
+    }
+    return json.dumps(canonical, separators=(",", ":"))
 
 
 def hello_message(version: str) -> dict:
