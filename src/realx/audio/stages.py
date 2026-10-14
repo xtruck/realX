@@ -94,7 +94,12 @@ class VoiceBackend(Protocol):
 
     name: str
 
-    def convert(self, samples: np.ndarray, sample_rate: int, target: str) -> np.ndarray: ...
+    def convert(self, samples: np.ndarray, sample_rate: int, target: str, session: dict) -> np.ndarray:
+        """Convert one chunk. `session` is owned by the calling stage: keep any
+        streaming state in it, never on the backend, so streams cannot mix."""
+        ...
+
+    def latency_samples(self, target: str, sample_rate: int) -> int: ...
 
 
 _BACKENDS: dict[str, VoiceBackend] = {}
@@ -107,24 +112,27 @@ def register_voice_backend(backend: VoiceBackend) -> None:
 class PitchMorphBackend:
     """Baseline backend: shifts pitch toward a target profile. No identity cloning.
 
-    Streaming: it keeps one shifter per (target, sample rate), so consecutive chunks
-    join without clicks. Output is delayed by the shifter latency.
+    Streaming: the caller's `session` holds one shifter per (target, sample rate), so
+    consecutive chunks join without clicks. Output is delayed by the shifter latency.
+    The backend itself is stateless and safe to share.
     """
 
     name = "pitch_morph"
 
     def __init__(self, semitones_by_target: dict[str, float] | None = None) -> None:
-        self.profiles = semitones_by_target or {}
-        self._shifters: dict[tuple[str, int], dsp.StreamingPitchShifter] = {}
+        self.profiles = dict(semitones_by_target or {})
 
-    def convert(self, samples: np.ndarray, sample_rate: int, target: str) -> np.ndarray:
+    def latency_samples(self, target: str, sample_rate: int) -> int:
+        return 0 if self.profiles.get(target, 0.0) == 0 else dsp.StreamingPitchShifter.DEFAULT_FFT
+
+    def convert(self, samples: np.ndarray, sample_rate: int, target: str, session: dict) -> np.ndarray:
         semitones = self.profiles.get(target, 0.0)
         if semitones == 0:
             return np.asarray(samples, dtype=np.float32).copy()
         key = (target, sample_rate)
-        shifter = self._shifters.get(key)
+        shifter = session.get(key)
         if shifter is None:
-            shifter = self._shifters[key] = dsp.StreamingPitchShifter(semitones, sample_rate)
+            shifter = session[key] = dsp.StreamingPitchShifter(semitones, sample_rate)
         return shifter.process(samples)
 
 
@@ -147,16 +155,25 @@ class VoiceConvert:
             raise ValueError(f"unknown voice backend '{backend}' (known: {sorted(_BACKENDS)})")
         self.target = target
         self._backend = _BACKENDS[backend]
+        self._session: dict = {}
 
-    def setup(self) -> None: ...
+    stateful = True  # holds this stream's converter state
+
+    def setup(self) -> None:
+        self._session = {}  # every run starts from a clean stream
 
     def process(self, ctx: AudioContext) -> AudioContext:
         require_consent(ctx, self.target)
-        ctx.samples = self._backend.convert(ctx.samples, ctx.sample_rate, self.target).astype(np.float32)
+        ctx.samples = self._backend.convert(ctx.samples, ctx.sample_rate, self.target, self._session).astype(
+            np.float32
+        )
         ctx.meta["voice_target"] = self.target
+        latency = self._backend.latency_samples(self.target, ctx.sample_rate)
+        ctx.meta["latency_ms"] = 1000.0 * latency / ctx.sample_rate
         return ctx
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        self._session = {}
 
 
 @register("audio_watermark")

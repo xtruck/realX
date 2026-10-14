@@ -188,6 +188,40 @@ def test_voice_convert_runs_with_consent_and_marks_output():
     assert extract_audio_mark(out.meta["pcm16"], key=bytes(range(40, 72))) is None
 
 
+def test_voice_backend_state_is_per_stream_not_shared():
+    from realx.audio.stages import PitchMorphBackend, register_voice_backend
+
+    register_voice_backend(type("Morph5", (PitchMorphBackend,), {"name": "morph5"})({"alice": 5.0}))
+    st = ConsentStore(KEY)
+    x = tone(220, 0.5)
+
+    def make_pipeline():
+        rec = st.issue("alice", "live", 60)
+        return Pipeline(
+            [
+                create("consent_gate", store=st, record=rec),
+                create("voice_convert", target="alice", backend="morph5"),
+                create("audio_watermark", payload=b"x"),
+            ]
+        )
+
+    chunks = [x[i : i + 2048] for i in range(0, x.size, 2048)]
+    p1, p2 = make_pipeline(), make_pipeline()
+    with p1, p2:
+        first_out = p1.process(AudioContext(samples=chunks[0]))
+        for c in chunks[1:]:  # stream one keeps running and builds up internal state
+            p1.process(AudioContext(samples=c))
+        second_out = p2.process(AudioContext(samples=chunks[0]))  # a brand new stream
+    assert np.allclose(first_out.samples, second_out.samples, atol=2e-4), (
+        "a new stream inherited another stream's converter state"
+    )
+    assert second_out.meta["latency_ms"] == pytest.approx(1000.0 * 1024 / SR, rel=0.01)
+    # restarting the same pipeline also begins from a clean stream
+    with p1:
+        restarted = p1.process(AudioContext(samples=chunks[0]))
+    assert np.allclose(first_out.samples, restarted.samples, atol=2e-4)
+
+
 def test_voice_conversion_refuses_a_different_identity():
     st = ConsentStore(KEY)
     rec = st.issue("alice", "live", 60)

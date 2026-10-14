@@ -112,7 +112,9 @@ class StreamingPitchShifter:
     changing; neural voice conversion backends plug in separately.
     """
 
-    def __init__(self, semitones: float, sample_rate: int, fft_size: int = 1024, oversample: int = 4) -> None:
+    DEFAULT_FFT = 1024
+
+    def __init__(self, semitones: float, sample_rate: int, fft_size: int = DEFAULT_FFT, oversample: int = 4) -> None:
         if fft_size & (fft_size - 1) or fft_size < 256:
             raise ValueError("fft_size must be a power of two >= 256")
         if not -24 <= semitones <= 24:  # also rejects NaN

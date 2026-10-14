@@ -17,7 +17,9 @@ each step so a resumed session knows exactly where to continue.
       normalize, A/V delay, WAV I/O, consent-gated voice_convert, authenticated marks
 - [x] Control-room server + front end (checked in the browser), CSP without inline script
 - [x] ECC review 2 (security, python, architect): findings fixed
-- [x] 92 tests green; pushed to main
+- [x] ECC review 3 (final diff review): one defect (voice backend state shared across
+      streams), fixed with a regression test
+- [x] 93 tests green; pushed to main
 
 ## Next (in order)
 
