@@ -8,6 +8,7 @@ import webbrowser
 import numpy as np
 
 from realx import __version__
+from realx import log as rlog
 from realx.pipeline import Pipeline
 from realx.runtime import pick_providers
 from realx.stages import available, create
@@ -125,6 +126,8 @@ def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="realx")
     parser.add_argument("--version", action="version", version=f"realx {__version__}")
+    parser.add_argument("--log-level", default=None, help="DEBUG, INFO, WARNING or ERROR (default INFO, or REALX_LOG_LEVEL)")
+    parser.add_argument("--log-json", action="store_true", help="write log lines as JSON, one per line")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("providers", help="show execution providers, fastest first")
     sub.add_parser("stages", help="list registered pipeline stages")
@@ -165,6 +168,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--no-browser", action="store_true")
 
     args = parser.parse_args(argv)
+    try:
+        rlog.configure(level=args.log_level, json_lines=args.log_json)
+    except ValueError as exc:  # an unknown level is a usage error, not a crash
+        parser.error(str(exc))
     if args.command == "providers":
         print("\n".join(pick_providers()))
         return 0

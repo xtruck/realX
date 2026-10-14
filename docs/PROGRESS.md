@@ -58,12 +58,12 @@ each step so a resumed session knows exactly where to continue.
       webcam; the scheduler was rewritten (time budget, pose favoured, simulated ~12 Hz for pose at
       30 ms per model) and a hand is no longer discarded when the body model doubts its wrist. Both
       are tested on synthetic data only. **Not yet re-measured on an idle machine or confirmed on a
-      real person**; the preview now shows why a hand is not tracked. See `AUDIT.md`.
+      real person**; the preview now shows why a hand is not tracked. See `AUDIT_REPORT.md`.
 - [x] Research pass (2026-10-14) on how existing capture apps work: see the backlog in `IDEAS.md`.
       REA could not read script bodies of the public Kalidokit demo, so constants from other apps are
       unverified.
 
-- [x] Live Studio work (2026-10-14), see `AUDIT.md` for the baseline and `ROADMAP.md` for the status table:
+- [x] Live Studio work (2026-10-14), see `AUDIT_REPORT.md` for the baseline and `ROADMAP.md` for the status table:
       microphone capture (browser noise suppression, energy VAD, speech-driven mouth cross-faded with the tracked
       mouth, A/V sync alignment; audio never leaves the page, only five mouth weights ride in the body message);
       camera and microphone selection, quality presets, a status panel (fps, latency, skipped frames, per-model
@@ -73,6 +73,13 @@ each step so a resumed session knows exactly where to continue.
       (`PORTRAIT.md`); resilience tests (camera loss, stage failure, queue bounds, long-session memory).
 - [x] Defects found and fixed: `run_stream` never dropped stale frames (it blocked the camera), the scheduler gave
       pose no priority at the measured model costs (9.3 Hz each; now ~14 Hz for pose in simulation).
+- [x] Second audit (`AUDIT_REPORT.md`, 2026-10-14): hardware is an i5-8365U with Intel UHD 620 only (no NVIDIA);
+      dependencies clean (`npm audit` 0, `pip-audit` only pip itself). Found and fixed: the server had **no logging**
+      (silent 500s, camera and download failures); `realx.log` added (`--log-level`, `--log-json`), 14 tests.
+      Still open from that audit: browser camera/microphone unplug recovery, runtime hardware detection and
+      low-resource defaults, capture-time filtering, model memory cost, a 30-minute soak test, and a real-person
+      validation. Work was stopped here at the owner's request; the tests of the files touched passed (215 + 74),
+      a full-suite run was not repeated after this last change.
 - [ ] Not verified: any of the above on a real person, a real microphone or a discrete GPU. Browser tracking
       benchmark runs carried a contention warning (other Chrome processes), so they are not representative.
 

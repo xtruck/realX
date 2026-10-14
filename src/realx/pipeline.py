@@ -7,8 +7,11 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from realx import log as rlog
 from realx.stages.base import Stage
 from realx.types import FrameContext
+
+log = rlog.get_logger("pipeline")
 
 
 class PipelineConfigError(ValueError):
@@ -85,11 +88,18 @@ class Pipeline:
 
     def setup(self) -> None:
         started: list[Stage] = []
+        current: Stage | None = None
         try:
             for stage in self.stages:
+                current = stage
                 stage.setup()
                 started.append(stage)
-        except BaseException:
+        except BaseException as exc:
+            if isinstance(exc, Exception):  # a Ctrl-C while starting is not a fault worth a log line
+                log.error(
+                    "stage %s failed to start: %s: %s", getattr(current, "name", "?"), type(exc).__name__, rlog.clip(exc),
+                    exc_info=True,
+                )
             for stage in reversed(started):
                 try:
                     stage.close()

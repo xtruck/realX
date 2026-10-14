@@ -30,6 +30,9 @@ from realx.rig import EMOTES, MAX_BODY_BYTES, hello_message, parse_body_message,
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
 from realx.stages.background import MAX_IMAGE_BYTES, BackgroundError, decode_background
 from realx.stages import create
+from realx import log as rlog
+
+log = rlog.get_logger("server")
 
 # "body": the browser tracks the camera (full body) and publishes it; the Python side releases the camera
 MODES = ("avatar", "character", "boxes", "original", "body")
@@ -106,6 +109,7 @@ class Engine:
 
     def __init__(self, source: str = "demo:dance", mode: str = "avatar", smoothing: float = 0.35, fps: float = 30.0):
         self.fps = fps
+        self._dedup = rlog.Dedup()  # a fault that repeats on every retry is logged once
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
         self._jpeg: bytes | None = None
@@ -212,9 +216,11 @@ class Engine:
             if self._publishing:
                 return False
             self._publishing = True
-            return True
+        log.info("a tracking page started publishing")
+        return True
 
     def release_publisher(self) -> None:
+        log.info("the tracking page stopped publishing")
         with self._cond:
             self._publishing = False
             self._body = None  # a gone tracker leaves no stale pose behind
@@ -316,7 +322,7 @@ class Engine:
             try:
                 close()
             except Exception:
-                pass
+                log.debug("closing the video source failed", exc_info=True)  # best effort: the camera may already be gone
 
     def _set_error(self, message: str | None) -> None:
         with self._lock:
@@ -401,6 +407,9 @@ class Engine:
                         s["faces"] = len(out.faces)
                         s["dropped"] += dropped
                         s["frames"] += 1
+                        if s["error"]:
+                            log.info("video is flowing again after: %s", rlog.clip(s["error"]))
+                            self._dedup.forget(("source", s["error"]))  # a later repeat of the same fault is news again
                         s["error"] = None
                         self._ribbon.append(state)
                         self._jpeg = None if buf is None else buf.tobytes()
@@ -411,13 +420,18 @@ class Engine:
                         self._cond.notify_all()
                 except (SourceError, StopIteration) as exc:
                     # camera unplugged or busy: say so, drop the dead generator, retry
-                    self._set_error(str(exc) or "The video source stopped.")
+                    reason = str(exc) or "The video source stopped."
+                    self._set_error(reason)
+                    if self._dedup.first(("source", reason)):
+                        log.warning("video source problem, retrying with backoff: %s", rlog.clip(reason))
                     self._close_source(frames)
                     frames, self._open_source, version = None, None, -1
                     self._stop.wait(backoff)
                     backoff = min(backoff * 2, 5.0)
                 except Exception as exc:  # never let the engine thread die silently
                     self._set_error(f"{type(exc).__name__}: {exc}")
+                    if self._dedup.first(("engine", type(exc).__name__, str(exc))):
+                        log.error("engine error, rebuilding the pipeline: %s: %s", type(exc).__name__, rlog.clip(exc), exc_info=True)
                     version = -1  # rebuild the pipeline on the next pass
                     self._stop.wait(backoff)
                     backoff = min(backoff * 2, 5.0)
@@ -493,8 +507,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
             for key in MP_MODELS:
                 try:
                     verified_model(key)
-                except Exception:
-                    pass
+                except Exception as exc:  # best effort: the page asks again, and says why if it still fails
+                    log.warning("model prefetch failed for %s: %s", key, rlog.clip(f"{type(exc).__name__}: {exc}"))
 
         threading.Thread(target=run, name="realx-model-prefetch", daemon=True).start()
 
@@ -650,7 +664,9 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 return self._deny(404, "not found")
             try:
                 data = verified_model(key)
-            except (ModelError, OSError):
+            except (ModelError, OSError) as exc:
+                if engine._dedup.first(("model", key, str(exc))):
+                    log.warning("model %s unavailable: %s: %s", key, type(exc).__name__, rlog.clip(exc))
                 return self._deny(503, "model unavailable; run `realx models fetch` and reload")
             self.send_response(200)
             self._headers("application/octet-stream", len(data), max_age=ASSET_MAX_AGE)
@@ -708,6 +724,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
             except OSError:
                 return
             except Exception:  # a bug must end this one connection cleanly, not kill the thread silently
+                log.exception("the rig socket crashed; closing it with 1011")
                 if conn is not None:
                     conn.send_close(1011)
             finally:
@@ -764,6 +781,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
             except OSError:
                 raise
             except Exception:
+                log.exception("the publisher loop crashed; closing it with 1011")
                 conn.send_close(1011)
 
         def do_POST(self) -> None:
@@ -815,7 +833,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self._deny(400, str(exc)[:200])
             except OSError:
                 return
-            except Exception:  # keep details out of the response
+            except Exception:  # keep details out of the response, but not out of the log
+                log.exception("unexpected error handling POST %s", rlog.clip(parsed.path, 120))
                 self._deny(500, "internal error")
 
     return Handler
@@ -836,9 +855,11 @@ class Server:
         self.engine.start()
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
+        log.info("realx control room listening on http://127.0.0.1:%d/ (this computer only)", self.port)
 
     def stop(self) -> None:
         self.engine.stop()  # ends open streams first
         if self._thread:
             self._httpd.shutdown()
         self._httpd.server_close()
+        log.info("realx control room stopped")

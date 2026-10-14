@@ -15,7 +15,7 @@
 ## Verified status (2026-10-14)
 
 Only what was run and passed is marked done. "Tested synthetically" means unit tests, a fake camera
-or a fake microphone; it is **not** proof on a real person. Details and evidence: `AUDIT.md`.
+or a fake microphone; it is **not** proof on a real person. Details and evidence: `AUDIT_REPORT.md`.
 
 | Item | Status |
 |---|---|
@@ -32,7 +32,7 @@ Live Studio brief, by priority:
 
 | Priority | Verified progress | Not verified / blocked |
 |---|---|---|
-| P0 audit | `AUDIT.md`, from the code | |
+| P0 audit | `AUDIT_REPORT.md`, from the code | |
 | P1 real-webcam tracking | scheduler (pose ~14 Hz at measured costs, simulated), hand rule, status readout, validation guide | real person, hands, legs, filter constants untuned |
 | P2 microphone and speech mouth | mic capture with browser noise suppression, VAD, speech-driven mouth blended with the tracked mouth, A/V sync alignment, privacy checks; tested with synthetic audio and Chrome's fake microphone | real microphone, real voices (formant thresholds tuned on synthetic vowels), real device latency |
 | P3 performance | `realx bench`, browser benchmark, results with conditions in `BENCHMARKS.md` | any GPU other than the laptop's integrated one; every ONNX provider |

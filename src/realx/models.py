@@ -13,6 +13,9 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from realx import log as rlog
+
+log = rlog.get_logger("models")
 
 MAX_MODEL_BYTES = 64 * 1024 * 1024
 
@@ -140,12 +143,17 @@ def ensure_model(name: str, download: bool = True) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
     for url in (spec.url, *spec.mirrors):
+        host = url.split("/")[2] if url.count("/") >= 2 else "unknown host"
+        log.info("model %s: downloading from %s", name, host)
         try:
             _download(spec, url, path)
+            log.info("model %s: downloaded and verified (%s)", name, spec.filename)
             return path
         except ModelError as exc:
+            log.warning("model %s: download from %s refused: %s", name, host, rlog.clip(exc))
             failures.append(str(exc))
         except OSError as exc:  # network error, HTTP error status, timeout
+            log.warning("model %s: download from %s failed: %s", name, host, rlog.clip(exc))
             failures.append(f"{spec.filename}: {url.split('/')[2]}: {exc}")
     raise ModelError("; ".join(failures))
 
