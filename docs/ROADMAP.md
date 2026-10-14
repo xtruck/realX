@@ -37,6 +37,7 @@ Live Studio brief, by priority:
 | P2 microphone and speech mouth | mic capture with browser noise suppression, VAD, speech-driven mouth blended with the tracked mouth, A/V sync alignment, privacy checks; tested with synthetic audio and Chrome's fake microphone | real microphone, real voices (formant thresholds tuned on synthetic vowels), real device latency |
 | P3 performance | `realx bench`, browser benchmark, results with conditions in `BENCHMARKS.md` | any GPU other than the laptop's integrated one; every ONNX provider |
 | P4 portrait animation | adapter, per-image consent, per-frame revocation, license evaluation in `PORTRAIT.md` | **no engine enabled**: LivePortrait needs InsightFace `buffalo_l` (non-commercial) by default; its weights' and the MediaPipe fork's licenses are unverified; no real-time evidence |
+| Photoreal face replacement on a CPU, virtual camera (owner decisions of 2026-10-14: swap wanted, OBS Virtual Camera first then Softcam, web UI kept, personal use) | studies only: `SWAP-CPU.md` (texture-mapped face mesh, licence-clean, CPU plus integrated GPU), `SOFTCAM.md` (MIT, test plan) | **nothing built or measured**; the pipeline through OBS Virtual Camera has not been validated yet; neural swap models stay blocked |
 | P5 control room and Windows | camera, microphone and quality selection, status panel, scripts, OBS and Windows guides | real webcam and OBS run by the maintainers |
 
 ## Blocking decisions
