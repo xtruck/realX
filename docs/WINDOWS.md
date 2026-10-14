@@ -55,8 +55,8 @@ prove that tracking works for you; for that, follow `docs\REAL-WEBCAM-VALIDATION
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\run.ps1
 ```
 
-This starts the control room on `http://127.0.0.1:8765/` and opens it. It listens on your own computer
-only. Options:
+This starts the control room on `http://127.0.0.1:8765/` and opens it with a one-time access token in the link
+(see `docs\OBS.md`, Access token). It listens on your own computer only, and refuses any request without the token. Options:
 
 | Option | Meaning |
 |---|---|

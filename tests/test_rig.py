@@ -8,6 +8,7 @@ import time
 
 import numpy as np
 import pytest
+from conftest import TEST_TOKEN
 
 from realx import ws
 from realx.rig import TRACKED, RigSolver, hello_message, rig_message
@@ -157,6 +158,7 @@ def handshake(server, origin="auto", host=None, key=None, extra=""):
         "Connection: Upgrade",
         f"Sec-WebSocket-Key: {key}",
         "Sec-WebSocket-Version: 13",
+        f"Cookie: realx_token={TEST_TOKEN}",  # what a browser sends after the first page load
     ]
     if origin:
         lines.append(f"Origin: {origin}")

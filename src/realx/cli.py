@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 import webbrowser
@@ -110,9 +111,10 @@ def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None
         return 2
     server.start()
     url = f"http://127.0.0.1:{server.port}/"
-    print(f"realX control room: {url}  (Ctrl+C to stop)")
+    link = f"{url}?token={server.token}"  # the page swaps it for a cookie at once; anything else on this PC lacks it
+    print(f"realX control room: {link}  (Ctrl+C to stop)")
     if open_browser:
-        webbrowser.open(url)
+        webbrowser.open(link)
     try:
         while True:
             time.sleep(1)
@@ -166,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--source", default="demo:dance", help="camera or demo:<dance|jump|sprint|spin|static>")
     s.add_argument("--avatar", default=None, help="your own .vrm character (default: the bundled original, Pip)")
     s.add_argument("--no-browser", action="store_true")
+    s.add_argument("--offline", action="store_true", help="never download models (same as REALX_OFFLINE=1)")
 
     args = parser.parse_args(argv)
     try:
@@ -191,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_cli(args)
     if args.command == "serve":
+        if args.offline:
+            os.environ["REALX_OFFLINE"] = "1"
         return _serve(args.port, args.source, not args.no_browser, args.avatar)
     return _selftest()
 

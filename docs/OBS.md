@@ -7,7 +7,8 @@ OBS draws the character with a **Browser Source**, so no virtual camera or extra
 1. Start the control room (`scripts\windows\run.ps1`) and choose **Full body** (or **Character**).
 2. In OBS, add a source: **Sources > + > Browser**.
 3. Set:
-   - **URL:** `http://127.0.0.1:8765/avatar` (use the port you started the control room on)
+   - **URL:** `http://127.0.0.1:8765/avatar?token=YOUR_TOKEN` (use the port you started the control room on)
+     and see **Access token** below for where the token comes from
    - **Width 1280, Height 720**
    - Leave **Custom CSS** as it is. The background is **transparent**, so whatever is behind the character
      in your scene shows through.
@@ -21,6 +22,20 @@ the character. Browsers slow down or pause tabs in windows that are minimized or
 the control room in a visible window (it can sit behind OBS if part of it stays uncovered).
 
 The OBS source has no camera of its own and never needs camera or microphone permission.
+
+## Access token
+
+The control room refuses every request that does not carry its access token, so another program on your
+PC cannot read the preview or change settings. `realx serve` prints a link ending in `?token=...`; copy the
+token from it into the OBS URL. A new token is made each run, so OBS would need updating each time: set a
+fixed one instead, in PowerShell before starting the control room:
+
+```powershell
+$env:REALX_TOKEN = "choose-16-to-128-letters-digits-dot-dash"
+```
+
+OBS then keeps the same URL. The token is a password for your studio: do not post it or show it on stream
+(OBS's source properties window shows the URL, so keep that off screen).
 
 ## What viewers see
 

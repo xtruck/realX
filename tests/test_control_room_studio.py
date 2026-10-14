@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+from conftest import token_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts" / "windows"
@@ -94,6 +95,7 @@ class Studio:
         self.srv, self.mode, self.body_stats = srv, "avatar", body_stats
         self.avatar_urls, self.errors = [], []
         self.ctx = browser.new_context(viewport={"width": 1280, "height": 1000})
+        self.ctx.add_cookies(token_cookie(srv.port))
         self.page = self.ctx.new_page()
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
         self.page.route("**/api/config", self._config)

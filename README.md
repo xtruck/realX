@@ -18,7 +18,7 @@ with **consent, provenance and license checks built in**.
   synthesized, so no restricted model is involved.
 - **3D character**: Pip, an original VRM character, rendered in your browser with
   three.js and @pixiv/three-vrm and driven by head pose over a local WebSocket. Add
-  `http://127.0.0.1:8765/avatar` as an OBS Browser Source (transparent background).
+  `http://127.0.0.1:8765/avatar?token=<your token>` as an OBS Browser Source (transparent background).
   Bring your own model with `realx serve --avatar my.vrm`.
 - **Full-body tracking**: choose "Full body" in the control room and the character copies your
   head, eyes, 52 face expressions, spine, arms, hands and every finger, and (when they stay
@@ -45,7 +45,14 @@ python -m venv .venv
 .\.venv\Scripts\python -m pytest
 ```
 
-The server listens on `127.0.0.1` only. Choose "Camera" in the control room to use your
+The server listens on `127.0.0.1` only, and every page, API call and the rig socket also needs an **access
+token**: other programs and users on the same computer cannot read your preview or change your studio
+without it. `realx serve` makes a new random token each run and prints the full link (`...?token=...`);
+the browser keeps it in an HttpOnly, SameSite=Strict cookie and drops it from the address bar. Set
+`REALX_TOKEN` (16-128 characters of `A-Z a-z 0-9 . _ ~ -`) to keep the same token between runs, which is
+what an OBS source needs. Scripts send it as `Authorization: Bearer <token>`. Keep it private: it is a
+password for your studio. `realx serve --offline` (or `REALX_OFFLINE=1`) forbids every model download.
+Choose "Camera" in the control room to use your
 webcam, or use the built-in dancing, jumping, sprinting and spinning demos.
 
 ## Measured results

@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import token_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 ARGS = ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
@@ -107,6 +108,7 @@ def test_camera_page_tracks_publishes_numbers_only_and_a_viewer_sees_it(stack):
     browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
     try:
         ctx = browser.new_context(viewport={"width": 480, "height": 480}, permissions=["camera"])
+        ctx.add_cookies(token_cookie(srv.port))
         tracker, viewer = ctx.new_page(), ctx.new_page()
         requests, sent, console, errors = [], [], [], []
         tracker.on("request", lambda r: requests.append((r.method, r.url, r.resource_type, r.post_data)))
@@ -178,7 +180,9 @@ def test_tracking_page_tells_its_parent_which_devices_exist_and_how_it_is_doing(
     base = f"http://127.0.0.1:{srv.port}"
     browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
     try:
-        page = browser.new_context(viewport={"width": 900, "height": 600}, permissions=["camera"]).new_page()
+        ctx = browser.new_context(viewport={"width": 900, "height": 600}, permissions=["camera"])
+        ctx.add_cookies(token_cookie(srv.port))
+        page = ctx.new_page()
         page.goto(f"{base}/")
         page.evaluate(_COLLECT)
         page.evaluate(_EMBED, f"{base}/avatar?track=1&publish=0&preview=1&delegate=cpu&quality=low")
@@ -236,6 +240,7 @@ def test_microphone_drives_the_mouth_when_no_face_is_seen_and_audio_stays_in_the
     browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={black}", f"--use-file-for-fake-audio-capture={wav}"])
     try:
         ctx = browser.new_context(viewport={"width": 480, "height": 480}, permissions=["camera", "microphone"])
+        ctx.add_cookies(token_cookie(srv.port))
         page = ctx.new_page()
         sent, requests, errors = [], [], []
         page.on("websocket", lambda ws: ws.on("framesent", lambda payload: sent.append(payload)))
@@ -273,7 +278,9 @@ def test_a_camera_that_is_not_there_is_explained(stack):
     base = f"http://127.0.0.1:{srv.port}"
     browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
     try:
-        page = browser.new_context(viewport={"width": 900, "height": 600}, permissions=["camera"]).new_page()
+        ctx = browser.new_context(viewport={"width": 900, "height": 600}, permissions=["camera"])
+        ctx.add_cookies(token_cookie(srv.port))
+        page = ctx.new_page()
         page.goto(f"{base}/")
         page.evaluate(_COLLECT)
         page.evaluate(_EMBED, f"{base}/avatar?track=1&preview=1&delegate=cpu&cam=no-such-camera-id")
@@ -288,7 +295,9 @@ def test_refused_camera_is_explained_and_the_character_still_works(stack):
     p, exe, _clip, srv = stack
     browser = _launch(p, exe, [])  # no fake camera, no auto-accept: the browser has nothing to give
     try:
-        page = browser.new_context(viewport={"width": 320, "height": 320}).new_page()
+        ctx = browser.new_context(viewport={"width": 320, "height": 320})
+        ctx.add_cookies(token_cookie(srv.port))
+        page = ctx.new_page()
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(f"http://127.0.0.1:{srv.port}/avatar?track=1&preview=1&delegate=cpu&badge=off")

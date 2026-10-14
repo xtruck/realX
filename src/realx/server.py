@@ -1,14 +1,22 @@
 """Local control-room server: live preview, stats, controls and voice conversion.
 
 Binds to 127.0.0.1 only. Defences against a hostile web page or local process:
-exact Host match (DNS rebinding), Sec-Fetch-Site/Origin checks (cross-site embedding
-and CSRF), strict CSP, request size and time limits, and a connection cap.
+a per-run access token on every route, exact Host match (DNS rebinding), Sec-Fetch-Site/Origin
+checks (cross-site embedding and CSRF), strict CSP, request size and time limits, and a connection cap.
+
+The access token matters because "127.0.0.1 only" keeps other computers out, not other programs or
+users on this one: without it any local process could read the camera-derived preview or change the
+studio's settings. It is random per run (or `REALX_TOKEN`, for a stable one), is carried as
+`Authorization: Bearer`, the `realx_token` cookie (HttpOnly, SameSite=Strict) or `?token=` on GET only,
+and the first page load swaps the query form for the cookie and drops it from the address bar.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
+import os
 import re
 import secrets
 import threading
@@ -17,7 +25,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import NamedTuple
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import numpy as np
 
@@ -45,8 +53,22 @@ BODY_MAX_AGE = 1.0            # seconds: an older body message is never (re)sent
 PUBLISH_IDLE_SECONDS = 15.0   # a publisher that sends nothing this long is dropped
 PUBLISH_RATE_LIMIT = 200      # messages per second from one publisher before it is cut off
 HEARTBEAT_SECONDS = 0.1       # rig messages while the engine has no video of its own (body mode)
+TOKEN_COOKIE = "realx_token"
+TOKEN_ENV = "REALX_TOKEN"
+_TOKEN_SHAPE = re.compile(r"[A-Za-z0-9._~-]{16,128}")  # cookie- and URL-safe without escaping
+DRAIN_LIMIT = 64 * 1024  # an early error reply first reads up to this much of the request body (see _drain)
 PERMISSIONS = "camera=(self), microphone=(), geolocation=()"  # only this origin's own pages may ask for the camera
 PERMISSIONS_WITH_MIC = "camera=(self), microphone=(self), geolocation=()"
+
+
+def resolve_token(explicit: str | None = None) -> str:
+    """The access token: the argument, else REALX_TOKEN, else a fresh random one."""
+    token = explicit if explicit is not None else os.environ.get(TOKEN_ENV)
+    if not token:
+        return secrets.token_urlsafe(32)
+    if not _TOKEN_SHAPE.fullmatch(token):
+        raise ValueError("the access token must be 16-128 characters from A-Z a-z 0-9 . _ ~ -")
+    return token
 
 
 def permissions_for(query: str) -> str:
@@ -308,7 +330,7 @@ class Engine:
             stages.append(create("avatar"))
         elif mode == "boxes":
             stages.append(create("debug_boxes"))
-        return Pipeline(stages)
+        return Pipeline(stages, strict=True)  # only realX's own registered stages ever run in the studio
 
     def _open(self, source: str):
         if source == "camera":
@@ -474,7 +496,7 @@ class _BoundedServer(ThreadingHTTPServer):
             self._slots.release()
 
 
-def make_handler(engine: Engine, port_getter, avatar: bytes):
+def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
     # MediaPipe runtime files: exactly the ones bundled in the package, by name. Nothing else under /mp is served.
     wasm_root = resources.files("realx.web").joinpath("mp/wasm")
     wasm_files = {p.name: p for p in wasm_root.iterdir() if _WASM_NAME.fullmatch(p.name)} if wasm_root.is_dir() else {}
@@ -516,6 +538,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
         server_version = "realX"
         sys_version = ""
         timeout = SOCKET_TIMEOUT
+        _body_taken = False  # set per request: has the handler started reading the body itself?
 
         def log_message(self, *args) -> None:  # quiet
             pass
@@ -548,10 +571,53 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
             # browsers label who is asking; a page on another site is "cross-site"
             return self.headers.get("Sec-Fetch-Site") in (None, "same-origin", "none")
 
+        def _supplied_tokens(self, allow_query: bool) -> list[tuple[str, str]]:
+            """Every token the request carries, with where it came from."""
+            found: list[tuple[str, str]] = []
+            auth = self.headers.get("Authorization") or ""
+            if auth[:7].lower() == "bearer ":
+                found.append(("header", auth[7:].strip()))
+            for part in (self.headers.get("Cookie") or "").split(";"):
+                name, _, value = part.strip().partition("=")
+                if name == TOKEN_COOKIE:
+                    found.append(("cookie", value))
+            if allow_query:
+                for value in parse_qs(urlparse(self.path).query).get("token", []):
+                    found.append(("query", value))
+            return found
+
+        def _auth_source(self, allow_query: bool) -> str | None:
+            """Where a valid token came from, or None. The comparison does not leak how much matched."""
+            want = token.encode()
+            for source, value in self._supplied_tokens(allow_query):
+                if hmac.compare_digest(value.encode("utf-8", "replace"), want):
+                    return source
+            return None
+
+        def _drain(self) -> None:
+            """Before an early error reply, read (a bounded amount of) the request body.
+
+            Closing a socket that still holds unread bytes makes the OS reset the connection, and a client
+            that is still sending can then lose the reply and see a reset instead of the status. Reading a
+            little first lets the reply arrive; a body that is too large is simply cut off.
+            """
+            if self.command != "POST" or self._body_taken or self.headers.get("Transfer-Encoding"):
+                return
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                if n > 0:
+                    self.rfile.read(min(n, DRAIN_LIMIT))
+            except (ValueError, OSError):
+                pass
+            self.close_connection = True
+
         def _deny(self, code: int, msg: str) -> None:
+            self._drain()
             body = json.dumps({"error": msg}).encode()
             self.send_response(code)
             self._headers("application/json", len(body))
+            if code == 401:
+                self.send_header("WWW-Authenticate", "Bearer")
             self.end_headers()
             self.wfile.write(body)
 
@@ -563,6 +629,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
             self.wfile.write(body)
 
         def _body(self, limit: int) -> bytes:
+            self._body_taken = True  # from here on the body is this method's business, not _drain's
             if self.headers.get("Transfer-Encoding"):
                 raise ValueError("chunked uploads are not supported")
             try:
@@ -579,7 +646,12 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 return self._deny(403, "forbidden host")
             if not self._not_cross_site():
                 return self._deny(403, "cross-site requests are not allowed")
+            source = self._auth_source(allow_query=True)
+            if source is None:
+                return self._deny(401, "access token required")
             path = urlparse(self.path).path
+            if source == "query" and path in ("/", "/avatar"):  # first visit from a link (browser or OBS): token into a cookie
+                return self._adopt_token(path)
             if path == "/":
                 page = _asset("index.html")
                 self.send_response(200)
@@ -645,6 +717,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self._stream()
             else:
                 self._deny(404, "not found")
+
+        def _adopt_token(self, path: str) -> None:
+            rest = {k: v for k, v in parse_qs(urlparse(self.path).query).items() if k != "token"}
+            target = path + (("?" + urlencode(rest, doseq=True)) if rest else "")
+            self.send_response(303)
+            self.send_header("Location", target)
+            self.send_header("Set-Cookie", f"{TOKEN_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/")
+            self.send_header("Content-Length", "0")
+            self._headers("text/plain")
+            self.end_headers()
 
         def _mp_wasm(self, name: str) -> None:
             entry = wasm_files.get(name)
@@ -785,8 +867,11 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 conn.send_close(1011)
 
         def do_POST(self) -> None:
+            self._body_taken = False
             if not self._local_host() or not self._same_origin() or not self._not_cross_site():
                 return self._deny(403, "forbidden origin")
+            if self._auth_source(allow_query=False) is None:  # never from the URL: it ends up in logs and history
+                return self._deny(401, "access token required")
             parsed = urlparse(self.path)
             try:
                 if parsed.path == "/api/config":
@@ -841,10 +926,11 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
 
 
 class Server:
-    def __init__(self, engine: Engine, port: int = 8765, avatar_path: str | None = None) -> None:
+    def __init__(self, engine: Engine, port: int = 8765, avatar_path: str | None = None, token: str | None = None) -> None:
         self.engine = engine
         avatar = load_avatar(avatar_path)
-        self._httpd = _BoundedServer(("127.0.0.1", port), make_handler(engine, lambda: self.port, avatar))
+        self.token = resolve_token(token)
+        self._httpd = _BoundedServer(("127.0.0.1", port), make_handler(engine, lambda: self.port, avatar, self.token))
         self._thread: threading.Thread | None = None
 
     @property

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import token_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_BONES = {
@@ -124,7 +125,9 @@ def test_character_renders_and_follows_the_tracker_in_a_real_browser():
                 executable_path=exe,
                 args=["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
             )
-            page = browser.new_page(viewport={"width": 480, "height": 480})
+            ctx = browser.new_context(viewport={"width": 480, "height": 480})
+            ctx.add_cookies(token_cookie(srv.port))
+            page = ctx.new_page()
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(f"http://127.0.0.1:{srv.port}/avatar")
@@ -171,7 +174,9 @@ def test_emote_button_reaches_the_character_page_and_outfit_recolours_only_the_o
                 executable_path=exe,
                 args=["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
             )
-            page = browser.new_page(viewport={"width": 320, "height": 320})
+            ctx = browser.new_context(viewport={"width": 320, "height": 320})
+            ctx.add_cookies(token_cookie(srv.port))
+            page = ctx.new_page()
             page.goto(f"http://127.0.0.1:{srv.port}/avatar?outfit=ocean")
             page.wait_for_function("window.__realx && window.__realx.modelLoaded", timeout=30000)
             time.sleep(1.5)

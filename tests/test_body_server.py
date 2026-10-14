@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import TEST_TOKEN
 
 from realx import rig, ws
 from realx.types import FrameContext
@@ -144,6 +145,7 @@ def handshake(srv, path="/ws/rig", origin="auto", host=None):
         "Connection: Upgrade",
         f"Sec-WebSocket-Key: {base64.b64encode(os.urandom(16)).decode()}",
         "Sec-WebSocket-Version: 13",
+        f"Cookie: realx_token={TEST_TOKEN}",  # what a browser sends after the first page load
     ]
     if origin:
         lines.append(f"Origin: {origin}")

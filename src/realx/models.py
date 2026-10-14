@@ -127,6 +127,11 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def offline() -> bool:
+    """True when REALX_OFFLINE is set (or `realx serve --offline` set it): nothing may be downloaded."""
+    return os.environ.get("REALX_OFFLINE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def ensure_model(name: str, download: bool = True) -> Path:
     if name in BLOCKED:
         raise ModelError(f"model '{name}' is blocked: {BLOCKED[name]}")
@@ -140,6 +145,8 @@ def ensure_model(name: str, download: bool = True) -> Path:
         return path
     if not download:
         raise ModelError(f"{spec.filename} missing; run `realx models fetch`")
+    if offline():
+        raise ModelError(f"{spec.filename} missing and offline mode forbids downloading; fetch it first with `realx models fetch`")
     path.parent.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
     for url in (spec.url, *spec.mirrors):
@@ -159,6 +166,8 @@ def ensure_model(name: str, download: bool = True) -> Path:
 
 
 def _download(spec: ModelSpec, url: str, path: Path) -> None:
+    if offline():  # second guard: no code path reaches the network in offline mode
+        raise ModelError(f"{spec.filename}: offline mode forbids downloading")
     if not url.startswith("https://"):
         raise ModelError(f"{spec.filename}: refusing a non-HTTPS download")
     # unique, exclusively created temp file: a pre-planted link cannot redirect the write

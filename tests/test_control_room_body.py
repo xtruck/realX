@@ -11,6 +11,7 @@ import os
 import time
 
 import pytest
+from conftest import token_cookie
 
 STUB_PAGE = (
     "<!doctype html><title>stub</title><script>window.__msgs=[];"
@@ -61,7 +62,9 @@ class Room:
         self.mode = "avatar"
         self.body_stats = body_stats
         self.errors = []
-        self.page = browser.new_page(viewport={"width": 1280, "height": 900})
+        self.ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        self.ctx.add_cookies(token_cookie(srv.port))
+        self.page = self.ctx.new_page()
         self.page.on("pageerror", lambda e: self.errors.append(str(e)))
         self.page.route("**/api/config", self._config)
         self.page.route("**/api/stats", self._stats)
@@ -103,9 +106,20 @@ class Room:
             time.sleep(0.1)
         raise AssertionError(f"timed out waiting for: {js}")
 
+    def tracker_frame(self, timeout=8.0):
+        """The tracking iframe, once it has navigated to /avatar (its `src` attribute is set a moment earlier)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for f in self.page.frames:
+                if f.url.rstrip("?").split("?")[0].endswith("/avatar"):
+                    return f
+            time.sleep(0.05)
+        raise AssertionError("the tracking frame never navigated to /avatar: " + repr([f.url for f in self.page.frames]))
+
     def close(self):
         self.page.unroute_all(behavior="ignoreErrors")
         self.page.close()
+        self.ctx.close()
 
 
 @pytest.fixture
@@ -165,7 +179,7 @@ def test_legs_and_recenter_reach_the_tracking_page_same_origin(make_room):
     r = make_room()
     r.choose_with_keyboard()
     r.wait("document.querySelector('#tracker').getAttribute('src')")
-    frame = next(f for f in r.page.frames if f.url.rstrip("?").split("?")[0].endswith("/avatar"))
+    frame = r.tracker_frame()
     r.wait("window.__msgs !== undefined", where=frame)
     r.page.select_option("#legsMode", "off")
     r.page.click("#recenter")

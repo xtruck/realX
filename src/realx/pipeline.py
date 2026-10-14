@@ -74,17 +74,66 @@ def validate_stages(stages: Sequence[Stage]) -> None:
         raise PipelineConfigError("a watermark stage must follow the last synthesizing stage")
 
 
+def _trusted_roles() -> dict[str, tuple[type, ...]]:
+    """The only classes allowed to claim a safety role. Imported late: the stage modules import this one."""
+    from realx.audio import stages as audio_stages
+    from realx.stages import builtin
+
+    return {
+        "is_gate": (builtin.ConsentGate,),
+        "is_disclosure": (builtin.Disclosure,),
+        "is_watermark": (builtin.Watermark, audio_stages.AudioWatermark),
+    }
+
+
+def validate_strict(stages: Sequence[Stage], allow: Sequence[type] = ()) -> None:
+    """Strict mode: only stages realX itself registered (or classes the caller names in `allow`) may run,
+    and only realX's own gate, disclosure label and watermark may claim those roles.
+
+    `validate_stages` trusts the flags a stage declares; a stage from anywhere else could declare
+    `is_gate = True` and pass it without checking anything. Strict mode closes that.
+    """
+    from realx.stages import base
+
+    known = {f for f in base._REGISTRY.values() if isinstance(f, type)} | set(allow)
+    roles = _trusted_roles()
+    for stage in stages:
+        cls = type(stage)
+        if cls not in known:
+            raise PipelineConfigError(f"stage '{getattr(stage, 'name', cls.__name__)}' is not a registered realX stage")
+        for flag, trusted in roles.items():
+            if getattr(stage, flag, False) and cls not in trusted:
+                raise PipelineConfigError(f"stage '{getattr(stage, 'name', cls.__name__)}' claims {flag} but is not realX's own")
+
+
 @dataclass
 class Pipeline:
-    """Runs stages in order on one frame. Collects per-stage timings."""
+    """Runs stages in order on one frame. Collects per-stage timings.
+
+    The stage list is copied into a tuple after it is validated and cannot be replaced, so a list kept by the
+    caller cannot be edited later to remove the gate, label or watermark. With `strict=True` only registered
+    realX stages run (see `validate_strict`); `allow` names extra classes the caller vouches for.
+    """
 
     stages: Sequence[Stage]
     timings: dict[str, StageTiming] = field(default_factory=dict)
+    strict: bool = False
+    allow: Sequence[type] = ()
     _ready: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        validate_stages(self.stages)
+        frozen = tuple(self.stages)
+        validate_stages(frozen)
+        if self.strict:
+            validate_strict(frozen, tuple(self.allow))
+        self.allow = tuple(self.allow)
+        object.__setattr__(self, "stages", frozen)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in ("stages", "strict", "allow") and "stages" in self.__dict__ and isinstance(self.__dict__["stages"], tuple):
+            raise AttributeError(f"Pipeline.{name} cannot be changed after it is built")
+        object.__setattr__(self, name, value)
 
     def setup(self) -> None:
         started: list[Stage] = []

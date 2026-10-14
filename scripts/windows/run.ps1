@@ -43,7 +43,8 @@ if ($DryRun) {
 }
 if (-not (Test-Path $realx)) { throw "No environment at $VenvPath. Run scripts\windows\install.ps1 first." }
 
-Write-Host "Control room: http://127.0.0.1:$Port/   (OBS Browser Source: http://127.0.0.1:$Port/avatar)"
+Write-Host "The link with the access token is printed below. For an OBS Browser Source use http://127.0.0.1:$Port/avatar?token=<that token>"
+Write-Host "(set `$env:REALX_TOKEN to a fixed 16-128 character token first to keep the same URL between runs)"
 Write-Host 'Press Ctrl+C to stop. In Full body mode keep the control room tab open while you stream.'
 & $realx @arguments
 exit $LASTEXITCODE
