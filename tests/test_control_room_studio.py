@@ -474,6 +474,36 @@ def test_scripts_parse_without_errors(name):
 
 
 @pytest.mark.skipif(not powershell, reason="PowerShell not available")
+def test_obs_check_parses_without_errors():
+    cmd = (
+        "$e = $null; $t = $null; "
+        f"[void][System.Management.Automation.Language.Parser]::ParseFile('{SCRIPTS / 'obs-check.ps1'}', [ref]$t, [ref]$e); "
+        "if ($e -and $e.Count) { $e | ForEach-Object { $_.Message }; exit 1 }"
+    )
+    run = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", cmd], capture_output=True, text=True, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+
+
+def test_obs_check_only_reads_and_never_changes_the_computer():
+    """Its promise is "read-only": no writes, no registry edits, no processes started or stopped, no POST."""
+    text = (SCRIPTS / "obs-check.ps1").read_text(encoding="utf-8")
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    forbidden = [
+        "Set-ItemProperty", "New-ItemProperty", "Remove-Item", "Remove-ItemProperty", "New-Item", "Add-Content", "Set-Content",
+        "Out-File", "Start-Process", "Stop-Process", "Invoke-Expression", "iex ", "reg add", "reg delete", "netsh",
+        "Enable-", "Disable-", "Install-", "Register-", "Set-ExecutionPolicy", "-Method Post", "-Method Put", "-Method Delete",
+        "Invoke-WebRequest", "Restart-", "Clear-", "Set-Service",
+    ]
+    for needle in forbidden:
+        assert needle.lower() not in code.lower(), f"obs-check.ps1 must stay read-only, found {needle}"
+    assert "Set-StrictMode -Version" in text and '$ErrorActionPreference = "Stop"' in text
+    # the one web address in a message (where to download OBS) is text, not a request: every actual network call goes to $base
+    calls = [line for line in code.splitlines() if "Invoke-RestMethod" in line]
+    assert calls and all("$base" in line for line in calls), calls
+    assert '$base = "http://127.0.0.1:$Port"' in code, "$base is this computer only"
+
+
+@pytest.mark.skipif(not powershell, reason="PowerShell not available")
 def test_dry_runs_describe_the_plan_and_change_nothing(tmp_path):
     def run(name, *args):
         return subprocess.run(
