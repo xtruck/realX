@@ -15,6 +15,7 @@ class Face:
     score: float = 1.0
     track_id: int | None = None
     embedding: np.ndarray | None = None
+    predicted: bool = False  # True when the box was extrapolated, not detected
 
 
 @dataclass

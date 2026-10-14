@@ -86,7 +86,7 @@ class OneEuroSmoother:
     stateful = True
 
     def __init__(
-        self, min_cutoff: float = 1.0, beta: float = 0.05, fps: float = 30.0, max_age: int = 30
+        self, min_cutoff: float = 2.0, beta: float = 0.5, fps: float = 30.0, max_age: int = 30
     ) -> None:
         if fps <= 0 or max_age < 1:
             raise ValueError("fps must be > 0 and max_age >= 1")
