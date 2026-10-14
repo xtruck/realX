@@ -11,10 +11,29 @@ const api = async (path, opts = {}) => {
 };
 
 // --- live view and measurements -------------------------------------------------
-const view = $("view");
-let lastFrames = -1, stalled = 0;
-view.addEventListener("load", () => { $("notice").hidden = true; view.hidden = false; }, { once: true });
-view.src = "/stream.mjpg";
+const view = $("view"), character = $("character");
+let lastFrames = -1, stalled = 0, mode = null;
+view.addEventListener("load", () => { $("notice").hidden = true; applyMode(mode); }, { once: true });
+
+// The 3D character is its own page (also used as an OBS Browser Source); the camera
+// preview is the MJPEG image. Only one of them shows at a time.
+function applyMode(next) {
+  mode = next;
+  const isCharacter = mode === "character";
+  if (isCharacter && !character.getAttribute("src")) character.src = "/avatar";
+  // the video stream only exists outside character mode; drop it so it frees its connection
+  if (isCharacter && view.getAttribute("src")) view.removeAttribute("src");
+  if (!isCharacter && !view.getAttribute("src")) view.src = "/stream.mjpg";
+  character.hidden = !isCharacter;
+  view.hidden = isCharacter || lastFrames < 1;
+  $("obs").hidden = !isCharacter;
+  $("obsUrl").value = location.origin + "/avatar";
+}
+$("obsCopy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("obsUrl").value); $("obsCopy").textContent = "Copied"; }
+  catch (e) { $("obsUrl").select(); $("obsCopy").textContent = "Press Ctrl+C"; }
+  setTimeout(() => { $("obsCopy").textContent = "Copy address"; }, 1800);
+});
 
 const ribbon = $("ribbon");
 const ctx = ribbon.getContext("2d");
@@ -44,7 +63,7 @@ async function poll() {
     lastFrames = s.frames;
     const live = s.frames > 0 && stalled < 3 && !s.error;
     $("tally").classList.toggle("live", live);
-    if (live) { $("notice").hidden = true; view.hidden = false; }
+    if (live) { $("notice").hidden = true; applyMode(s.config.mode); }
     $("state").textContent = s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
     if (s.error) {
       $("notice").hidden = false;
@@ -65,6 +84,7 @@ let editing = 0;
 function syncControls(c) {
   if (Date.now() - editing < 1500) return;
   document.querySelectorAll('input[name="mode"]').forEach((r) => { r.checked = r.value === c.mode; });
+  if (c.mode !== mode) applyMode(c.mode);
   $("source").value = c.source;
   $("smooth").value = Math.round(c.smoothing * 100);
   $("smoothOut").textContent = Math.round(c.smoothing * 100) + "%";
@@ -78,7 +98,7 @@ async function setConfig(changes) {
     $("cfgMsg").className = "msg err"; $("cfgMsg").textContent = e.message;
   }
 }
-document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", () => setConfig({ mode: r.value })));
+document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", () => { applyMode(r.value); setConfig({ mode: r.value }); }));
 $("source").addEventListener("change", (e) => setConfig({ source: e.target.value }));
 let t;
 $("smooth").addEventListener("input", (e) => {

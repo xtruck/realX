@@ -1,0 +1,17 @@
+{
+  "name": "realx-avatar-renderer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser renderer for the realX original character. Bundled into src/realx/web/avatar.bundle.js.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "3.4.2",
+    "three": "0.178.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.5"
+  }
+}

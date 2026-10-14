@@ -20,20 +20,46 @@ import numpy as np
 from realx import __version__
 from realx.audio import offline
 from realx.models import BLOCKED, MANIFEST
+from realx import ws
 from realx.pipeline import Pipeline
+from realx.rig import hello_message, rig_message
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
 from realx.stages import create
 
-MODES = ("avatar", "boxes", "original")
+MODES = ("avatar", "character", "boxes", "original")
 MAX_JSON = 4096
+MAX_AVATAR_BYTES = 32 * 1024 * 1024
 MAX_CONNECTIONS = 16
 SOCKET_TIMEOUT = 15.0
 
 CSP = (
-    "default-src 'none'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; "
+    "default-src 'none'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; "
     "style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'; "
     "object-src 'none'; frame-ancestors 'none'"
 )
+
+
+def avatar_csp(port: int) -> str:
+    """The avatar page loads one model file and listens to one WebSocket, nothing else."""
+    sockets = f"ws://127.0.0.1:{port} ws://localhost:{port}"
+    return (
+        f"default-src 'none'; img-src 'self' blob: data:; connect-src 'self' {sockets}; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'; "
+        "object-src 'none'; frame-ancestors 'self'"
+    )
+
+
+def load_avatar(path: str | None) -> bytes:
+    """The character model: the bundled original, or a VRM file the user chose."""
+    if path is None:
+        return _asset("avatars/pip.vrm")
+    with open(path, "rb") as fh:
+        data = fh.read(MAX_AVATAR_BYTES + 1)
+    if len(data) > MAX_AVATAR_BYTES:
+        raise ValueError("avatar file is larger than 32 MB")
+    if data[:4] != b"glTF":
+        raise ValueError("avatar must be a .vrm (binary glTF) file")
+    return data
 
 
 def _smoothing_to_cutoff(s: float) -> float:
@@ -49,6 +75,7 @@ class Engine:
         self._cond = threading.Condition(self._lock)
         self._jpeg: bytes | None = None
         self._seq = 0
+        self._rig = json.dumps(rig_message(0, 0.0, (0, 0), []))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._config = {"source": source, "mode": mode, "smoothing": smoothing}
@@ -120,6 +147,13 @@ class Engine:
                 self._cond.wait(timeout)
             return self._jpeg, self._seq
 
+    def wait_rig(self, last_seq: int, timeout: float = 1.0) -> tuple[str, int]:
+        """Latest rig message; blocks until a frame newer than `last_seq` or timeout."""
+        with self._cond:
+            if self._seq == last_seq and not self._stop.is_set():
+                self._cond.wait(timeout)
+            return self._rig, self._seq
+
     # -- internals ----------------------------------------------------------------
     def _snapshot(self) -> tuple[dict, int]:
         with self._lock:  # config and its version must be read together
@@ -128,6 +162,7 @@ class Engine:
     def _build(self, cfg: dict) -> Pipeline:
         stages = [create("detect_yunet", score_threshold=0.3)]
         stages += [create("track"), create("one_euro", min_cutoff=_smoothing_to_cutoff(cfg["smoothing"]), beta=0.5)]
+        stages.append(create("rig"))  # the character renderer in the browser reads this
         if cfg["mode"] == "avatar":
             stages.append(create("avatar"))
         elif cfg["mode"] == "boxes":
@@ -200,11 +235,15 @@ class Engine:
                     else:
                         out = pipe.process(ctx)
                     latency = (time.perf_counter() - t0) * 1000
-                    ok, buf = cv2.imencode(
-                        ".jpg", cv2.cvtColor(out.pixels, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82]
-                    )
-                    if not ok:
-                        raise RuntimeError("could not encode frame")
+                    buf = None
+                    if cfg["mode"] != "character":  # the browser draws the character itself
+                        ok, buf = cv2.imencode(
+                            ".jpg", cv2.cvtColor(out.pixels, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82]
+                        )
+                        if not ok:
+                            raise RuntimeError("could not encode frame")
+                    fh, fw = out.pixels.shape[:2]
+                    rig_faces = out.meta.get("rig", []) if cfg["mode"] != "original" else []
                     state = 0 if not out.faces else (2 if all(f.predicted for f in out.faces) else 1)
                     now = time.perf_counter()
                     inst_fps = 1.0 / max(now - last, 1e-6)
@@ -219,8 +258,9 @@ class Engine:
                         s["frames"] += 1
                         s["error"] = None
                         self._ribbon.append(state)
-                        self._jpeg = buf.tobytes()
+                        self._jpeg = None if buf is None else buf.tobytes()
                         self._seq += 1
+                        self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces))
                         self._cond.notify_all()
                 except (SourceError, StopIteration) as exc:
                     # camera unplugged or busy: say so, drop the dead generator, retry
@@ -273,7 +313,7 @@ class _BoundedServer(ThreadingHTTPServer):
             self._slots.release()
 
 
-def make_handler(engine: Engine, port_getter):
+def make_handler(engine: Engine, port_getter, avatar: bytes):
     class Handler(BaseHTTPRequestHandler):
         server_version = "realX"
         sys_version = ""
@@ -354,6 +394,31 @@ def make_handler(engine: Engine, port_getter):
                 self._headers("text/javascript; charset=utf-8", len(js))
                 self.end_headers()
                 self.wfile.write(js)
+            elif path == "/avatar":
+                page = _asset("avatar.html")
+                self.send_response(200)
+                self._headers("text/html; charset=utf-8", len(page))
+                self.send_header("Content-Security-Policy", avatar_csp(port_getter()))
+                self.send_header("X-Frame-Options", "SAMEORIGIN")
+                self.end_headers()
+                self.wfile.write(page)
+            elif path == "/avatar.bundle.js":
+                js = _asset("avatar.bundle.js")
+                self.send_response(200)
+                self._headers("text/javascript; charset=utf-8", len(js))
+                self.end_headers()
+                self.wfile.write(js)
+            elif path == "/avatar/model.vrm":
+                self.send_response(200)
+                self._headers("model/gltf-binary", len(avatar))
+                self.end_headers()
+                self.wfile.write(avatar)
+            elif path == "/favicon.ico":
+                self.send_response(204)
+                self._headers("image/x-icon", 0)
+                self.end_headers()
+            elif path == "/ws/rig":
+                self._rig_socket()
             elif path == "/api/stats":
                 self._json(engine.stats())
             elif path == "/api/safety":
@@ -380,13 +445,45 @@ def make_handler(engine: Engine, port_getter):
             try:
                 while not engine.stopped:
                     jpeg, new = engine.wait_frame(seq)
-                    if jpeg is None or new == seq:
+                    if new == seq:
                         continue
                     seq = new
+                    if jpeg is None:
+                        continue
                     self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpeg))
                     self.wfile.write(jpeg)
                     self.wfile.write(b"\r\n")
             except OSError:  # client went away or stalled past the timeout
+                return
+
+        def _rig_socket(self) -> None:
+            """Stream rig numbers to the avatar page. Latest value wins; nothing queues."""
+            h = self.headers
+            wants = (h.get("Upgrade") or "").lower() == "websocket" and "upgrade" in (h.get("Connection") or "").lower()
+            if not wants or h.get("Sec-WebSocket-Version") != "13" or not ws.valid_client_key(h.get("Sec-WebSocket-Key")):
+                return self._deny(400, "expected a WebSocket upgrade")
+            if not self._same_origin() or h.get("Origin") is None:
+                return self._deny(403, "forbidden origin")  # browsers always send Origin on WebSockets
+            self.protocol_version = "HTTP/1.1"  # the WebSocket handshake requires it
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", ws.accept_key(h["Sec-WebSocket-Key"]))
+            self.end_headers()
+            self.close_connection = True
+            conn = ws.Connection(self.connection)
+            seq = -1
+            try:
+                conn.send_text(json.dumps(hello_message(__version__)))
+                while not engine.stopped and not conn.closed:
+                    message, new = engine.wait_rig(seq)
+                    conn.poll()
+                    if conn.closed:
+                        break
+                    if new != seq:
+                        seq = new
+                        conn.send_text(message)
+            except (OSError, ws.WebSocketError):
                 return
 
         def do_POST(self) -> None:
@@ -429,9 +526,10 @@ def make_handler(engine: Engine, port_getter):
 
 
 class Server:
-    def __init__(self, engine: Engine, port: int = 8765) -> None:
+    def __init__(self, engine: Engine, port: int = 8765, avatar_path: str | None = None) -> None:
         self.engine = engine
-        self._httpd = _BoundedServer(("127.0.0.1", port), make_handler(engine, lambda: self.port))
+        avatar = load_avatar(avatar_path)
+        self._httpd = _BoundedServer(("127.0.0.1", port), make_handler(engine, lambda: self.port, avatar))
         self._thread: threading.Thread | None = None
 
     @property

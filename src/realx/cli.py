@@ -52,7 +52,7 @@ def _voice(src: str, dst: str, semitones: float) -> int:
     return 0
 
 
-def _serve(port: int, source: str, open_browser: bool) -> int:
+def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None) -> int:
     from realx.models import ModelError, ensure_model
     from realx.server import Engine, Server
 
@@ -61,7 +61,11 @@ def _serve(port: int, source: str, open_browser: bool) -> int:
     except ModelError as exc:
         print(f"cannot start: {exc}", file=sys.stderr)
         return 2
-    server = Server(Engine(source=source), port=port)
+    try:
+        server = Server(Engine(source=source), port=port, avatar_path=avatar)
+    except (OSError, ValueError) as exc:
+        print(f"cannot start: {exc}", file=sys.stderr)
+        return 2
     server.start()
     url = f"http://127.0.0.1:{server.port}/"
     print(f"realX control room: {url}  (Ctrl+C to stop)")
@@ -96,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("serve", help="open the control room in your browser")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--source", default="demo:dance", help="camera or demo:<dance|jump|sprint|spin|static>")
+    s.add_argument("--avatar", default=None, help="your own .vrm character (default: the bundled original, Pip)")
     s.add_argument("--no-browser", action="store_true")
 
     args = parser.parse_args(argv)
@@ -110,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "voice":
         return _voice(args.input, args.output, args.semitones)
     if args.command == "serve":
-        return _serve(args.port, args.source, not args.no_browser)
+        return _serve(args.port, args.source, not args.no_browser, args.avatar)
     return _selftest()
 
 

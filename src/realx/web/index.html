@@ -46,6 +46,9 @@
   .monitor { background: var(--bezel); border-radius: 16px; padding: 14px 14px 12px; }
   .screen { position: relative; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; overflow: hidden; }
   .screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .screen iframe { width: 100%; height: 100%; border: 0; display: block; background: linear-gradient(160deg, #1d2e3a, #0f1a22); }
+  .obs { margin-top: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); }
+  .obs input { width: 100%; font: inherit; color: inherit; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
   .guides { position: absolute; inset: 8%; border: 1px dashed rgba(255,255,255,.35); pointer-events: none; display: none; }
   .guides.on { display: block; }
   .screen .notice { position: absolute; inset: 0; display: grid; place-items: center; color: #cfd8de; text-align: center; padding: 24px; }
@@ -82,7 +85,7 @@
   .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 3px; gap: 3px; }
   .seg label { position: relative; }
   .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
-  .seg span { display: block; text-align: center; padding: 8px 6px; border-radius: 7px; font-size: .92rem; cursor: pointer; }
+  .seg span { display: block; text-align: center; padding: 8px 4px; border-radius: 7px; font-size: .92rem; cursor: pointer; }
   .seg input:checked + span { background: var(--teal); color: #fff; font-weight: 600; }
   .seg input:focus-visible + span { outline: 3px solid var(--teal); outline-offset: 2px; }
 
@@ -119,6 +122,7 @@
       <div class="monitor">
         <div class="screen">
           <img id="view" alt="Live preview with tracked faces" hidden>
+          <iframe id="character" title="3D character preview" hidden></iframe>
           <div class="guides" id="guides"></div>
           <div class="notice" id="notice">Starting the video pipeline…</div>
         </div>
@@ -129,6 +133,13 @@
           <span class="spacer"></span>
           <label><input type="checkbox" id="guideToggle"> Show safe area</label>
         </div>
+      </div>
+
+      <div class="obs" id="obs" hidden>
+        <h2>Use the character in OBS</h2>
+        <p class="hint">Add a Browser Source with this address, 1280 by 720. The background is transparent. The page only receives head-pose numbers, never camera pictures.</p>
+        <input id="obsUrl" readonly aria-label="Browser Source address" value="">
+        <div class="actions"><button id="obsCopy" class="ghost">Copy address</button></div>
       </div>
 
       <div class="stats" role="group" aria-label="Live measurements">
@@ -160,7 +171,8 @@
         <fieldset>
           <legend>What to show</legend>
           <div class="seg" id="modeSeg">
-            <label><input type="radio" name="mode" value="avatar" checked><span>Avatar</span></label>
+            <label><input type="radio" name="mode" value="avatar" checked><span>Cartoon</span></label>
+            <label><input type="radio" name="mode" value="character"><span>Character</span></label>
             <label><input type="radio" name="mode" value="boxes"><span>Tracking</span></label>
             <label><input type="radio" name="mode" value="original"><span>Original</span></label>
           </div>
