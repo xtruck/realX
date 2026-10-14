@@ -69,6 +69,40 @@ The camera, microphone, quality and legs settings belong to the control room; se
    the real update rates).
 3. If the character does not move, see below.
 
+## Validate the route: realX, OBS, OBS Virtual Camera, your apps
+
+This is route A, the one that works today. realX's character goes into OBS as a Browser Source, and **OBS Virtual
+Camera** hands it to other programs as a camera. Nothing has been run through this route in Zoom, Meet, WhatsApp
+Desktop or TikTok Live Studio by the maintainers: the table below is yours to fill in.
+
+1. Start realX with a token you choose, so the OBS address never changes:
+
+       $env:REALX_TOKEN = "choose-a-long-private-token-1234"
+       realx serve --no-browser
+
+2. Run the read-only check. It changes nothing; it tells you what is missing and prints the OBS settings:
+
+       .\scripts\windows\obs-check.ps1
+
+3. In OBS add the Browser Source it printed (1280 x 720, 30 fps), then **Controls > Start Virtual Camera**.
+4. In each app below, choose **OBS Virtual Camera** as the camera, then fill in the row.
+
+| App | Sees "OBS Virtual Camera" | Character appears | Moves with you | Notes |
+|---|---|---|---|---|
+| OBS preview | | | | |
+| Google Meet (Chrome) | | | | |
+| Zoom | | | | |
+| WhatsApp Desktop | | | | |
+| TikTok Live Studio | | | | |
+
+The route is validated when the apps you actually use all show the character and it follows you. Write down
+the frame rate you see and any lag; the status panel in the control room gives the real model update rates.
+
+What this route cannot do: OBS lets whoever runs it crop, cover or hide parts of a source, so a label inside a
+Browser Source cannot be guaranteed to reach the other app. The label is a courtesy to your viewers, and a rule
+of the platforms you stream on. A virtual camera that realX itself feeds is the only way to control the final
+picture; that is what `SOFTCAM.md` studies.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
