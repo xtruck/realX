@@ -30,3 +30,19 @@ and most jurisdictions now expect them.
 - **Unchanged.** Anything that imitates a real person (`voice_convert`, face swaps) still
   needs a consent gate before it and a watermark after it. `inswapper_128` and `buffalo_l`
   stay blocked.
+
+## Digital co-host (a real person who agrees)
+
+- `realx cohost grant --name "Kofi" --friend-agreed` issues a signed, scoped, expiring consent
+  record. It refuses without `--friend-agreed` and prints a revoke code once; only the holder
+  of that code (the co-host) can end consent. A running stream stops at its next frame and it
+  stays ended after a restart. Limit: the vault is on the streamer's computer, so a person with
+  full control of it could delete the revocation marker; an unremovable one needs a key the
+  streamer does not hold (roadmap M4).
+- Any stage that shows a real person's likeness (`uses_likeness`) cannot be built into a
+  pipeline without: a consent gate before it (a likeness stage counts as needing consent), a visible "DIGITAL HOST | name | shown with
+  permission" bar after it, then the watermark, and no picture-editing stage may sit between the bar and the watermark.
+  The bar is not configurable.
+- No face-rendering model ships. `inswapper_128` and `buffalo_l` stay blocked, so today the
+  co-host flow is the consent, label and revoke machinery plus a stub renderer. A real
+  renderer needs a licensed or self-trained model first.

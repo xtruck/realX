@@ -55,6 +55,7 @@ class ConsentStore:
         self.__secret = bytes(secret)
         self.key_id = key_id
         self._revoked: set[str] = set()
+        self._is_revoked_elsewhere = None  # optional callable(record_id) -> bool, asked on every check
 
     def __repr__(self) -> str:
         return f"ConsentStore(key_id={self.key_id!r})"
@@ -79,6 +80,11 @@ class ConsentStore:
             self._sign(unsigned),
         )
 
+    def set_revocation_source(self, is_revoked) -> None:
+        """Also treat a record as revoked when `is_revoked(record_id)` says so. Checked on every
+        verify, so a revocation made by another process stops a stream that is already running."""
+        self._is_revoked_elsewhere = is_revoked
+
     def revoke(self, record_id: str) -> None:
         self._revoked.add(record_id)
 
@@ -98,7 +104,9 @@ class ConsentStore:
                 raise ConsentError("consent signature invalid")
         except (TypeError, ValueError) as exc:
             raise ConsentError("consent record malformed") from exc
-        if record.record_id in self._revoked:
+        if record.record_id in self._revoked or (
+            self._is_revoked_elsewhere is not None and self._is_revoked_elsewhere(record.record_id)
+        ):
             raise ConsentError("consent revoked")
         if record.scope != scope:
             raise ConsentError(f"consent scope '{record.scope}' does not allow '{scope}'")

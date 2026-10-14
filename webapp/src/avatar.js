@@ -9,8 +9,16 @@ const MIRROR = params.get("mirror") !== "0"; // selfie view: the character moves
 const SHOW_BADGE = params.get("badge") !== "off";
 const FRAMING = params.get("frame") === "full" ? { dist: 2.7, y: 0.68 } : { dist: 1.75, y: 0.86 };
 
+const OUTFITS = { // [outfit, accent]; the character's skin and face never change
+  coral: ["#f28573", "#333f73"], ocean: ["#3a86d1", "#1d2b53"], sunny: ["#f2c14e", "#7a4e1d"],
+  berry: ["#b5446e", "#3a1c40"], forest: ["#3f8f5a", "#1f3d2b"],
+};
+const OUTFIT = OUTFITS[params.get("outfit")] ? params.get("outfit") : "coral";
+const clip = (v, n) => (v || "").replace(/[\u0000-\u001f]/g, "").slice(0, n);
+const SHOP = clip(params.get("name"), 40), TAGLINE = clip(params.get("tagline"), 80);
+
 // test and debugging hook; holds numbers only
-const probe = (window.__realx = { connected: false, modelLoaded: false, error: null, frames: 0, rigMessages: 0, pose: null });
+const probe = (window.__realx = { outfit: OUTFIT, emotes: [], connected: false, modelLoaded: false, error: null, frames: 0, rigMessages: 0, pose: null });
 
 const canvas = document.getElementById("stage");
 const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, premultipliedAlpha: true });
@@ -40,9 +48,22 @@ const shown = { ...target };
 let lastRig = -Infinity; // seconds, performance.now() based
 let present = false;
 
+let lastEmoteId = null;
+const EMOTE_SECONDS = { wave: 2.2, happy: 1.8, surprised: 1.4, bow: 1.6 };
+let emote = null; // { name, start }
+function startEmote(name) {
+  if (!EMOTE_SECONDS[name]) return;
+  emote = { name, start: performance.now() / 1000 };
+  probe.emotes.push(name);
+}
+
 function onRig(msg) {
   probe.rigMessages++;
   const face = msg.faces && msg.faces[0];
+  if (msg.emote && msg.emote.id !== lastEmoteId) {
+    if (msg.emote.age < 2.5) startEmote(msg.emote.name); // never replay an old press after a reconnect
+    lastEmoteId = msg.emote.id;
+  }
   if (!face) { present = false; return; }
   present = true;
   lastRig = performance.now() / 1000;
@@ -78,6 +99,15 @@ function showBadge(p) {
   el.hidden = !p.synthetic;
 }
 
+// --- shop name lower third: plain text only ---
+(function lowerThird() {
+  const el = document.getElementById("lower");
+  if (!el || (!SHOP && !TAGLINE)) return;
+  el.querySelector("b").textContent = SHOP;
+  el.querySelector("span").textContent = TAGLINE;
+  el.hidden = false;
+})();
+
 // --- model ---
 let vrm = null;
 const loader = new GLTFLoader();
@@ -87,12 +117,26 @@ loader.load(
   (gltf) => {
     vrm = gltf.userData.vrm;
     if (!vrm) { probe.error = "file is not a VRM model"; return; }
+    dress(vrm);
     scene.add(vrm.scene);
     probe.modelLoaded = true;
   },
   undefined,
   (err) => { probe.error = String((err && err.message) || err); },
 );
+
+function dress(model) {
+  const [outfit, accent] = OUTFITS[OUTFIT];
+  model.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [].concat(o.material)) {
+      const hex = m.name === "outfit" ? outfit : m.name === "accent" ? accent : null;
+      if (!hex || !m.color) continue;
+      m.color.set(hex);
+      if (m.shadeColorFactor) m.shadeColorFactor.set(hex).multiplyScalar(0.72);
+    }
+  });
+}
 
 const bone = (name) => (vrm ? vrm.humanoid.getNormalizedBoneNode(name) : null);
 const damp = (cur, goal, dt, tau) => cur + (goal - cur) * (1 - Math.exp(-dt / tau));
@@ -126,11 +170,33 @@ function pose(t, dt) {
   set("rightUpperArm", 0, 0, 1.15 - 0.02 * breath);
   set("leftLowerArm", 0, 0.1, 0.12);
   set("rightLowerArm", 0, -0.1, -0.12);
-  vrm.scene.position.set(clamp(s.x, -1.2, 1.2) * 0.28, -clamp(s.y, -1, 1) * 0.12, clamp((s.depth - 1) * 0.5, -0.4, 0.4));
+  let bounce = 0, happyBoost = 0, ohBoost = 0;
+  if (emote) {
+    const p = (t - emote.start) / EMOTE_SECONDS[emote.name];
+    if (p >= 1) emote = null;
+    else {
+      const env = Math.sin(Math.PI * p);
+      if (emote.name === "wave") {
+        set("rightUpperArm", 0, 0, 1.15 - env * 2.25);
+        set("rightLowerArm", 0, -0.1, -0.12 - env * (0.45 + 0.35 * Math.sin(t * 15)));
+        happyBoost = 0.6 * env;
+      } else if (emote.name === "happy") {
+        bounce = Math.abs(Math.sin(t * 9)) * 0.06 * env; happyBoost = env;
+        set("leftUpperArm", 0, 0, -1.15 + env * 0.5); set("rightUpperArm", 0, 0, 1.15 - env * 0.5);
+      } else if (emote.name === "surprised") {
+        ohBoost = 0.85 * env; bounce = 0.04 * env;
+        set("head", -s.pitch * 0.6 - 0.18 * env, s.yaw * 0.6, -s.roll * 0.65);
+      } else if (emote.name === "bow") {
+        set("spine", 0.55 * env, 0, 0); set("neck", 0.25 * env, 0, 0); happyBoost = 0.5 * env;
+      }
+    }
+  }
+  vrm.scene.position.set(clamp(s.x, -1.2, 1.2) * 0.28, -clamp(s.y, -1, 1) * 0.12 + bounce, clamp((s.depth - 1) * 0.5, -0.4, 0.4));
 
   const em = vrm.expressionManager;
   em.setValue("blink", blinkValue(t));
-  em.setValue("happy", clamp(s.smile, 0, 1) * 0.9);
+  em.setValue("happy", clamp(clamp(s.smile, 0, 1) * 0.9 + happyBoost, 0, 1));
+  em.setValue("oh", ohBoost);
   probe.pose = { ...s, live };
 }
 

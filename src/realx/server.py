@@ -8,6 +8,7 @@ and CSRF), strict CSP, request size and time limits, and a connection cap.
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import time
 from collections import deque
@@ -22,7 +23,7 @@ from realx.audio import offline, presets
 from realx.models import BLOCKED, MANIFEST
 from realx import ws
 from realx.pipeline import Pipeline
-from realx.rig import hello_message, rig_message
+from realx.rig import EMOTES, hello_message, rig_message
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
 from realx.stages.background import MAX_IMAGE_BYTES, BackgroundError, decode_background
 from realx.stages import create
@@ -78,6 +79,8 @@ class Engine:
         self._jpeg: bytes | None = None
         self._seq = 0
         self._rig = json.dumps(rig_message(0, 0.0, (0, 0), []))
+        self._emote: tuple[str, int, float] | None = None  # name, id, time pressed
+        self._epoch = secrets.token_hex(4)  # changes on every server start, so ids never collide across restarts
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._config = {"source": source, "mode": mode, "smoothing": smoothing, "background": "off"}
@@ -141,6 +144,13 @@ class Engine:
             self._config = {**self._config, **staged}
             self._config_version += 1
             return dict(self._config)
+
+    def emote(self, name: str) -> None:
+        """Play a short gesture on the character (wave, happy, surprised, bow)."""
+        if name not in EMOTES:
+            raise ValueError(f"emote must be one of {EMOTES}")
+        with self._lock:
+            self._emote = (name, (self._emote[1] + 1) if self._emote else 1, time.monotonic())
 
     def set_background(self, photo: np.ndarray) -> None:
         """Use this RGB photo behind the person. Rebuilds the pipeline to pick it up."""
@@ -279,7 +289,10 @@ class Engine:
                         self._ribbon.append(state)
                         self._jpeg = None if buf is None else buf.tobytes()
                         self._seq += 1
-                        self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces))
+                        em = None
+                        if self._emote:
+                            em = {"name": self._emote[0], "id": f"{self._epoch}-{self._emote[1]}", "age": round(time.monotonic() - self._emote[2], 2)}
+                        self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces, em))
                         self._cond.notify_all()
                 except (SourceError, StopIteration) as exc:
                     # camera unplugged or busy: say so, drop the dead generator, retry
@@ -520,6 +533,12 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                     if not isinstance(changes, dict):
                         raise ValueError("expected a JSON object")
                     self._json(engine.update(changes))
+                elif parsed.path == "/api/emote":
+                    if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+                        raise ValueError("Content-Type must be application/json")
+                    body = json.loads(self._body(MAX_JSON) or b"{}")
+                    engine.emote(body.get("name") if isinstance(body, dict) else None)
+                    self._json({"ok": True})
                 elif parsed.path == "/api/background":
                     kind = (self.headers.get("Content-Type") or "").split(";")[0].strip()
                     if kind not in ("image/jpeg", "image/png"):

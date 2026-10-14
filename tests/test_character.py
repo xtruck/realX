@@ -144,3 +144,50 @@ def test_character_renders_and_follows_the_tracker_in_a_real_browser():
         assert painted > 0.1 * img.shape[0] * img.shape[1]
     finally:
         srv.stop()
+
+
+def test_emote_button_reaches_the_character_page_and_outfit_recolours_only_the_outfit():
+    sync_api = pytest.importorskip("playwright.sync_api")
+    pytest.importorskip("skimage")
+    exe = _chromium()
+    if not exe:
+        pytest.skip("no Chromium found (set REALX_CHROMIUM)")
+    from realx.models import ensure_model
+
+    try:
+        ensure_model("yunet")
+    except Exception as exc:
+        pytest.skip(f"yunet model unavailable: {exc}")
+    import http.client
+
+    from realx.server import Engine, Server
+
+    srv = Server(Engine(source="demo:static"), port=0)
+    srv.start()
+    try:
+        with sync_api.sync_playwright() as p:
+            browser = p.chromium.launch(
+                executable_path=exe,
+                args=["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+            )
+            page = browser.new_page(viewport={"width": 320, "height": 320})
+            page.goto(f"http://127.0.0.1:{srv.port}/avatar?outfit=ocean")
+            page.wait_for_function("window.__realx && window.__realx.modelLoaded", timeout=30000)
+            time.sleep(1.5)
+            c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
+            c.request("POST", "/api/emote", body=json.dumps({"name": "wave"}),
+                      headers={"Host": f"127.0.0.1:{srv.port}", "Content-Type": "application/json"})
+            assert c.getresponse().status == 200
+            c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
+            c.request("POST", "/api/emote", body=json.dumps({"name": "explode"}),
+                      headers={"Host": f"127.0.0.1:{srv.port}", "Content-Type": "application/json"})
+            assert c.getresponse().status == 400
+            for _ in range(50):  # polled with plain evaluate calls: the page's CSP forbids eval
+                if "wave" in page.evaluate("window.__realx.emotes"):
+                    break
+                time.sleep(0.2)
+            assert "wave" in page.evaluate("window.__realx.emotes")
+            assert page.evaluate("window.__realx.outfit") == "ocean"
+            browser.close()
+    finally:
+        srv.stop()

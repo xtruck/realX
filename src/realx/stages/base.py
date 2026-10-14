@@ -13,6 +13,8 @@ class Stage(Protocol):
     Optional class attributes the pipeline understands:
       requires_consent  stage synthesizes faces; needs a consent gate before it
       is_gate           stage is a consent gate
+      uses_likeness     stage renders a real person's likeness; needs a disclosure label after it
+      is_disclosure     stage burns a visible "digital host" label into the picture
       is_watermark      stage embeds provenance; must follow synthesizing stages
       alters_media      stage edits pixels or samples; must come before any watermark
       stateful          stage keeps per-stream state; forces workers=1

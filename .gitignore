@@ -9,3 +9,5 @@ __pycache__/
 models/
 outputs/
 webapp/node_modules/
+dist/
+build/

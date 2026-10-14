@@ -51,6 +51,12 @@ def ellipsoid(center, radii, n_lat: int = 14, n_lon: int = 24):
     return pos.astype(np.float32), nrm.astype(np.float32), np.array(idx, dtype=np.uint16)
 
 
+ROLES = {  # material names let the renderer recolour the outfit without touching the skin
+    MINT: "skin", CORAL: "outfit", CREAM: "belly", NAVY: "accent", LEAF: "leaf",
+    PINK: "blush", INK: "ink", WHITE: "white", LIP: "lip",
+}
+
+
 class Builder:
     def __init__(self) -> None:
         self.blob = bytearray()
@@ -84,7 +90,7 @@ class Builder:
             rgba = [*color, 1.0]
             self.materials.append(
                 {
-                    "name": f"mat{len(self.materials)}",
+                    "name": ROLES.get(key, f"mat{len(self.materials)}"),
                     "pbrMetallicRoughness": {"baseColorFactor": rgba, "metallicFactor": 0.0, "roughnessFactor": 1.0},
                     "extensions": {
                         "KHR_materials_unlit": {},

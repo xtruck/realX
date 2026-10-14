@@ -158,8 +158,13 @@ class RigStage:
         self._solver.reset()
 
 
-def rig_message(seq: int, timestamp: float, frame_size: tuple[int, int], faces: list[dict]) -> dict:
-    return {
+EMOTES = ("wave", "happy", "surprised", "bow")
+
+
+def rig_message(
+    seq: int, timestamp: float, frame_size: tuple[int, int], faces: list[dict], emote: dict | None = None
+) -> dict:
+    msg = {
         "v": RIG_VERSION,
         "type": "rig",
         "seq": seq,
@@ -167,6 +172,9 @@ def rig_message(seq: int, timestamp: float, frame_size: tuple[int, int], faces: 
         "frame": list(frame_size),
         "faces": [{k: (round(v, 4) if isinstance(v, float) else v) for k, v in f.items()} for f in faces],
     }
+    if emote:
+        msg["emote"] = emote  # {"name", "id", "age"}: a button the streamer pressed, not tracked data
+    return msg
 
 
 def hello_message(version: str) -> dict:

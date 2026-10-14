@@ -29,6 +29,8 @@ function applyMode(next) {
   $("obs").hidden = !isCharacter;
   $("obsUrl").value = location.origin + "/avatar";
 }
+document.querySelectorAll(".emote").forEach((b) => b.addEventListener("click", () =>
+  api("/api/emote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: b.dataset.emote }) }).catch(() => {})));
 $("obsCopy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("obsUrl").value); $("obsCopy").textContent = "Copied"; }
   catch (e) { $("obsUrl").select(); $("obsCopy").textContent = "Press Ctrl+C"; }

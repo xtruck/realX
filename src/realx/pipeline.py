@@ -31,12 +31,15 @@ def validate_stages(stages: Sequence[Stage]) -> None:
     - every stage that synthesizes faces (`requires_consent`) needs a consent gate
       (`is_gate`) before it
     - a watermark stage (`is_watermark`) must come after the last such stage
+    - a stage that renders a real person's likeness (`uses_likeness`) must be followed
+      by a disclosure stage (`is_disclosure`, a label viewers can see) before the watermark
     - no stage that changes the media (`alters_media`) may come after a watermark,
       because editing marked pixels or samples would damage the provenance mark
     """
     gate_seen = False
     last_synth = -1
     mark_at = -1
+    last_likeness = -1
     for i, stage in enumerate(stages):
         if getattr(stage, "is_watermark", False) and mark_at < 0:
             mark_at = i
@@ -44,10 +47,24 @@ def validate_stages(stages: Sequence[Stage]) -> None:
             raise PipelineConfigError(f"stage '{stage.name}' changes the media after the watermark; move it before")
         if getattr(stage, "is_gate", False):
             gate_seen = True
-        if getattr(stage, "requires_consent", False):
+        if getattr(stage, "uses_likeness", False):
+            last_likeness = i
+        if getattr(stage, "requires_consent", False) or getattr(stage, "uses_likeness", False):
             if not gate_seen:
                 raise PipelineConfigError(f"stage '{stage.name}' needs a consent gate before it")
             last_synth = i
+    if last_likeness >= 0:
+        after = stages[last_likeness + 1 :]
+        label_at = next((j for j, st in enumerate(after) if getattr(st, "is_disclosure", False)), None)
+        mark_rel = next((j for j, st in enumerate(after) if getattr(st, "is_watermark", False)), None)
+        if label_at is None or (mark_rel is not None and mark_rel < label_at):
+            raise PipelineConfigError("a stage that shows a real person's likeness needs a visible disclosure stage after it")
+        end = mark_rel if mark_rel is not None else len(after)
+        for st in after[label_at + 1 : end]:
+            if getattr(st, "alters_media", False):
+                raise PipelineConfigError(
+                    f"stage '{st.name}' could cover the disclosure label; the label must be the last picture edit"
+                )
     if last_synth >= 0 and not any(
         getattr(s, "is_watermark", False) for s in stages[last_synth + 1 :]
     ):

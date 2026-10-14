@@ -39,6 +39,11 @@ each step so a resumed session knows exactly where to continue.
       provenance marks stay readable. Consent gate and blocked-model list unchanged.
 - [x] 153 tests green (with the YuNet and PP-HumanSeg models and Chromium present)
 
+- [x] Mascot host: outfit colours (`/avatar?outfit=ocean|sunny|berry|forest`), gesture buttons
+      (wave, happy, surprised, thank you) and an optional name/tagline bar (`?name=&tagline=`)
+- [x] Disclosed co-host machinery: `realx cohost` consent vault with friend-held revoke code,
+      mandatory visible disclosure stage, pipeline rule (gate -> likeness -> label -> mark)
+
 ## Next (in order)
 
 - [ ] MediaPipe face/pose landmarker backend (verify model licenses first)

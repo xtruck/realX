@@ -39,6 +39,33 @@ def _models(action: str) -> int:
     return 0
 
 
+def _cohost(args) -> int:
+    from realx.safety import ConsentError
+    from realx.safety.cohost import AGREEMENT, CohostVault
+
+    vault = CohostVault()
+    try:
+        if args.action == "grant":
+            g = vault.grant(args.name, days=args.days, agreed=args.friend_agreed)
+            print(f"consent saved: {g.path}")
+            print(f"REVOKE CODE (give it to {g.display_name}, it is shown only once): {g.revoke_code}")
+        elif args.action == "list":
+            for r in vault.list():
+                print(f"  {r['id']}  {r['name']:20s} {r['state']}")
+        elif args.action == "check":
+            _, name = vault.check(args.file)
+            print(f"valid: {name}")
+        elif args.action == "revoke":
+            vault.revoke(args.id, args.code)
+            print("revoked: this person's likeness can no longer be used")
+    except (ConsentError, ValueError) as exc:
+        print(f"{exc}", file=sys.stderr)
+        if args.action == "grant" and not args.friend_agreed:
+            print(f"Pass --friend-agreed only if true: {AGREEMENT}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def _voices() -> int:
     from realx.audio import presets
 
@@ -113,6 +140,15 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--preset", default=None, help="character voice (see `realx voices`); not combined with --semitones")
     sub.add_parser("voices", help="list the character voice presets")
 
+    c = sub.add_parser("cohost", help="consent records for a real person who agrees to be a digital co-host")
+    c.add_argument("action", choices=["grant", "list", "check", "revoke"])
+    c.add_argument("--name")
+    c.add_argument("--days", type=float, default=30)
+    c.add_argument("--friend-agreed", action="store_true")
+    c.add_argument("--file")
+    c.add_argument("--id")
+    c.add_argument("--code")
+
     s = sub.add_parser("serve", help="open the control room in your browser")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--source", default="demo:dance", help="camera or demo:<dance|jump|sprint|spin|static>")
@@ -130,6 +166,8 @@ def main(argv: list[str] | None = None) -> int:
         return _models(args.action)
     if args.command == "voice":
         return _voice(args.input, args.output, args.semitones, args.preset)
+    if args.command == "cohost":
+        return _cohost(args)
     if args.command == "voices":
         return _voices()
     if args.command == "serve":

@@ -29,6 +29,7 @@ def safe_pipeline(st, identity="alice", wm_key=None, scope="live"):
         [
             create("consent_gate", store=st, record=rec, scope=scope),
             create("swap_stub", source_identity=identity),
+            create("disclosure", display_name=identity),
             create("watermark", payload=b"realx|s1", key=wm_key),
         ]
     )
@@ -139,6 +140,7 @@ def test_consent_for_one_identity_does_not_cover_another():
         [
             create("consent_gate", store=st, record=rec),
             create("swap_stub", source_identity="victim"),
+            create("disclosure", display_name="victim"),
             create("watermark", payload=b"x"),
         ]
     )

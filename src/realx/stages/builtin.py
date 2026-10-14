@@ -166,6 +166,7 @@ class SwapStub:
 
     name = "swap_stub"
     requires_consent = True
+    uses_likeness = True
 
     def __init__(self, source_identity: str) -> None:
         self.source_identity = source_identity
@@ -175,6 +176,51 @@ class SwapStub:
     def process(self, ctx: FrameContext) -> FrameContext:
         require_consent(ctx, self.source_identity)
         ctx.meta["swapped_with"] = self.source_identity
+        return ctx
+
+    def close(self) -> None: ...
+
+
+@register("disclosure")
+class Disclosure:
+    """A visible label that the person on screen is a digital host shown with permission.
+
+    A solid bar across the bottom of every frame: it is not a setting that can be turned
+    down, and it is sized from the frame, never below 6% of its height. Pipelines that
+    show a real person's likeness cannot be built without it.
+    """
+
+    name = "disclosure"
+    is_disclosure = True
+    alters_media = True
+    PREFIX = "DIGITAL HOST"
+
+    def __init__(self, display_name: str) -> None:
+        clean = "".join(ch for ch in str(display_name) if ch.isprintable()).strip()[:40]
+        if not clean:
+            raise ValueError("display_name must not be empty")
+        self.text = f"{self.PREFIX}  |  {clean}  |  shown with permission"
+
+    def setup(self) -> None: ...
+
+    def process(self, ctx: FrameContext) -> FrameContext:
+        import cv2
+
+        h, w = ctx.pixels.shape[:2]
+        bar = max(24, int(round(0.06 * h)))
+        canvas = ctx.pixels.copy()
+        canvas[h - bar :] = (14, 20, 27)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 1.0
+        (tw, th), _ = cv2.getTextSize(self.text, font, scale, 2)
+        scale = min(scale * 0.62 * bar / th, scale * 0.94 * w / tw)  # as tall as the bar allows, always fully inside
+        (tw, th), base = cv2.getTextSize(self.text, font, scale, max(1, int(round(scale * 2))))
+        cv2.putText(
+            canvas, self.text, ((w - tw) // 2, h - (bar - th) // 2 - base // 2), font, scale, (255, 255, 255),
+            max(1, int(round(scale * 2))), cv2.LINE_AA,
+        )
+        ctx.pixels = canvas
+        ctx.meta["disclosure"] = self.text
         return ctx
 
     def close(self) -> None: ...
