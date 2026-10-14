@@ -207,6 +207,15 @@ def _find_browser() -> str | None:
     return exe if exe and os.path.exists(exe) else None
 
 
+def open_authenticated_page(browser, server, viewport: dict):
+    """A page that already holds the server's access token (the cookie a browser gets after following the printed link)."""
+    from realx.server import TOKEN_COOKIE
+
+    ctx = browser.new_context(viewport=viewport, permissions=["camera"])
+    ctx.add_cookies([{"name": TOKEN_COOKIE, "value": server.token, "url": f"http://127.0.0.1:{server.port}"}])
+    return ctx.new_page()
+
+
 def run_browser(args: argparse.Namespace, size: tuple[int, int]) -> tuple[list[dict], str]:
     from playwright.sync_api import sync_playwright
 
@@ -227,7 +236,7 @@ def run_browser(args: argparse.Namespace, size: tuple[int, int]) -> tuple[list[d
             with sync_playwright() as p:
                 browser = p.chromium.launch(executable_path=exe, headless=not args.headed, args=flags)
                 try:
-                    page = browser.new_context(viewport={"width": 640, "height": 480}, permissions=["camera"]).new_page()
+                    page = open_authenticated_page(browser, server, viewport={"width": 640, "height": 480})
                     page.goto(f"http://127.0.0.1:{server.port}/avatar?track=1&preview=1&delegate={args.delegate}")
                     deadline = time.time() + args.startup_timeout
                     while time.time() < deadline:  # plain evaluate calls: the page's CSP forbids wait_for_function

@@ -414,6 +414,38 @@ def bt():
     return bench_tracking
 
 
+def test_the_browser_benchmark_logs_in_with_the_servers_access_token(bt):
+    """Every route now needs the per-run access token; without the cookie the benchmark page would get a 401."""
+
+    class FakeContext:
+        def __init__(self):
+            self.cookies = []
+
+        def add_cookies(self, cookies):
+            self.cookies.extend(cookies)
+
+        def new_page(self):
+            return "page"
+
+    class FakeBrowser:
+        def __init__(self):
+            self.ctx, self.kwargs = FakeContext(), None
+
+        def new_context(self, **kwargs):
+            self.kwargs = kwargs
+            return self.ctx
+
+    class FakeServer:
+        token = "tok-0123456789abcdef"
+        port = 4321
+
+    browser = FakeBrowser()
+    page = bt.open_authenticated_page(browser, FakeServer(), viewport={"width": 640, "height": 480})
+    assert page == "page"
+    assert browser.ctx.cookies == [{"name": "realx_token", "value": "tok-0123456789abcdef", "url": "http://127.0.0.1:4321"}]
+    assert browser.kwargs["permissions"] == ["camera"] and browser.kwargs["viewport"] == {"width": 640, "height": 480}
+
+
 def sample(t, frames, fps=20.0, pose_ms=30.0):
     return {
         "t": t, "tracker_fps": fps, "tracker_frames": int(t * fps), "frames": frames,
