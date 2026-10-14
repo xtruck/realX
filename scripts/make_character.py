@@ -156,6 +156,7 @@ BLINK = {"blink": (1.0, 0.08, 1.0)}
 def build() -> bytes:
     b = Builder()
     root = b.node("Pip")
+    springs: list[tuple[str, list[int]]] = []  # secondary motion chains (name, joint nodes)
     hips = b.node("hips", (0, 0.42, 0), b.mesh("hips_mesh", (0, 0.03, 0), (0.15, 0.10, 0.12), NAVY), root)
     spine = b.node("spine", (0, 0.08, 0), parent=hips)
     chest = b.node("chest", (0, 0.12, 0), b.mesh("body", (0, -0.06, 0), (0.17, 0.20, 0.14), CORAL), spine)
@@ -164,10 +165,12 @@ def build() -> bytes:
     head = b.node("head", (0, 0.05, 0), b.mesh("head_mesh", (0, 0.20, 0), (0.27, 0.24, 0.24), MINT), neck)
 
     for side, sx in (("left", 1.0), ("right", -1.0)):
-        b.node(f"ear_{side}", (sx * 0.20, 0.40, -0.02), b.mesh(f"ear_{side}_mesh", (0, 0, 0), (0.08, 0.10, 0.05), MINT), head)
+        ear = b.node(f"ear_{side}", (sx * 0.20, 0.40, -0.02), b.mesh(f"ear_{side}_mesh", (0, 0.03, 0), (0.08, 0.10, 0.05), MINT), head)
+        springs.append((f"ear_{side}", [ear, b.node(f"ear_{side}_tip", (0, 0.10, 0), parent=ear)]))
         b.node(f"blush_{side}", (sx * 0.15, 0.13, 0.19), b.mesh(f"blush_{side}_mesh", (0, 0, 0), (0.045, 0.025, 0.012), PINK), head)
-    b.node("stem", (0, 0.45, 0), b.mesh("stem_mesh", (0, 0.04, 0), (0.014, 0.07, 0.014), LEAF), head)
-    b.node("leaf", (0.05, 0.53, 0), b.mesh("leaf_mesh", (0, 0, 0), (0.07, 0.022, 0.03), LEAF), head)
+    stem = b.node("stem", (0, 0.45, 0), b.mesh("stem_mesh", (0, 0.04, 0), (0.014, 0.07, 0.014), LEAF), head)
+    leaf = b.node("leaf", (0, 0.08, 0), b.mesh("leaf_mesh", (0.05, 0, 0), (0.07, 0.022, 0.03), LEAF), stem)
+    springs.append(("sprout", [stem, leaf, b.node("leaf_tip", (0.09, 0, 0), parent=leaf)]))  # the character's "hair"
 
     binds: dict[str, list[tuple[int, int]]] = {"blink": [], "blinkLeft": [], "blinkRight": []}
     eyes = {}
@@ -183,13 +186,30 @@ def build() -> bytes:
     mouth = b.node("mouth", (0, 0.095, 0.203), b.mesh("mouth_mesh", (0, 0, 0), (0.030, 0.006, 0.010), LIP, MOUTH_SHAPES), head)
     mouth_binds = {name: [(mouth, i)] for i, name in enumerate(MOUTH_SHAPES)}
 
+    # (offset from the hand node, segment length) for each finger; thumb points forward and out
+    finger_base = {"index": 0.026, "middle": 0.008, "ring": -0.010, "little": -0.027}
+    finger_len = {"index": (0.032, 0.022, 0.018), "middle": (0.036, 0.024, 0.019), "ring": (0.033, 0.022, 0.018), "little": (0.026, 0.017, 0.015)}
+    fingers: dict[str, int] = {}  # humanoid bone name -> node
     for side, sx in (("left", 1.0), ("right", -1.0)):
-        up = b.node(f"upperArm_{side}", (sx * 0.16, 0.06, 0), b.mesh(f"upperArm_{side}_mesh", (sx * 0.06, 0, 0), (0.075, 0.040, 0.040), CORAL), chest)
+        shoulder = b.node(f"shoulder_{side}", (sx * 0.07, 0.07, 0), parent=chest)
+        up = b.node(f"upperArm_{side}", (sx * 0.09, -0.01, 0), b.mesh(f"upperArm_{side}_mesh", (sx * 0.06, 0, 0), (0.075, 0.040, 0.040), CORAL), shoulder)
         lo = b.node(f"lowerArm_{side}", (sx * 0.12, 0, 0), b.mesh(f"lowerArm_{side}_mesh", (sx * 0.055, 0, 0), (0.070, 0.035, 0.035), CORAL), up)
-        b.node(f"hand_{side}", (sx * 0.11, 0, 0), b.mesh(f"hand_{side}_mesh", (sx * 0.03, 0, 0), (0.045, 0.045, 0.045), CREAM), lo)
+        hand = b.node(f"hand_{side}", (sx * 0.11, 0, 0), b.mesh(f"hand_{side}_mesh", (sx * 0.03, 0, 0), (0.045, 0.045, 0.045), CREAM), lo)
+        for name, zoff in finger_base.items():
+            parent = hand
+            for seg, length in zip(("Proximal", "Intermediate", "Distal"), finger_len[name]):
+                prev = {"Intermediate": finger_len[name][0], "Distal": finger_len[name][1]}.get(seg)
+                off = (sx * 0.062, 0, zoff) if prev is None else (sx * prev, 0, 0)
+                parent = b.node(f"{name}{seg}_{side}", off, b.mesh(f"{name}{seg}_{side}_mesh", (sx * length * 0.5, 0, 0), (length * 0.56, 0.0105, 0.0105), CREAM), parent)
+                fingers[f"{side}{name.capitalize()}{seg}"] = parent
+        parent = hand
+        for seg, off, length in (("Metacarpal", (sx * 0.02, 0, 0.026), 0.020), ("Proximal", (sx * 0.012, 0, 0.020), 0.022), ("Distal", (sx * 0.010, 0, 0.018), 0.019)):
+            parent = b.node(f"thumb{seg}_{side}", off, b.mesh(f"thumb{seg}_{side}_mesh", (off[0] * 0.5, 0, off[2] * 0.5), (0.0125, 0.0125, length * 0.62), CREAM), parent)
+            fingers[f"{side}Thumb{seg}"] = parent
         ul = b.node(f"upperLeg_{side}", (sx * 0.075, -0.03, 0), b.mesh(f"upperLeg_{side}_mesh", (0, -0.07, 0), (0.060, 0.090, 0.060), NAVY), hips)
         ll = b.node(f"lowerLeg_{side}", (0, -0.14, 0), b.mesh(f"lowerLeg_{side}_mesh", (0, -0.07, 0), (0.050, 0.085, 0.050), MINT), ul)
-        b.node(f"foot_{side}", (0, -0.14, 0), b.mesh(f"foot_{side}_mesh", (0, -0.06, 0.03), (0.065, 0.050, 0.100), INK), ll)
+        foot = b.node(f"foot_{side}", (0, -0.14, 0), b.mesh(f"foot_{side}_mesh", (0, -0.06, 0.03), (0.065, 0.050, 0.100), INK), ll)
+        b.node(f"toes_{side}", (0, -0.10, 0.09), b.mesh(f"toes_{side}_mesh", (0, 0, 0.012), (0.055, 0.025, 0.035), INK), foot)
 
     by_name = {n["name"]: i for i, n in enumerate(b.nodes)}
     bones = {
@@ -201,8 +221,20 @@ def build() -> bytes:
         bones.update({
             f"{S}UpperArm": f"upperArm_{S}", f"{S}LowerArm": f"lowerArm_{S}", f"{S}Hand": f"hand_{S}",
             f"{S}UpperLeg": f"upperLeg_{S}", f"{S}LowerLeg": f"lowerLeg_{S}", f"{S}Foot": f"foot_{S}",
+            f"{S}Shoulder": f"shoulder_{S}", f"{S}Toes": f"toes_{S}",
         })
     human_bones = {k: {"node": by_name[v]} for k, v in bones.items()}
+    human_bones.update({k: {"node": n} for k, n in fingers.items()})
+    spring = {
+        "specVersion": "1.0",
+        "springs": [
+            {"name": name, "joints": [
+                {"node": n, "hitRadius": 0.01, "stiffness": 0.55, "gravityPower": 0.15, "gravityDir": [0, -1, 0], "dragForce": 0.35}
+                for n in nodes
+            ]}
+            for name, nodes in springs
+        ],
+    }
 
     def expr(entries):
         return {"morphTargetBinds": [{"node": n, "index": i, "weight": 1.0} for n, i in entries]}
@@ -233,8 +265,8 @@ def build() -> bytes:
     bin_chunk = bytes(b.blob) + b"\0" * (-len(b.blob) % 4)
     gltf = {
         "asset": {"version": "2.0", "generator": "realx scripts/make_character.py"},
-        "extensionsUsed": ["VRMC_vrm", "VRMC_materials_mtoon", "KHR_materials_unlit"],
-        "extensions": {"VRMC_vrm": vrm},
+        "extensionsUsed": ["VRMC_vrm", "VRMC_springBone", "VRMC_materials_mtoon", "KHR_materials_unlit"],
+        "extensions": {"VRMC_vrm": vrm, "VRMC_springBone": spring},
         "scene": 0,
         "scenes": [{"nodes": [root]}],
         "nodes": b.nodes,

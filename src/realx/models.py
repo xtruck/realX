@@ -63,6 +63,35 @@ MANIFEST: dict[str, ModelSpec] = {
             "human_segmentation_pphumanseg_2023mar.onnx",
         ),
     ),
+    # MediaPipe Tasks (Apache-2.0 code; model cards state Apache-2.0). They run in the browser
+    # (the avatar page), where they track the whole body; Python only serves the files.
+    "mp_face": ModelSpec(
+        name="mp_face",
+        filename="face_landmarker.task",
+        url="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+        sha256="64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+        license="Apache-2.0",
+        commercial_ok=True,
+        purpose="face landmarks and 52 blendshapes (eyes, gaze, mouth) for the character",
+    ),
+    "mp_pose": ModelSpec(
+        name="mp_pose",
+        filename="pose_landmarker_lite.task",
+        url="https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+        sha256="59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a",
+        license="Apache-2.0",
+        commercial_ok=True,
+        purpose="33-point body pose in 3D (spine, arms, legs, feet) for the character",
+    ),
+    "mp_hand": ModelSpec(
+        name="mp_hand",
+        filename="hand_landmarker.task",
+        url="https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+        sha256="fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1",
+        license="Apache-2.0",
+        commercial_ok=True,
+        purpose="21-point hands and every finger for the character",
+    ),
 }
 
 # Never loaded, listed so the audit trail is explicit. See docs/LICENSE-AUDIT.md.

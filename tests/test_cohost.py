@@ -151,7 +151,8 @@ def test_no_real_face_renderer_ships_and_blocked_models_stay_blocked():
     from realx.stages import available
 
     assert {"inswapper_128", "buffalo_l"} <= set(BLOCKED)
-    assert not any("swap" in m or "face" in m and "detect" not in m.purpose for m in MANIFEST)
+    # landmark and detection models are fine; nothing that swaps or generates a face may be loadable
+    assert not any("swap" in m.name or "swap" in m.purpose or "generat" in m.purpose for m in MANIFEST.values())
     assert "swap_stub" in available() and "face_swap" not in available()
 
 
