@@ -6,7 +6,7 @@
 // calls that would break that.
 import { FaceLandmarker, FilesetResolver, HandLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { assignHands } from "./assign.js";
-import { BodyFilter, RootTracker, Stagger, packBody } from "./body.js";
+import { BodyFilter, RootTracker, Stagger, packBody, qualityOf } from "./body.js";
 
 const FRESH_MIN_MS = 300; // a model result older than this (or 8 frame intervals, if longer) is treated as "not seen"
 
@@ -20,7 +20,8 @@ const FRESH_MIN_MS = 300; // a model result older than this (or 8 frame interval
  * onFrame    (message, info) called with each packed body message
  * onStatus   (state, detail) state: camera | models | running | error | stopped
  */
-export async function startTracker({ solver, mirror = true, legs = "auto", delegate = "auto", base = "", video = null, onFrame, onStatus = () => {} }) {
+export async function startTracker({ solver, mirror = true, legs = "auto", delegate = "auto", base = "", video = null, deviceId = null, quality = "balanced", onFrame, onStatus = () => {} }) {
+  const preset = qualityOf(quality);
   const status = (state, detail = "") => onStatus(state, detail);
   let stopped = false;
   let stream = null;
@@ -30,7 +31,10 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
   try {
     status("camera");
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 }, facingMode: "user" },
+      video: {
+        ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }),
+        width: { ideal: preset.width }, height: { ideal: preset.height }, frameRate: { ideal: 30 },
+      },
       audio: false,
     });
     const el = video || document.createElement("video");
@@ -66,10 +70,21 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
 
   const filter = new BodyFilter({ legs });
   const root = new RootTracker({ mirror });
-  const stagger = new Stagger({ budgetMs: 40 }); // measured: ~28 ms per model on an integrated GPU, so about one per frame
+  const stagger = new Stagger({ budgetMs: preset.budgetMs }); // balanced: ~28 ms per model measured on an integrated GPU, so about one per frame
   const latest = { face: null, pose: null, hands: null }; // { t, result } of the newest run of each model
   const ran = { face: 0, pose: 0, hands: 0 };
-  const stats = { fps: 0, interval: 33, ms: { face: 0, pose: 0, hands: 0 }, hz: { face: 0, pose: 0, hands: 0 }, frames: 0, delegates: used, diag: null };
+  const stats = {
+    fps: 0, interval: 33, ms: { face: 0, pose: 0, hands: 0 }, hz: { face: 0, pose: 0, hands: 0 }, frames: 0, delegates: used, diag: null,
+    skipped: 0,        // camera frames that arrived but were not processed (the models were busy)
+    latencyMs: null,   // from the camera capturing a frame to its numbers being ready; null when the browser gives no capture time
+  };
+  let presented = 0, captureTime = null, presentedBase = null;
+  const watch = (_now, meta) => {   // a light per-frame watcher: the camera's own frame counter and capture time
+    presented = meta.presentedFrames ?? presented;
+    captureTime = Number.isFinite(meta.captureTime) ? meta.captureTime : null;
+    if (!stopped) video.requestVideoFrameCallback(watch);
+  };
+  if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(watch);
   let lastTs = 0, lastVideoTime = -1, lastFrameAt = 0, failures = 0, hzSince = performance.now();
 
   function step() {
@@ -139,6 +154,11 @@ export async function startTracker({ solver, mirror = true, legs = "auto", deleg
     stats.diag = diagnose({ face, poseWorld, hands, assigned, solved, poseImage });
     const msg = packBody(filter.update(solved, now, root.update(poseImage, aspect)));
     stats.frames++;
+    if (presented > 0) {   // count from the first processed frame, not from when the camera started (model loading takes seconds)
+      if (presentedBase === null) presentedBase = presented - 1;
+      stats.skipped = Math.max(0, presented - presentedBase - stats.frames);
+    }
+    if (captureTime !== null) stats.latencyMs = Math.max(0, performance.now() - captureTime);
     if (lastFrameAt) {
       stats.interval = 0.9 * stats.interval + 0.1 * (now - lastFrameAt);
       stats.fps = 1000 / Math.max(1, stats.interval);
@@ -198,5 +218,7 @@ export function diagnose({ face, poseWorld, hands, assigned, solved, poseImage }
 function describe(err) {
   if (err && err.name === "NotAllowedError") return "Camera permission was refused.";
   if (err && err.name === "NotFoundError") return "No camera was found.";
+  if (err && err.name === "OverconstrainedError") return "That camera is not available. Choose another one.";
+  if (err && err.name === "NotReadableError") return "The camera is busy in another app, or it was unplugged.";
   return String((err && err.message) || err).slice(0, 200);
 }

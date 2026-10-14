@@ -5,7 +5,7 @@ import { BodySolver } from "../src/retarget.js";
 import { BONES, EXPRESSIONS, GROUPS, MAX_Q } from "../src/skeleton.js";
 import { idleQuats } from "../src/idle.js";
 import { assignHands } from "../src/assign.js";
-import { BodyFilter, RootTracker, Stagger, hasFlag, packBody, unpackBody } from "../src/body.js";
+import { BodyFilter, QUALITY, RootTracker, Stagger, hasFlag, packBody, packStats, qualityOf, unpackBody } from "../src/body.js";
 import { angle, apply, detectedHand, hand, near, poseImage, rest, seatedPose, tPose } from "./helpers.mjs";
 
 const quatOf = (a) => new Quaternion(a[0], a[1], a[2], a[3]);
@@ -313,6 +313,15 @@ test("scheduler: models that cost about a frame each take turns, pose most often
   for (const k of ["face", "pose", "hands"]) assert.ok(maxGap[k] < 400, `${k} waited ${maxGap[k]} ms`);
 });
 
+test("scheduler with the costs measured on the dev laptop (pose 33, face 27, hands 41 ms): the arms get about every other pass", () => {
+  // the first version of the weights gave 9.3 Hz to every model here, i.e. no preference for pose at all
+  const { hz, maxGap } = simulate(new Stagger({ budgetMs: 40 }), { pose: 33, face: 27, hands: 41 });
+  assert.ok(hz.pose >= 13, `pose (the arms) ${hz.pose} Hz`);
+  assert.ok(hz.face >= 6 && hz.hands >= 6, JSON.stringify(hz));
+  assert.ok(hz.pose > hz.face * 1.7 && hz.pose > hz.hands * 1.7, JSON.stringify(hz));
+  for (const k of ["face", "pose", "hands"]) assert.ok(maxGap[k] < 450, `${k} waited ${maxGap[k]} ms`);
+});
+
 test("scheduler: a model that has never run goes first, and costs are learned as they change", () => {
   const s = new Stagger({ budgetMs: 40 });
   const first = s.plan(0);
@@ -323,6 +332,51 @@ test("scheduler: a model that has never run goes first, and costs are learned as
   simulate(mixed, { face: 30, pose: 30, hands: 30 }, { seconds: 5 });
   const after = simulate(mixed, { face: 4, pose: 4, hands: 4 }, { seconds: 10 });
   assert.ok(after.hz.face > 25 && after.hz.pose > 25 && after.hz.hands > 25, `recovers when the models get cheap: ${JSON.stringify(after.hz)}`);
+});
+
+// --- what the page tells the control room -------------------------------------------------------------
+test("quality presets: three known levels, balanced by default, sizes and budgets grow together", () => {
+  assert.deepEqual(Object.keys(QUALITY).sort(), ["balanced", "high", "low"]);
+  assert.deepEqual([qualityOf("low").width, qualityOf("balanced").width, qualityOf("high").width], [320, 640, 1280]);
+  assert.ok(qualityOf("low").budgetMs < qualityOf("balanced").budgetMs && qualityOf("balanced").budgetMs < qualityOf("high").budgetMs);
+  for (const bad of [undefined, null, "ultra", "__proto__", 5, {}]) assert.equal(qualityOf(bad), QUALITY.balanced, String(bad));
+});
+
+test("the status message has fixed keys, finite numbers and short plain strings", () => {
+  const info = {
+    fps: 24.46, skipped: 7, latencyMs: 83.33, hz: { pose: 12, face: 9, hands: 8 }, ms: { pose: 30.04, face: 28.2, hands: 33.9 },
+    delegates: { pose: "GPU", face: "GPU", hands: "CPU" },
+    diag: { face: true, pose: true, hands: 1, handHint: "1 hand(s) tracked", wrists: [0.9, null] },
+  };
+  const msg = packStats({ info, state: "running", detail: "", mic: { active: true, speaking: false, levelDb: -48.2, latencyMs: 21 }, avSyncMs: -12 });
+  assert.deepEqual(Object.keys(msg).sort(), ["avSyncMs", "delegates", "detail", "diag", "fps", "hz", "latencyMs", "mic", "ms", "skipped", "state", "type"]);
+  assert.equal(msg.type, "realx-stats");
+  assert.equal(msg.fps, 24.5); assert.equal(msg.latencyMs, 83); assert.equal(msg.ms.pose, 30);
+  assert.deepEqual(JSON.parse(JSON.stringify(msg)), msg);
+  assert.equal(packStats({ info: null, state: "camera" }).fps, null, "no data yet is null, not zero");
+  assert.equal(packStats({ info: null, state: "camera" }).mic, null);
+});
+
+test("the status message cannot carry NaN, odd strings or unknown values", () => {
+  const info = {
+    fps: NaN, skipped: Infinity, latencyMs: -5, hz: { pose: "12", face: 1e9, hands: null }, ms: { pose: NaN, face: 1, hands: 2 },
+    delegates: { pose: "TPU", face: "GPU", hands: { x: 1 } },
+    diag: { face: "yes", pose: 1, hands: -3, handHint: "x".repeat(500) + "\u0000\u001b[31m", wrists: [2, "a", NaN] },
+  };
+  const msg = packStats({ info, state: "banana", detail: "boom\n" + "y".repeat(500), mic: { active: "yes", speaking: 1, levelDb: NaN, latencyMs: -1 }, avSyncMs: Infinity });
+  const nums = JSON.stringify(msg);
+  assert.ok(!/NaN|Infinity/.test(nums));
+  assert.equal(msg.state, "error", "unknown state is not passed on");
+  assert.ok(msg.detail.length <= 200 && !/[\u0000-\u001f]/.test(msg.detail));
+  assert.equal(msg.fps, null); assert.equal(msg.skipped, null); assert.equal(msg.latencyMs, null);
+  assert.deepEqual(msg.hz, { pose: null, face: null, hands: null });
+  assert.deepEqual(msg.delegates, { pose: null, face: "GPU", hands: null });
+  assert.equal(msg.diag.face, false, "only a real true counts, not the string 'yes'"); assert.equal(msg.diag.pose, false); assert.equal(msg.diag.hands, 0);
+  assert.ok(msg.diag.handHint.length <= 200 && !/[\u0000-\u001f]/.test(msg.diag.handHint));
+  assert.deepEqual(msg.diag.wrists, [1, null]);
+  assert.equal(msg.mic.active, false); assert.equal(msg.mic.speaking, false);
+  assert.equal(msg.mic.levelDb, null); assert.equal(msg.mic.latencyMs, null);
+  assert.equal(msg.avSyncMs, null);
 });
 
 test("a hand that the hand model confirms is used even when the pose model doubts the wrist", () => {

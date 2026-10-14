@@ -57,6 +57,21 @@ and most jurisdictions now expect them.
   a quarter of a second and then lets it relax rather than showing a guess. Legs are used only after
   they have stayed well visible for 0.6 s (the default for seated people).
 
+## Microphone (optional) and portraits
+
+- **Microphone.** Off unless the control room selects one (`mic=` on the tracking page). Audio is analysed in
+  that page with Web Audio (browser noise suppression, echo cancellation, an energy-based speech detector) and is
+  never recorded, played back, uploaded or stored: the audio code is checked by a test for recording, playback,
+  worklet, network and storage calls. The only thing that leaves the analysis is five mouth-shape weights, which
+  travel inside the body message so the OBS view shows the same mouth. The microphone permission is sent only on
+  pages that ask for it.
+- **Portrait animation.** No engine is enabled (see `PORTRAIT.md` for why). The adapter is ready behind the usual
+  rules: the consent gate must come first, the person's likeness needs the visible DIGITAL HOST label, then the
+  watermark. A portrait needs its own consent record bound to the image's hash and an attestation that the
+  uploader owns it or is authorised; the record is re-checked on every frame, so revocation or expiry stops a
+  running stream, and the image is kept in memory only. A test-only warp engine exists for the test suite and
+  refuses to run without an environment variable.
+
 ## Digital co-host (a real person who agrees)
 
 - `realx cohost grant --name "Kofi" --friend-agreed` issues a signed, scoped, expiring consent

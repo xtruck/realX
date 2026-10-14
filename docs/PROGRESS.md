@@ -63,8 +63,23 @@ each step so a resumed session knows exactly where to continue.
       REA could not read script bodies of the public Kalidokit demo, so constants from other apps are
       unverified.
 
+- [x] Live Studio work (2026-10-14), see `AUDIT.md` for the baseline and `ROADMAP.md` for the status table:
+      microphone capture (browser noise suppression, energy VAD, speech-driven mouth cross-faded with the tracked
+      mouth, A/V sync alignment; audio never leaves the page, only five mouth weights ride in the body message);
+      camera and microphone selection, quality presets, a status panel (fps, latency, skipped frames, per-model
+      Hz, delegates, mic, sync) in the control room; Windows install/test/run scripts; `realx bench` and a browser
+      tracking benchmark (`BENCHMARKS.md`); an ONNX session cache with provider fallback (fake-factory tests only);
+      a portrait-animation adapter with per-image, per-frame-checked consent and **no engine enabled**
+      (`PORTRAIT.md`); resilience tests (camera loss, stage failure, queue bounds, long-session memory).
+- [x] Defects found and fixed: `run_stream` never dropped stale frames (it blocked the camera), the scheduler gave
+      pose no priority at the measured model costs (9.3 Hz each; now ~14 Hz for pose in simulation).
+- [ ] Not verified: any of the above on a real person, a real microphone or a discrete GPU. Browser tracking
+      benchmark runs carried a contention warning (other Chrome processes), so they are not representative.
+
 ## Next (in order)
 
+- [ ] Run `docs/REAL-WEBCAM-VALIDATION.md` on a real person and microphone; tune filter constants from the results
+- [ ] Re-measure the browser tracker on an idle machine (`scripts/bench_tracking.py`)
 - [ ] Tune the filter constants and hold/fade times with a real person on a real webcam (never done)
 - [ ] Full-body backlog in `IDEAS.md`: IK pole hints, wrist twist, foot locking, finger limits, RTMW toes
 - [ ] Silero VAD + RNNoise voice chain, live microphone input

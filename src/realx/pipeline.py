@@ -153,12 +153,16 @@ def run_stream(
     try:
         for ctx in frames:
             while len(pending) >= max_in_flight:
-                old_ctx, fut = pending.popleft()
-                if fut.cancel():
-                    if on_drop is not None:
-                        on_drop(old_ctx)
-                else:  # already running: wait for it so order is preserved
-                    yield fut.result()
+                # latest frame wins: drop the oldest frame that has not started yet. The very oldest one is usually
+                # running already and cannot be cancelled; waiting for it would block the camera instead of dropping.
+                for i, (old_ctx, fut) in enumerate(pending):
+                    if fut.cancel():
+                        del pending[i]
+                        if on_drop is not None:
+                            on_drop(old_ctx)
+                        break
+                else:  # every waiting frame is already running: wait for the oldest so order is preserved
+                    yield pending.popleft()[1].result()
             pending.append((ctx, pool.submit(pipeline.process, ctx)))
             while pending and pending[0][1].done():
                 yield pending.popleft()[1].result()

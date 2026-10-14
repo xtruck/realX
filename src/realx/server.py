@@ -43,6 +43,13 @@ PUBLISH_IDLE_SECONDS = 15.0   # a publisher that sends nothing this long is drop
 PUBLISH_RATE_LIMIT = 200      # messages per second from one publisher before it is cut off
 HEARTBEAT_SECONDS = 0.1       # rig messages while the engine has no video of its own (body mode)
 PERMISSIONS = "camera=(self), microphone=(), geolocation=()"  # only this origin's own pages may ask for the camera
+PERMISSIONS_WITH_MIC = "camera=(self), microphone=(self), geolocation=()"
+
+
+def permissions_for(query: str) -> str:
+    """The microphone is off by default. A page asks for it by carrying a non-empty `mic` parameter,
+    which the control room adds only after the user chooses a microphone; unchosen, nothing may use it."""
+    return PERMISSIONS_WITH_MIC if (parse_qs(query).get("mic") or [""])[0] else PERMISSIONS
 ASSET_MAX_AGE = 3600  # seconds: MediaPipe runtime and models are pinned by hash, so they cannot change within a release
 MP_MODELS = ("mp_face", "mp_pose", "mp_hand")  # the only models /mp/models serves
 _WASM_NAME = re.compile(r"[a-z0-9_]+\.(js|wasm)")
@@ -564,7 +571,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self.send_response(200)
                 self._headers("text/html; charset=utf-8", len(page))
                 self.send_header("Content-Security-Policy", CSP)
-                self.send_header("Permissions-Policy", PERMISSIONS)
+                self.send_header("Permissions-Policy", permissions_for(urlparse(self.path).query))
                 self.send_header("X-Frame-Options", "DENY")
                 self.end_headers()
                 self.wfile.write(page)
@@ -579,7 +586,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes):
                 self.send_response(200)
                 self._headers("text/html; charset=utf-8", len(page))
                 self.send_header("Content-Security-Policy", avatar_csp(port_getter()))
-                self.send_header("Permissions-Policy", PERMISSIONS)
+                self.send_header("Permissions-Policy", permissions_for(urlparse(self.path).query))
                 self.send_header("X-Frame-Options", "SAMEORIGIN")
                 self.end_headers()
                 self.wfile.write(page)

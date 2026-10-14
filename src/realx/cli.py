@@ -149,6 +149,15 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--id")
     c.add_argument("--code")
 
+    b = sub.add_parser("bench", help="measure the video pipeline on this machine (results are tied to its hardware)")
+    b.add_argument("--frames", type=int, default=60, help="frames per resolution, at least 10 (default 60)")
+    b.add_argument("--resolutions", default="320x240,640x480,1280x720", help="comma-separated WxH list")
+    b.add_argument("--fps", type=float, default=30.0, help="rate at which frames are offered in the stream pass")
+    b.add_argument("--stream-seconds", type=float, default=6.0, help="how long each resolution is streamed at --fps (default 6)")
+    b.add_argument("--background", action="store_true", help="include background replacement (needs the pphumanseg model)")
+    b.add_argument("--seed", type=int, default=0)
+    b.add_argument("--json", default=None, metavar="PATH", help="also write the full result as JSON")
+
     s = sub.add_parser("serve", help="open the control room in your browser")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--source", default="demo:dance", help="camera or demo:<dance|jump|sprint|spin|static>")
@@ -170,6 +179,10 @@ def main(argv: list[str] | None = None) -> int:
         return _cohost(args)
     if args.command == "voices":
         return _voices()
+    if args.command == "bench":
+        from realx.bench import run_cli
+
+        return run_cli(args)
     if args.command == "serve":
         return _serve(args.port, args.source, not args.no_browser, args.avatar)
     return _selftest()

@@ -19,11 +19,40 @@ view.addEventListener("load", () => { $("notice").hidden = true; applyMode(mode)
 // preview is the MJPEG image. Only one of them shows at a time.
 // Full body mode is a third page: the same character plus this computer's camera, tracked inside
 // that page. The server's own camera is released, and the OBS source receives the relayed numbers.
-function trackerUrl() {
-  const legs = $("legsMode").value === "off" ? "off" : "auto";
-  const frame = $("frameFull").checked ? "full" : "half";
-  return `/avatar?track=1&publish=1&preview=1&frame=${frame}&legs=${legs}`;
+// Studio settings. Camera and microphone are remembered by id (plus the chosen device's own name so the
+// select can show it before the list arrives); other devices' names are never stored.
+const STUDIO_KEY = "realx.studio";
+const QUALITY = ["low", "balanced", "high"];
+const OUTFITS = ["coral", "ocean", "sunny", "berry", "forest"];
+const studio = { cam: null, mic: null, quality: "balanced", outfit: "coral" };
+// The browser only gives the microphone to a page the server sent with that permission, and the server does
+// that only for a page requested with ?mic=1. So a microphone is in use only while this page carries the flag.
+const micAllowed = new URLSearchParams(location.search).get("mic") === "1";
+const isText = (v, max) => typeof v === "string" && v.length <= max;
+const device = (d) => (d && typeof d === "object" && isText(d.id, 256) && d.id.length > 0 && isText(d.label, 128) ? { id: d.id, label: d.label } : null);
+try {
+  const saved = JSON.parse(localStorage.getItem(STUDIO_KEY) || "{}");
+  studio.cam = device(saved.cam);
+  studio.mic = micAllowed ? device(saved.mic) : null;
+  if (QUALITY.includes(saved.quality)) studio.quality = saved.quality;
+  if (OUTFITS.includes(saved.outfit)) studio.outfit = saved.outfit;
+} catch (e) { /* private window or a damaged value: start from the defaults */ }
+function saveStudio() {
+  try { localStorage.setItem(STUDIO_KEY, JSON.stringify(studio)); } catch (e) { /* simply not remembered */ }
 }
+function trackerUrl() {
+  const p = new URLSearchParams({
+    track: "1", publish: "1", preview: "1",
+    frame: $("frameFull").checked ? "full" : "half",
+    legs: $("legsMode").value === "off" ? "off" : "auto",
+    quality: studio.quality,
+  });
+  if (studio.cam) p.set("cam", studio.cam.id);
+  if (studio.mic && micAllowed) p.set("mic", studio.mic.id);
+  if (studio.outfit !== "coral") p.set("outfit", studio.outfit);
+  return `/avatar?${p}`;
+}
+const trackerAllow = () => (studio.mic && micAllowed ? "camera; microphone" : "camera");
 function releaseTracker() {
   if (!tracker.getAttribute("src")) return;
   // removing the attribute alone would leave the old page (and its camera) running
@@ -36,10 +65,15 @@ function applyMode(next) {
   const noPicture = isCharacter || isBody;   // neither draws the server's MJPEG picture
   if (isCharacter && !character.getAttribute("src")) character.src = "/avatar";
   if (isBody) {
-    if (!tracker.getAttribute("src")) tracker.setAttribute("src", trackerUrl());
+    if (!tracker.getAttribute("src")) {
+      tracker.setAttribute("allow", trackerAllow());
+      tracker.setAttribute("src", trackerUrl());
+    }
   } else {
     releaseTracker();
+    lastStats = null;
   }
+  $("studioStatus").hidden = !isBody;
   // the video stream only exists outside these modes; drop it so it frees its connection
   if (noPicture && view.getAttribute("src")) view.removeAttribute("src");
   if (!noPicture && !view.getAttribute("src")) view.src = "/stream.mjpg";
@@ -55,7 +89,129 @@ function applyMode(next) {
 const tellTracker = (message) => { if (tracker.contentWindow) tracker.contentWindow.postMessage(message, location.origin); };
 $("legsMode").addEventListener("change", (e) => tellTracker({ type: "realx-legs", mode: e.target.value === "off" ? "off" : "auto" }));
 $("recenter").addEventListener("click", () => tellTracker({ type: "realx-recenter" }));
-$("frameFull").addEventListener("change", () => { if (mode === "body") tracker.setAttribute("src", trackerUrl()); });
+function reloadTracker() {   // a new camera, quality or outfit needs a fresh tracking page
+  if (mode !== "body") return;
+  tracker.setAttribute("allow", trackerAllow());
+  tracker.setAttribute("src", trackerUrl());
+}
+$("frameFull").addEventListener("change", reloadTracker);
+
+// --- studio controls --------------------------------------------------------------------------------
+function fillDevices(select, offLabel, noun, list, chosen) {
+  select.textContent = "";
+  const first = document.createElement("option");
+  first.value = ""; first.textContent = offLabel;
+  select.append(first);
+  const have = new Set();
+  list.forEach((d, i) => {
+    const o = document.createElement("option");
+    o.value = d.id; o.textContent = d.label || `${noun} ${i + 1}`;   // text, never markup
+    select.append(o);
+    have.add(d.id);
+  });
+  if (chosen && !have.has(chosen.id)) {   // keep showing the remembered choice until the list says otherwise
+    const o = document.createElement("option");
+    o.value = chosen.id; o.textContent = chosen.label || noun;
+    select.append(o);
+  }
+  select.value = chosen ? chosen.id : "";
+}
+const optionLabel = (select) => (select.selectedOptions[0] ? select.selectedOptions[0].textContent.slice(0, 128) : "");
+fillDevices($("camSelect"), "Default camera", "Camera", [], studio.cam);
+fillDevices($("micSelect"), "Off", "Microphone", [], studio.mic);
+$("qualitySelect").value = studio.quality;
+$("outfitSelect").value = studio.outfit;
+
+$("camSelect").addEventListener("change", (e) => {
+  studio.cam = e.target.value ? { id: e.target.value, label: optionLabel(e.target) } : null;
+  saveStudio(); reloadTracker();
+});
+$("micSelect").addEventListener("change", (e) => {
+  studio.mic = e.target.value ? { id: e.target.value, label: optionLabel(e.target) } : null;
+  saveStudio();
+  // the microphone permission belongs to the page load: switching it on or off reloads this page
+  if (studio.mic && !micAllowed) location.replace("/?mic=1");
+  else if (!studio.mic && micAllowed) location.replace("/");
+  else reloadTracker();
+});
+$("qualitySelect").addEventListener("change", (e) => {
+  studio.quality = QUALITY.includes(e.target.value) ? e.target.value : "balanced";
+  saveStudio(); reloadTracker();
+});
+$("outfitSelect").addEventListener("change", (e) => {
+  studio.outfit = OUTFITS.includes(e.target.value) ? e.target.value : "coral";
+  saveStudio(); reloadTracker();
+});
+
+// --- what the tracking page tells us --------------------------------------------------------------------
+// Only the tracker iframe, from this origin, with exactly the documented shape. Anything else is dropped.
+const num = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
+const perModel = (o, lo, hi) => !!o && typeof o === "object" && ["pose", "face", "hands"].every((k) => num(o[k], lo, hi));
+const STATES = ["camera", "models", "running", "error", "stopped"];
+function parseStats(d) {
+  const { fps, skipped, latencyMs, hz, ms, delegates, diag, mic, avSyncMs, state, detail } = d;
+  if (!num(fps, 0, 1000) || !Number.isInteger(skipped) || skipped < 0 || skipped > 1e9 || !num(latencyMs, 0, 60000)) return null;
+  if (!perModel(hz, 0, 1000) || !perModel(ms, 0, 60000)) return null;
+  if (!delegates || typeof delegates !== "object" || !["pose", "face", "hands"].every((k) => isText(delegates[k], 8) && /^[A-Za-z]+$/.test(delegates[k]))) return null;
+  if (!diag || typeof diag !== "object" || typeof diag.face !== "boolean" || typeof diag.pose !== "boolean") return null;
+  if (!Number.isInteger(diag.hands) || diag.hands < 0 || diag.hands > 8 || !isText(diag.handHint, 160)) return null;
+  if (!Array.isArray(diag.wrists) || diag.wrists.length !== 2 || !diag.wrists.every((w) => w === null || num(w, 0, 1))) return null;
+  if (mic !== null && !(mic && typeof mic === "object" && typeof mic.active === "boolean" && typeof mic.speaking === "boolean" && num(mic.levelDb, -200, 20) && num(mic.latencyMs, 0, 10000))) return null;
+  if (avSyncMs !== null && !num(avSyncMs, -10000, 10000)) return null;
+  if (!STATES.includes(state) || !isText(detail, 200)) return null;
+  return { fps, skipped, latencyMs, hz, ms, delegates, diag, mic, avSyncMs, state, detail };
+}
+function onDevices(d) {
+  const ok = (l) => Array.isArray(l) && l.length <= 32 && l.every((x) => !!device(x));
+  if (!ok(d.cameras) || !ok(d.mics)) return;
+  const cams = d.cameras.map(device), mics = d.mics.map(device);
+  const missing = studio.cam && !cams.some((c) => c.id === studio.cam.id);
+  if (missing) { studio.cam = null; saveStudio(); }          // the remembered camera is gone: back to the default
+  fillDevices($("camSelect"), "Default camera", "Camera", cams, studio.cam);
+  fillDevices($("micSelect"), "Off", "Microphone", mics, studio.mic);
+  if (missing) reloadTracker();
+}
+let lastStats = null, lastStatsAt = 0, lastBody = null;
+const STALE_MS = 4000;
+window.addEventListener("message", (ev) => {
+  try {
+    if (ev.origin !== location.origin || !tracker.contentWindow || ev.source !== tracker.contentWindow) return;
+    const d = ev.data;
+    if (!d || typeof d !== "object" || Array.isArray(d)) return;
+    if (d.type === "realx-devices") onDevices(d);
+    else if (d.type === "realx-stats") {
+      const s = parseStats(d);
+      if (s) { lastStats = s; lastStatsAt = performance.now(); renderStudio(); }
+    }
+  } catch (e) { /* a malformed message must never break the control room */ }
+});
+function renderStudio() {
+  if ($("studioStatus").hidden) return;
+  const set = (id, text) => { $(id).textContent = text; };
+  const waiting = lastStats === null ? "No measurement yet" : performance.now() - lastStatsAt > STALE_MS ? "No recent measurement" : null;
+  $("stViewers").textContent = lastBody ? String(Number.isFinite(lastBody.viewers) ? lastBody.viewers : 0) : "No measurement yet";
+  set("stPublishing", lastBody ? (lastBody.publishing ? "Yes" : "No") : "No measurement yet");
+  if (waiting) {
+    for (const id of ["stFps", "stLatency", "stSkipped", "stRates", "stBackend", "stSees", "stMic", "stSync", "stState"]) set(id, waiting);
+    $("micMeter").hidden = true;
+    return;
+  }
+  const s = lastStats, r = Math.round;
+  set("stFps", `${s.fps.toFixed(1)} frames per second`);
+  set("stLatency", `${r(s.latencyMs)} ms`);
+  set("stSkipped", String(s.skipped));
+  set("stRates", ["pose", "face", "hands"].map((k) => `${k} ${r(s.hz[k])}/s (${r(s.ms[k])} ms)`).join(" · "));
+  set("stBackend", ["pose", "face", "hands"].map((k) => `${k} ${s.delegates[k]}`).join(" · "));
+  set("stSees", `body ${s.diag.pose ? "yes" : "no"} · face ${s.diag.face ? "yes" : "no"} · hands: ${s.diag.handHint}`);
+  if (s.mic && s.mic.active) {
+    set("stMic", `${s.mic.speaking ? "Speaking" : "Listening"} (${r(s.mic.levelDb)} dB, ${r(s.mic.latencyMs)} ms delay)`);
+    $("micMeter").setAttribute("value", String(s.mic.levelDb));
+    $("micMeter").hidden = false;
+  } else { set("stMic", "Off"); $("micMeter").hidden = true; }
+  const a = s.avSyncMs;
+  set("stSync", a === null ? "No microphone" : Math.abs(a) <= 40 ? "In sync (within 40 ms)" : a > 0 ? `Out of sync: audio ahead by ${r(a)} ms` : `Out of sync: audio behind by ${r(-a)} ms`);
+  set("stState", s.state === "running" ? "Running" : s.state === "error" ? `Error: ${s.detail || "unknown"}` : `Starting (${s.state})${s.detail ? ": " + s.detail : ""}`);
+}
 function bodyStatusText(s) {
   const b = s.body;
   if (!b || !b.publishing) return "Waiting for the camera…";
@@ -96,6 +252,8 @@ async function poll() {
     stalled = s.frames === lastFrames ? stalled + 1 : 0;
     lastFrames = s.frames;
     const inBody = s.config.mode === "body";
+    lastBody = inBody && s.body && typeof s.body === "object" ? s.body : null;
+    renderStudio();
     // in Full body mode the server has no picture of its own: "live" means a tracker page is publishing
     const live = inBody ? !!(s.body && s.body.publishing) : s.frames > 0 && stalled < 3 && !s.error;
     $("tally").classList.toggle("live", live);

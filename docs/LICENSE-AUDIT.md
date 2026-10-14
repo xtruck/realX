@@ -36,6 +36,10 @@ Not legal advice. Have a lawyer review before any commercial release.
 |---|---|---|---|
 | inswapper_128 | InsightFace | non-commercial only | **blocked** unless licensed from InsightFace |
 | buffalo_l (detector/embedder) | InsightFace | non-commercial only | **blocked** unless licensed |
+| LivePortrait (KwaiVGI), official bundle | code MIT; its `LICENSE` adds that InsightFace models are non-commercial and must be replaced for commercial use; default path runs `buffalo_l` | no, by default | **blocked** (`liveportrait`), see `PORTRAIT.md` |
+| LivePortrait's own weights | training data includes RAVDESS (CC BY-NC-SA 4.0 per Zenodo) and a private dataset | unverified | **blocked** until verified |
+| LivePortrait MediaPipe-based fork and its converted weights | fork code MIT; weights repo declares no license; "MIT and Apache-2.0" is the fork author's own claim | unverified | **blocked** until a license is stated |
+| X-Pose (used for animals) | no stated license (GitHub reports NOASSERTION) | no | **blocked** (`xpose`) |
 | GFPGAN weights | TencentARC | verify | pending |
 | CodeFormer weights | S-Lab | non-commercial (verify) | pending, assume blocked |
 | ghost / SberSwap weights | ai-forever | verify | pending |

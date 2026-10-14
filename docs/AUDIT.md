@@ -21,12 +21,12 @@ than the laptop's integrated one.
 
 | Area | State |
 |---|---|
-| Live microphone | **Absent.** Audio exists only as offline WAV conversion and chunked stages. No capture device, no noise suppression, voice-activity detection is an energy gate, nothing drives the mouth from speech. |
+| Live microphone | **Added after this audit** in the browser tracking page: capture with browser noise suppression, energy VAD, speech-driven mouth cross-faded with the tracked mouth, A/V sync alignment. Tested with synthetic audio and Chrome's fake microphone only; **never with a real microphone or voice**. The Python side still has only offline WAV conversion; there is no neural VAD or denoiser. |
 | Server-side GPU inference | **Absent.** `runtime/providers.py` ranks ONNX Runtime providers but no stage uses them; YuNet and PP-HumanSeg run on OpenCV DNN on the CPU. The only GPU use is MediaPipe's WebGL delegate in the browser. The roadmap's "CUDA / TensorRT, 25+ fps on RTX" (M1, M2) is not implemented. |
-| Face swap / portrait animation | **Absent.** No swap or animation model is bundled. The co-host flow is consent, label and revoke machinery with a stub renderer. |
+| Face swap / portrait animation | No model is bundled or enabled. The co-host flow is consent, label and revoke machinery with a stub renderer. A portrait-animation **adapter** with per-image, per-frame-checked consent now exists (`PORTRAIT.md`); every candidate engine is blocked or unverified, so it raises `PortraitUnavailable` by default. |
 | Output | MJPEG preview and the OBS Browser Source only. No virtual camera (`pyvirtualcam` is GPL-2.0 and excluded). |
-| Camera selection and quality presets | **Absent.** The Python camera is index 0 at 640x480; the browser tracker takes the default camera. |
-| Benchmarks | **None repeatable.** Speed numbers in the docs are single runs on one laptop. There is no per-resolution, per-provider benchmark. |
+| Camera selection and quality presets | **Added after this audit** for the browser tracker (camera, microphone, low/balanced/high). The server's own Python camera is still index 0 at 640x480. |
+| Benchmarks | **Added after this audit**: `realx bench` and `scripts/bench_tracking.py`, results with conditions in `BENCHMARKS.md`. Run-to-run variation was up to ~40%, browser runs carried a contention warning, and nothing was measured on a discrete GPU or any non-CPU ONNX provider. |
 | Watermark / provenance | LSB marks only; they do not survive lossy compression. No C2PA. |
 | Long-session behaviour | No test for memory growth, camera unplug during a stream, or inference failure mid-stream beyond the engine's backoff loop. |
 
@@ -50,6 +50,9 @@ than the laptop's integrated one.
 | 5 | Pings and binary frames bypassed the relay's rate cap | fixed, tested |
 | 6 | Global model-download lock could stall the server | per-model locks and background prefetch |
 | 7 | Server camera loop does capture, inference and JPEG encoding in one thread, so capture latency is tied to processing | open |
+| 11 | `pipeline.run_stream` never dropped stale frames: it popped the oldest frame, which was already running, and blocked the source (found by the resilience tests: 0 of 120 dropped, producer blocked ~3 s) | fixed (cancels the oldest frame that has not started), regression test |
+| 12 | Scheduler weights gave every model the same rate at the measured costs (9.3 Hz), so the arms got no priority | reweighted; simulated pose ~14 Hz, face and hands ~7 Hz at pose 33 / face 27 / hands 41 ms; **not yet re-measured live** |
+| 13 | Browser GPU path unavailable: every model ~3x slower and the character itself drops to ~9 fps because inference runs on the main thread | open; a machine without usable WebGL should not be offered Full body |
 | 8 | `core.autocrlf` rewrites the vendored WASM loader on Windows (content identical after normalising) | documented in `LICENSE-AUDIT.md` |
 | 9 | Test suite prints a harmless `ConnectionAbortedError` traceback when a client drops | open |
 | 10 | Relay has no per-run publish token; a local process can claim the publisher slot | accepted for the local-only threat model, documented |

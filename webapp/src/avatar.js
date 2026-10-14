@@ -5,9 +5,11 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin } from "@pixiv/three-vrm";
 import { BodySolver, restFrom } from "./retarget.js";
 import { startTracker } from "./tracker.js";
-import { unpackBody } from "./body.js";
+import { hasFlag, packStats, unpackBody } from "./body.js";
 import { idleQuats } from "./idle.js";
-import { BONES } from "./skeleton.js";
+import { BONES, EXPRESSIONS } from "./skeleton.js";
+import { startMic } from "./mic.js";
+import { DelayLine, MouthBlender, MouthFromAudio, avSyncOffset } from "./speech.js";
 
 const params = new URLSearchParams(location.search);
 const MIRROR = params.get("mirror") !== "0"; // selfie view: the character moves like your reflection
@@ -18,6 +20,10 @@ const PUBLISH = TRACK && params.get("publish") === "1";
 const PREVIEW = TRACK && params.get("preview") === "1";
 const LEGS = ["auto", "off", "on"].includes(params.get("legs")) ? params.get("legs") : "auto";
 const DELEGATE = ["auto", "cpu", "gpu"].includes(params.get("delegate")) ? params.get("delegate") : "auto";
+const clipParam = (name) => (params.get(name) || "").replace(/[\u0000-\u001f]/g, "").slice(0, 256) || null;
+const CAM = clipParam("cam");               // a camera's deviceId, chosen in the control room
+const QUALITY_NAME = params.get("quality"); // low | balanced | high; anything else means balanced
+const MIC = clipParam("mic");               // a microphone's deviceId ("default" for the system one); absent means no microphone
 // the label can be hidden for a plain OBS view, but never on a page that is running someone's camera
 const SHOW_BADGE = params.get("badge") !== "off" || params.get("track") === "1";
 const FRAMING = params.get("frame") === "full" ? { dist: 2.7, y: 0.68 } : { dist: 1.75, y: 0.86 };
@@ -200,17 +206,18 @@ async function beginTracking() {
   const rest = restFrom((name) => { const n = bone(name); return n ? n.position.clone() : null; });
   const solver = new BodySolver(rest, { mirror: MIRROR });
   tracker = await startTracker({
-    solver, mirror: MIRROR, legs: LEGS, delegate: DELEGATE, video: PREVIEW ? cam : null,
+    solver, mirror: MIRROR, legs: LEGS, delegate: DELEGATE, video: PREVIEW ? cam : null, deviceId: CAM, quality: QUALITY_NAME,
     onStatus: say,
     onFrame: (msg, info) => {
       probe.tracking = { ...probe.tracking, frames: info.frames, fps: Math.round(info.fps), ms: info.ms, hz: info.hz, diag: info.diag, delegates: info.delegates };
+      mixMouth(msg, info.latencyMs, performance.now());
       onBody(msg);
       const now = performance.now();
       if (PREVIEW && note && info.diag && now - lastReadout > 400) {   // a live account of what the models see, for the person being tracked
         lastReadout = now;
         const d = info.diag, tick = (ok) => (ok ? "yes" : "no");
         note.hidden = false;
-        note.textContent = `body: ${tick(d.pose)} · face: ${tick(d.face)} · hands: ${d.handHint} · updates/s pose ${info.hz.pose}, face ${info.hz.face}, hands ${info.hz.hands}`;
+        note.textContent = `body: ${tick(d.pose)} · face: ${tick(d.face)} · hands: ${d.handHint} · mic: ${micInfo ? (micInfo.speaking ? "speaking" : "quiet") : MIC ? (probe.micError ? "unavailable" : "starting") : "off"} · updates/s pose ${info.hz.pose}, face ${info.hz.face}, hands ${info.hz.hands}`;
       }
       if (PUBLISH && socket && socket.readyState === WebSocket.OPEN && socket.bufferedAmount < 65536) {
         socket.send(JSON.stringify(msg));        // numbers only; never a picture
@@ -219,6 +226,65 @@ async function beginTracking() {
     },
   });
   probe.recenter = () => tracker.recenter();
+  announceDevices();   // the camera permission is granted by now, so the device names are readable
+  navigator.mediaDevices?.addEventListener?.("devicechange", announceDevices);
+  if (MIC) beginMic();
+  setInterval(() => toParent(packStats({ info: tracker.stats(), state: probe.tracking?.state, detail: probe.tracking?.detail, mic: micInfo, avSyncMs: avSync })), 500);
+}
+
+// --- microphone: speech keeps the mouth honest when the face is lost. Audio never leaves this page; only the
+// five mouth-shape weights it produces travel on, inside the body message, so OBS shows the same mouth. ---
+const MOUTH = ["aa", "ih", "ou", "ee", "oh"];
+const MOUTH_AT = Object.fromEntries(MOUTH.map((k) => [k, EXPRESSIONS.indexOf(k)]));
+const audioMouth = new MouthFromAudio(), blender = new MouthBlender();
+const trackedLine = new DelayLine(), audioLine = new DelayLine();
+let mic = null, micInfo = null, lastAudio = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0, speaking: false, level: 0 }, avSync = null;
+
+async function beginMic() {
+  try {
+    mic = await startMic({
+      deviceId: MIC === "default" ? undefined : MIC,
+      onFeatures: (f) => {
+        lastAudio = audioMouth.update(f, f.t);
+        micInfo = { active: true, speaking: lastAudio.speaking, levelDb: f.levelDb, latencyMs: mic ? mic.latencyMs : null };
+        probe.mic = micInfo;
+      },
+    });
+    micInfo = { active: true, speaking: false, levelDb: null, latencyMs: mic.latencyMs };
+    probe.mic = micInfo;
+  } catch (e) {
+    probe.micError = String((e && e.message) || e).slice(0, 200);   // the camera keeps working without it
+    micInfo = null;
+  }
+}
+
+// Tracked mouth when the face is seen, speech estimate when it is not, cross-faded; the faster of the two
+// streams is delayed so the mouth and the sound line up.
+function mixMouth(msg, videoLatencyMs, now) {
+  if (!mic || !micInfo) return;
+  const tracked = Object.fromEntries(MOUTH.map((k) => [k, msg.e[MOUTH_AT[k]]]));
+  const sync = avSyncOffset({ audioLatencyMs: mic.latencyMs, videoLatencyMs: Number.isFinite(videoLatencyMs) ? videoLatencyMs : 0 });
+  trackedLine.push(tracked, now);
+  audioLine.push(lastAudio, now);
+  const mix = blender.update(trackedLine.read(now, sync.delayVideoMs) ?? tracked, hasFlag(msg.f, "face") ? 1 : 0, audioLine.read(now, sync.delayAudioMs) ?? lastAudio, now);
+  for (const k of MOUTH) msg.e[MOUTH_AT[k]] = Math.round(Math.min(1, Math.max(0, mix[k])) * 1000) / 1000;
+  probe.mouth = { ...Object.fromEntries(MOUTH.map((k) => [k, msg.e[MOUTH_AT[k]]])), source: mix.source };
+  avSync =Number.isFinite(videoLatencyMs) ? sync.offsetMs : null;
+}
+
+// --- telling the control room (same origin only): which devices exist, and how tracking is doing ---
+function toParent(msg) {
+  if (window.parent !== window) window.parent.postMessage(msg, location.origin);
+}
+async function announceDevices() {
+  if (window.parent === window || !navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    const list = (kind) => all.filter((d) => d.kind === kind && d.deviceId).slice(0, 20).map((d) => ({
+      id: String(d.deviceId).slice(0, 256), label: String(d.label || "").replace(/[\u0000-\u001f]/g, "").slice(0, 100),
+    }));
+    toParent({ type: "realx-devices", cameras: list("videoinput"), mics: list("audioinput") });
+  } catch (e) { /* the list is a convenience; tracking does not depend on it */ }
 }
 // the control room (same origin) can ask this page to recenter or change the legs setting
 window.addEventListener("message", (ev) => {

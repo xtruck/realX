@@ -161,6 +161,129 @@ def test_camera_page_tracks_publishes_numbers_only_and_a_viewer_sees_it(stack):
         browser.close()
 
 
+_COLLECT = "window.__msgs = []; window.addEventListener('message', (e) => window.__msgs.push({origin: e.origin, data: e.data}))"
+_EMBED = "(src) => { const f = document.createElement('iframe'); f.id = 'tr'; f.allow = 'camera'; f.src = src; f.style.width = '480px'; f.style.height = '480px'; document.body.append(f); }"
+
+
+def _finite(value):
+    if isinstance(value, dict):
+        return all(_finite(v) for v in value.values())
+    if isinstance(value, list):
+        return all(_finite(v) for v in value)
+    return not (isinstance(value, float) and not math.isfinite(value))
+
+
+def test_tracking_page_tells_its_parent_which_devices_exist_and_how_it_is_doing(stack):
+    p, exe, clip, srv = stack
+    base = f"http://127.0.0.1:{srv.port}"
+    browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
+    try:
+        page = browser.new_context(viewport={"width": 900, "height": 600}, permissions=["camera"]).new_page()
+        page.goto(f"{base}/")
+        page.evaluate(_COLLECT)
+        page.evaluate(_EMBED, f"{base}/avatar?track=1&publish=0&preview=1&delegate=cpu&quality=low")
+        _wait(page, "window.__msgs.some((m) => m.data && m.data.type === 'realx-devices')", 120)
+        _wait(page, "window.__msgs.some((m) => m.data && m.data.type === 'realx-stats' && m.data.state === 'running' && m.data.fps !== null)", 120)
+        msgs = page.evaluate("window.__msgs")
+        assert all(m["origin"] == base for m in msgs), "only this origin may speak to the control room"
+        devices = next(m["data"] for m in msgs if m["data"].get("type") == "realx-devices")
+        assert devices["cameras"] and all(sorted(c) == ["id", "label"] for c in devices["cameras"])
+        stats = [m["data"] for m in msgs if m["data"].get("type") == "realx-stats"]
+        running = next(s for s in stats if s["state"] == "running" and s["fps"] is not None)
+        assert sorted(running) == ["avSyncMs", "delegates", "detail", "diag", "fps", "hz", "latencyMs", "mic", "ms", "skipped", "state", "type"]
+        assert running["diag"] is not None and isinstance(running["diag"]["handHint"], str)
+        assert all(_finite(s) for s in stats)
+        early = stats[0]  # before any measurement the numbers are unknown (null), not zero
+        assert early["fps"] is None or early["state"] != "camera"
+        # the "low" preset asks the camera for 320x240
+        size = page.frame_locator("#tr").locator("#cam").evaluate("v => [v.videoWidth, v.videoHeight]")
+        assert size[0] <= 640, size
+    finally:
+        browser.close()
+
+
+def _write_speech_wav(path: Path, seconds: float = 6.0, rate: int = 48000) -> None:
+    """A synthetic vowel /a/ (harmonics of 120 Hz shaped by formants near 700 and 1100 Hz), 1 s on, 1 s off."""
+    import wave
+
+    import numpy as np
+
+    t = np.arange(int(seconds * rate)) / rate
+    voice = sum(np.sin(2 * np.pi * 120 * k * t) * (np.exp(-((120 * k - 700) / 180) ** 2) + 0.7 * np.exp(-((120 * k - 1100) / 220) ** 2)) for k in range(1, 20))
+    gate = ((t % 2.0) < 1.0).astype(float)
+    sig = voice / np.max(np.abs(voice)) * gate * 0.6
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(rate)
+        w.writeframes((sig * 32767).astype("<i2").tobytes())
+
+
+def _write_black_clip(path: Path, frames: int = 30) -> None:
+    """Frames with nobody in them: the face is never found, so only the microphone can move the mouth."""
+    import numpy as np
+
+    with open(path, "wb") as fh:
+        fh.write(b"YUV4MPEG2 W640 H480 F30:1 Ip A1:1 C420jpeg\n")
+        for _ in range(frames):
+            fh.write(b"FRAME\n" + bytes([16]) * (640 * 480) + bytes([128]) * (640 * 480 // 2))
+
+
+def test_microphone_drives_the_mouth_when_no_face_is_seen_and_audio_stays_in_the_page(stack, tmp_path):
+    p, exe, _clip, srv = stack
+    base = f"http://127.0.0.1:{srv.port}"
+    wav, black = tmp_path / "speech.wav", tmp_path / "empty.y4m"
+    _write_speech_wav(wav)
+    _write_black_clip(black)
+    browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={black}", f"--use-file-for-fake-audio-capture={wav}"])
+    try:
+        ctx = browser.new_context(viewport={"width": 480, "height": 480}, permissions=["camera", "microphone"])
+        page = ctx.new_page()
+        sent, requests, errors = [], [], []
+        page.on("websocket", lambda ws: ws.on("framesent", lambda payload: sent.append(payload)))
+        page.on("request", lambda r: requests.append((r.method, r.url, r.resource_type)))
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"{base}/avatar?track=1&publish=1&preview=1&delegate=cpu&quality=low&mic=default")
+        _wait(page, "window.__realx && window.__realx.tracking && window.__realx.tracking.frames >= 10", 180)
+        _wait(page, "window.__realx.mic && window.__realx.mic.active", 30)
+        loud = 0.0
+        for _ in range(60):  # a few seconds covers at least one 1 s vowel
+            mouth = page.evaluate("window.__realx.mouth")
+            loud = max(loud, (mouth or {}).get("aa", 0))
+            if loud > 0.25:
+                break
+            time.sleep(0.15)
+        state = page.evaluate("window.__realx")
+        assert state["mic"]["active"] and not state.get("micError"), (state["mic"], state.get("micError"))
+        assert loud > 0.25, f"the vowel never opened the mouth (mouth {state['mouth']}, mic {state['mic']})"
+        assert state["mouth"]["source"] == "audio", "with no face in view the mouth comes from the microphone"
+        assert state["rejected"] == 0 and not errors, errors
+        # audio never leaves the page: only same-origin GETs, and every published frame is the small body message
+        origin = f"127.0.0.1:{srv.port}"
+        assert all(origin in url or url.startswith(("blob:", "data:")) for _m, url, _k in requests), requests
+        assert all(m == "GET" for m, _u, _k in requests)
+        for payload in sent:
+            msg = json.loads(payload if isinstance(payload, str) else payload.decode("utf-8"))
+            assert sorted(msg) == ["e", "f", "q", "r", "type"] and len(json.dumps(msg)) <= 6144
+        assert page.evaluate("document.querySelectorAll('audio').length") == 0, "nothing is played back"
+    finally:
+        browser.close()
+
+
+def test_a_camera_that_is_not_there_is_explained(stack):
+    p, exe, clip, srv = stack
+    base = f"http://127.0.0.1:{srv.port}"
+    browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
+    try:
+        page = browser.new_context(viewport={"width": 900, "height": 600}, permissions=["camera"]).new_page()
+        page.goto(f"{base}/")
+        page.evaluate(_COLLECT)
+        page.evaluate(_EMBED, f"{base}/avatar?track=1&preview=1&delegate=cpu&cam=no-such-camera-id")
+        _wait(page, "window.__msgs.some((m) => m.data && m.data.type === 'realx-stats' && m.data.state === 'error')", 60)
+        err = next(m["data"] for m in page.evaluate("window.__msgs") if m["data"].get("type") == "realx-stats" and m["data"]["state"] == "error")
+        assert "camera" in err["detail"].lower() and len(err["detail"]) < 200, err["detail"]
+    finally:
+        browser.close()
+
+
 def test_refused_camera_is_explained_and_the_character_still_works(stack):
     p, exe, _clip, srv = stack
     browser = _launch(p, exe, [])  # no fake camera, no auto-accept: the browser has nothing to give

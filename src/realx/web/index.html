@@ -103,6 +103,13 @@
   .msg.err { color: #b3261e; }
   .msg.ok { color: var(--ok); }
 
+  .virtual { margin: 10px 0 0; padding: 8px 10px; border-left: 4px solid var(--teal); background: var(--teal-soft); border-radius: 0 8px 8px 0; font-size: .9rem; font-weight: 600; }
+  .studio-status { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--rule); }
+  .studio-grid { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 6px 16px; margin: 10px 0 0; font-size: .92rem; }
+  .studio-grid dt { color: var(--ink-soft); }
+  .studio-grid dd { margin: 0; overflow-wrap: anywhere; }
+  .studio-grid meter { width: 120px; vertical-align: middle; }
+  @media (max-width: 520px) { .studio-grid { grid-template-columns: 1fr; } .studio-grid dd { margin-bottom: 6px; } }
   ul.safety { list-style: none; margin: 8px 0 0; padding: 0; }
   ul.safety li { padding: 7px 0; border-top: 1px solid var(--rule); font-size: .9rem; display: flex; gap: 10px; }
   ul.safety li:first-child { border-top: 0; }
@@ -157,6 +164,24 @@
         <div class="stat"><b id="sDrop">0</b><span>frames skipped</span></div>
       </div>
 
+      <section class="studio-status" id="studioStatus" aria-labelledby="ststatus" hidden>
+        <h2 id="ststatus">Streaming status</h2>
+        <p class="hint">Measured live inside the tracking page. Until the first measurement arrives, nothing here is a number.</p>
+        <dl class="studio-grid">
+          <dt>Tracker speed</dt><dd id="stFps">No measurement yet</dd>
+          <dt>Time per frame</dt><dd id="stLatency">No measurement yet</dd>
+          <dt>Frames skipped</dt><dd id="stSkipped">No measurement yet</dd>
+          <dt>Model updates per second</dt><dd id="stRates">No measurement yet</dd>
+          <dt>Running on</dt><dd id="stBackend">No measurement yet</dd>
+          <dt>What it sees</dt><dd id="stSees">No measurement yet</dd>
+          <dt>Microphone</dt><dd><span id="stMic">No measurement yet</span> <meter id="micMeter" min="-60" max="0" value="-60" aria-label="Microphone level in decibels" hidden></meter></dd>
+          <dt>Audio and video sync</dt><dd id="stSync">No measurement yet</dd>
+          <dt>Viewers connected</dt><dd id="stViewers">No measurement yet</dd>
+          <dt>Publishing to OBS</dt><dd id="stPublishing">No measurement yet</dd>
+          <dt>Tracker state</dt><dd id="stState">No measurement yet</dd>
+        </dl>
+      </section>
+
       <div class="ribbon-wrap">
         <div class="ribbon-head">
           <div>
@@ -207,6 +232,33 @@
       <section aria-labelledby="fullbody" id="bodyPanel" hidden>
         <h2 id="fullbody">Full body</h2>
         <p class="hint">Your camera stays in this page. The character receives only joint angles, never pictures.</p>
+        <p class="virtual" id="virtualLine">Virtual character: viewers are told this is an avatar.</p>
+        <fieldset>
+          <legend>Camera</legend>
+          <select id="camSelect" aria-label="Camera"><option value="">Default camera</option></select>
+        </fieldset>
+        <fieldset>
+          <legend>Microphone</legend>
+          <select id="micSelect" aria-label="Microphone"><option value="">Off</option></select>
+          <p class="hint">Off unless you choose one. Sound is analysed in this browser and never sent anywhere. Turning it on or off reloads this page, because the browser only grants the microphone to a page that asks for it.</p>
+        </fieldset>
+        <fieldset>
+          <legend>Quality</legend>
+          <select id="qualitySelect" aria-label="Quality">
+            <option value="low">Low (320 by 240)</option>
+            <option value="balanced" selected>Balanced (640 by 480)</option>
+            <option value="high">High (1280 by 720)</option>
+          </select>
+          <p class="hint" id="qualityHint">Low is the lightest, with rougher hands and fingers. Balanced is the best starting point. High gives sharper hands and fingers but is slower, so the arms update less often on a modest computer.</p>
+        </fieldset>
+        <fieldset>
+          <legend>Outfit</legend>
+          <select id="outfitSelect" aria-label="Character outfit">
+            <option value="coral">Coral</option><option value="ocean">Ocean</option><option value="sunny">Sunny</option>
+            <option value="berry">Berry</option><option value="forest">Forest</option>
+          </select>
+        </fieldset>
+        <p class="hint" id="studioPanelHint">Changing the camera, microphone, quality or outfit restarts the camera and reloads the tracker for a moment.</p>
         <fieldset>
           <legend>Legs</legend>
           <select id="legsMode" aria-label="When the legs move">

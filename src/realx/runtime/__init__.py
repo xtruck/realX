@@ -1,3 +1,21 @@
-from realx.runtime.providers import PREFERENCE, installed, pick_providers
+from realx.runtime.providers import (
+    PREFERENCE,
+    SessionCache,
+    SessionError,
+    SessionInfo,
+    describe,
+    installed,
+    onnxruntime_session_factory,
+    pick_providers,
+)
 
-__all__ = ["PREFERENCE", "installed", "pick_providers"]
+__all__ = [
+    "PREFERENCE",
+    "SessionCache",
+    "SessionError",
+    "SessionInfo",
+    "describe",
+    "installed",
+    "onnxruntime_session_factory",
+    "pick_providers",
+]

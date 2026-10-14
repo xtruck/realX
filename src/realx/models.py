@@ -98,6 +98,14 @@ MANIFEST: dict[str, ModelSpec] = {
 BLOCKED = {
     "inswapper_128": "InsightFace models are non-commercial research only",
     "buffalo_l": "InsightFace models are non-commercial research only",
+    # Portrait-animation components, reviewed against primary sources on 2026-10-14; see docs/PORTRAIT.md.
+    "liveportrait": (
+        "LivePortrait's official bundle runs InsightFace buffalo_l (non-commercial research only; its own LICENSE says "
+        "to remove and replace those models for commercial use), and its weights were trained on datasets whose terms "
+        "are unverified (the paper names RAVDESS, which is CC BY-NC-SA 4.0, and a private dataset)"
+    ),
+    "liveportrait_animals": "LivePortrait animals mode needs X-Pose, whose license is not stated (GitHub: NOASSERTION); same training-data caveat",
+    "xpose": "X-Pose (IDEA-Research) has no standard license (GitHub reports NOASSERTION); not verified for any use here",
 }
 
 

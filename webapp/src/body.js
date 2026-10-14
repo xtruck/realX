@@ -200,6 +200,54 @@ export function unpackBody(msg) {
   };
 }
 
+// --- quality presets and the status message ------------------------------------------------------------
+// What a preset trades: sharper hands and a farther reach (resolution) against time per frame (budget).
+export const QUALITY = {
+  low: { width: 320, height: 240, budgetMs: 25 },
+  balanced: { width: 640, height: 480, budgetMs: 40 },
+  high: { width: 1280, height: 720, budgetMs: 60 },
+};
+export const qualityOf = (name) => (typeof name === "string" && Object.hasOwn(QUALITY, name) ? QUALITY[name] : QUALITY.balanced);
+
+const STATES = ["camera", "models", "running", "error", "stopped"];
+const clean = (s, n = 200) => String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, "").slice(0, n);
+const num = (v, places = 0, lo = 0, hi = 1e6) => (typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? round(v, places) : null);
+const pick = (o, keys, f) => Object.fromEntries(keys.map((k) => [k, f(o && typeof o === "object" ? o[k] : undefined)]));
+
+/**
+ * The one message the tracking page posts to the control room. Everything is re-built from known keys
+ * with finite, bounded numbers and short strings, so the receiver never has to trust what it was handed.
+ * A value that is not known yet is null, never 0 (0 would look like a measurement).
+ */
+export function packStats({ info = null, state = "camera", detail = "", mic = null, avSyncMs = null } = {}) {
+  const i = info || {};
+  const d = i.diag && typeof i.diag === "object" ? i.diag : null;
+  return {
+    type: "realx-stats",
+    fps: num(i.fps, 1, 0, 1000),
+    skipped: num(i.skipped, 0, 0, 1e9),
+    latencyMs: num(i.latencyMs, 0, 0, 60000),
+    hz: pick(i.hz, ["pose", "face", "hands"], (v) => num(v, 0, 0, 1000)),
+    ms: pick(i.ms, ["pose", "face", "hands"], (v) => num(v, 0, 0, 60000)),
+    delegates: pick(i.delegates, ["pose", "face", "hands"], (v) => (v === "GPU" || v === "CPU" ? v : null)),
+    diag: d && {
+      face: d.face === true, pose: d.pose === true,
+      hands: Number.isInteger(d.hands) && d.hands > 0 ? Math.min(d.hands, 2) : 0,
+      handHint: clean(d.handHint),
+      wrists: [0, 1].map((k) => {
+        const v = Array.isArray(d.wrists) ? d.wrists[k] : null;
+        return typeof v === "number" && Number.isFinite(v) ? round(Math.min(1, Math.max(0, v)), 2) : null;
+      }),
+    },
+    mic: mic && typeof mic === "object"
+      ? { active: mic.active === true, speaking: mic.speaking === true, levelDb: num(mic.levelDb, 0, -200, 20), latencyMs: num(mic.latencyMs, 0, 0, 5000) }
+      : null,
+    avSyncMs: num(avSyncMs, 0, -5000, 5000),
+    state: STATES.includes(state) ? state : "error",
+    detail: clean(detail),
+  };
+}
+
 // --- position in the picture --------------------------------------------------------------------------
 const SHOULDERS = [11, 12];
 const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
@@ -245,7 +293,10 @@ export class RootTracker {
 // every frame; when each costs about a frame they take turns, and the one whose result goes stale
 // soonest (pose: arms show lag the most) runs most often. Costs are measured, not assumed.
 const KEYS = ["pose", "face", "hands"];
-const TARGET_MS = { pose: 70, face: 100, hands: 90 }; // how old each result may get before it is due again
+// How old each result may get before it is due again. When one model costs about a frame, models run one
+// per frame; pose (the arms) gets every second pass and face and hands share the rest. Weights of 70/100/90
+// were tried first: with the measured costs every model then ran 9.3 times a second, so pose got no priority.
+const TARGET_MS = { pose: 40, face: 100, hands: 100 };
 
 export class Stagger {
   /** budgetMs: the most model work to start in one frame (one model always runs, however slow) */
