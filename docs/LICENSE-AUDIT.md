@@ -1,0 +1,55 @@
+# License audit (working document)
+
+Not legal advice. Have a lawyer review before any commercial release.
+
+## Rules for this repo
+
+1. **Clean room.** We read other projects for ideas. We copy no code from GPL, AGPL,
+   OpenRAIL or non-commercial repos.
+2. **Models are separate from code.** Every model file needs an entry in the table below
+   before it can ship in a product build.
+3. **Anything marked `blocked` must not be bundled, downloaded by default or required.**
+
+## Code
+
+| Source | License | Use |
+|---|---|---|
+| Deep-Live-Cam | AGPL-3.0 | ideas only |
+| DeepFaceLive | GPL-3.0 | ideas only |
+| faceswap | GPL-3.0 | ideas only |
+| ComfyUI-ReActor | GPL-3.0 | ideas only |
+| FaceFusion | OpenRAIL-AS (custom, behavioral restrictions) | ideas only |
+| SimSwap | custom, academic/non-commercial | ideas only |
+| VisoMaster | GPL-3.0 | ideas only |
+| DeepFaceLab | GPL-3.0 | ideas only |
+| vtubing | MIT | may reuse with attribution (CPU avatar pipeline) |
+| webatar | no license file found | ideas only until confirmed |
+| MediaPipe (tasks-vision) | Apache-2.0 | allowed, check each model card |
+| VRM / three-vrm | MIT-style | allowed; check each avatar's own license (e.g. CC0) |
+| ghost | Apache-2.0 | may reuse with attribution, review model weights separately |
+| Real-ESRGAN | BSD-3-Clause | may reuse with attribution |
+| ONNX Runtime, FFmpeg (LGPL build), WebRTC | permissive / LGPL | allowed as dependencies |
+
+## Models
+
+| Model | Source | Commercial use | Status |
+|---|---|---|---|
+| inswapper_128 | InsightFace | non-commercial only | **blocked** unless licensed from InsightFace |
+| buffalo_l (detector/embedder) | InsightFace | non-commercial only | **blocked** unless licensed |
+| GFPGAN weights | TencentARC | verify | pending |
+| CodeFormer weights | S-Lab | non-commercial (verify) | pending, assume blocked |
+| ghost / SberSwap weights | ai-forever | verify | pending |
+| Real-ESRGAN weights | xinntao | BSD-3 (verify per weight) | pending |
+| Own trained models | us | ours | planned (path B) |
+
+## Decision pending
+
+- **Path A:** license InsightFace models commercially and build around them.
+- **Path B:** train our own swap, detection and restoration models (needs GPU budget and
+  a consented dataset).
+- The codebase is model-agnostic (see ARCHITECTURE.md), so both paths stay open.
+
+## Repo hygiene
+
+- This repo is currently **public**. Make it private before adding product code.
+- Add an explicit LICENSE once the model path is decided.
