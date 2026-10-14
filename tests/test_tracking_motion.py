@@ -111,6 +111,29 @@ def test_fast_motion_with_blur_and_noise_stays_locked(detector_ready, motion):
     assert r["median_err_px"] < 25
 
 
+@pytest.mark.parametrize("motion", ["dance", "sprint"])
+def test_dropped_frames_do_not_spawn_ghost_faces(detector_ready, motion):
+    """A slow machine skips frames; the face then jumps far between processed frames."""
+    from realx.pipeline import Pipeline
+    from realx.sources import SyntheticScene
+    from realx.stages import create
+
+    scene = SyntheticScene(motion, degrade=0.6)
+    seen_ids: set[int] = set()
+    ghost_frames = 0
+    rng = np.random.default_rng(3)
+    stages = [create("detect_yunet", score_threshold=0.3), create("track"), create("one_euro")]
+    index = 0
+    with Pipeline(stages) as pipe:
+        for _ in range(70):
+            index += int(rng.integers(1, 14))  # a loaded machine skips 0 to 12 frames
+            out = pipe.process(scene.render(index))
+            seen_ids.update(f.track_id for f in out.faces)
+            ghost_frames += len(out.faces) > 1
+    assert ghost_frames == 0, "duplicate faces appeared after large jumps"
+    assert len(seen_ids) == 1
+
+
 def test_clean_motion_is_precise(detector_ready):
     from motion_check import run
 

@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>realX control room</title>
+<style>
+  :root {
+    --paper: #e8edf0;
+    --panel: #f4f7f9;
+    --ink: #13202b;
+    --ink-soft: #4d5e6b;
+    --rule: #c7d1d8;
+    --bezel: #0c141b;
+    --tally: #e5352b;
+    --teal: #0e7c86;
+    --teal-soft: #d3ebee;
+    --amber: #e8a23a;
+    --ok: #1f9d6b;
+    --radius: 10px;
+    font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-variant-numeric: tabular-nums;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #121a21; --panel: #1a242d; --ink: #e6edf2; --ink-soft: #9db0be;
+      --rule: #2d3b47; --bezel: #05090c; --teal: #35b6c2; --teal-soft: #17353a; color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); }
+  body { min-height: 100vh; line-height: 1.45; }
+  :focus-visible { outline: 3px solid var(--teal); outline-offset: 2px; }
+
+  .shell { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding-bottom: 14px; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; font-weight: 700; }
+  header p { margin: 0; color: var(--ink-soft); }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
+  @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+
+  /* the monitor is the one memorable object */
+  .monitor { background: var(--bezel); border-radius: 16px; padding: 14px 14px 12px; }
+  .screen { position: relative; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; overflow: hidden; }
+  .screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .guides { position: absolute; inset: 8%; border: 1px dashed rgba(255,255,255,.35); pointer-events: none; display: none; }
+  .guides.on { display: block; }
+  .screen .notice { position: absolute; inset: 0; display: grid; place-items: center; color: #cfd8de; text-align: center; padding: 24px; }
+  .bar { display: flex; align-items: center; gap: 12px; color: #c4cfd6; padding-top: 10px; font-size: .9rem; flex-wrap: wrap; }
+  .tally { width: 12px; height: 12px; border-radius: 50%; background: #4a2420; box-shadow: 0 0 0 2px #1d2a33; flex: none; }
+  .tally.live { background: var(--tally); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 2px #1d2a33, 0 0 12px 3px rgba(229,53,43,.65); } }
+  @media (prefers-reduced-motion: reduce) { .tally.live { animation: none; } }
+  .bar .spacer { flex: 1; }
+  .bar strong { color: #fff; font-weight: 600; }
+
+  .ribbon-wrap { margin-top: 18px; }
+  .ribbon-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  h2 { font-size: 1rem; margin: 0 0 4px; font-weight: 650; }
+  .hint { margin: 0; color: var(--ink-soft); font-size: .88rem; }
+  canvas { width: 100%; height: 44px; display: block; margin-top: 8px; border-radius: 6px; background: var(--panel); }
+  .legend { display: flex; gap: 16px; font-size: .85rem; color: var(--ink-soft); margin-top: 8px; flex-wrap: wrap; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 20px; border-top: 1px solid var(--rule); }
+  .stat { padding: 12px 14px 0 0; }
+  .stat b { display: block; font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; }
+  .stat span { color: var(--ink-soft); font-size: .85rem; }
+  @media (max-width: 520px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+  aside section { padding: 0 0 22px; margin: 0 0 22px; border-bottom: 1px solid var(--rule); }
+  aside section:last-child { border-bottom: 0; margin-bottom: 0; }
+  fieldset { border: 0; padding: 0; margin: 10px 0 0; }
+  legend { padding: 0; font-weight: 600; font-size: .92rem; margin-bottom: 6px; }
+
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 3px; gap: 3px; }
+  .seg label { position: relative; }
+  .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+  .seg span { display: block; text-align: center; padding: 8px 6px; border-radius: 7px; font-size: .92rem; cursor: pointer; }
+  .seg input:checked + span { background: var(--teal); color: #fff; font-weight: 600; }
+  .seg input:focus-visible + span { outline: 3px solid var(--teal); outline-offset: 2px; }
+
+  select, input[type="file"] { width: 100%; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 9px 10px; }
+  input[type="range"] { width: 100%; accent-color: var(--teal); margin: 6px 0 0; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .row output { color: var(--ink-soft); }
+
+  button { font: inherit; font-weight: 600; background: var(--ink); color: var(--paper); border: 0; border-radius: var(--radius); padding: 10px 14px; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--rule); }
+  button:disabled { opacity: .55; cursor: progress; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  audio { width: 100%; margin-top: 12px; }
+  .msg { min-height: 1.3em; margin: 10px 0 0; font-size: .9rem; }
+  .msg.err { color: #b3261e; }
+  .msg.ok { color: var(--ok); }
+
+  ul.safety { list-style: none; margin: 8px 0 0; padding: 0; }
+  ul.safety li { padding: 7px 0; border-top: 1px solid var(--rule); font-size: .9rem; display: flex; gap: 10px; }
+  ul.safety li:first-child { border-top: 0; }
+  ul.safety b { font-weight: 600; min-width: 92px; }
+  ul.safety em { font-style: normal; color: var(--ink-soft); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <h1>realX control room</h1>
+    <p>Live face tracking and voice, running on this computer.</p>
+  </header>
+
+  <div class="grid">
+    <main>
+      <div class="monitor">
+        <div class="screen">
+          <img id="view" alt="Live preview with tracked faces" hidden>
+          <div class="guides" id="guides"></div>
+          <div class="notice" id="notice">Starting the camera pipeline…</div>
+        </div>
+        <div class="bar">
+          <span class="tally" id="tally" aria-hidden="true"></span>
+          <strong id="state">Starting</strong>
+          <span id="srcLabel"></span>
+          <span class="spacer"></span>
+          <label><input type="checkbox" id="guideToggle"> Show safe area</label>
+        </div>
+      </div>
+
+      <div class="stats" role="group" aria-label="Live measurements">
+        <div class="stat"><b id="sFps">0</b><span>frames per second</span></div>
+        <div class="stat"><b id="sLat">0</b><span>milliseconds per frame</span></div>
+        <div class="stat"><b id="sFaces">0</b><span>faces tracked</span></div>
+        <div class="stat"><b id="sDrop">0</b><span>frames skipped</span></div>
+      </div>
+
+      <div class="ribbon-wrap">
+        <div class="ribbon-head">
+          <div>
+            <h2>Tracking over the last four seconds</h2>
+            <p class="hint">Each tick is one frame. Amber ticks mean the face was briefly lost and the position is estimated.</p>
+          </div>
+        </div>
+        <canvas id="ribbon" width="960" height="44" role="img" aria-label="Recent frames: detected, estimated or lost"></canvas>
+        <div class="legend">
+          <span style="--c: var(--teal)">Detected</span>
+          <span style="--c: var(--amber)">Estimated</span>
+          <span style="--c: var(--rule)">Lost</span>
+        </div>
+      </div>
+    </main>
+
+    <aside>
+      <section aria-labelledby="look">
+        <h2 id="look">Picture</h2>
+        <fieldset>
+          <legend>What to show</legend>
+          <div class="seg" id="modeSeg">
+            <label><input type="radio" name="mode" value="avatar" checked><span>Avatar</span></label>
+            <label><input type="radio" name="mode" value="boxes"><span>Tracking</span></label>
+            <label><input type="radio" name="mode" value="original"><span>Original</span></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Source</legend>
+          <select id="source" aria-label="Video source">
+            <option value="demo:dance">Demo: dancing</option>
+            <option value="demo:jump">Demo: jumping</option>
+            <option value="demo:sprint">Demo: sprinting</option>
+            <option value="demo:spin">Demo: head spinning</option>
+            <option value="camera">Camera</option>
+          </select>
+        </fieldset>
+        <fieldset>
+          <div class="row"><legend>Steadiness</legend><output id="smoothOut">35%</output></div>
+          <input type="range" id="smooth" min="0" max="100" value="35" aria-label="Steadiness">
+          <p class="hint">Higher is calmer but trails fast moves a little.</p>
+        </fieldset>
+        <p class="msg" id="cfgMsg" role="status"></p>
+      </section>
+
+      <section aria-labelledby="voice">
+        <h2 id="voice">Voice</h2>
+        <p class="hint">Change pitch on a recording. Every file carries a realX provenance mark.</p>
+        <fieldset>
+          <div class="row"><legend>Pitch</legend><output id="pitchOut">+3 semitones</output></div>
+          <input type="range" id="pitch" min="-12" max="12" value="3" step="1" aria-label="Pitch in semitones">
+        </fieldset>
+        <fieldset>
+          <legend>Recording (16-bit WAV)</legend>
+          <input type="file" id="file" accept=".wav,audio/wav,audio/x-wav">
+        </fieldset>
+        <div class="actions">
+          <button id="convert">Convert recording</button>
+          <button id="tone" class="ghost">Try a test tone</button>
+        </div>
+        <p class="msg" id="voiceMsg" role="status"></p>
+        <audio id="player" controls hidden></audio>
+        <a id="download" hidden>Save converted audio</a>
+      </section>
+
+      <section aria-labelledby="safe">
+        <h2 id="safe">Safety</h2>
+        <ul class="safety" id="safety"><li><em>Loading…</em></li></ul>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, opts);
+  const ct = res.headers.get("content-type") || "";
+  if (!res.ok) {
+    let message = "Something went wrong";
+    try { message = (await res.json()).error || message; } catch (e) {}
+    throw new Error(message);
+  }
+  return ct.includes("json") ? res.json() : res.blob();
+};
+
+// --- live view and measurements -------------------------------------------------
+const view = $("view");
+let lastFrames = -1, stalled = 0;
+view.addEventListener("load", () => { $("notice").hidden = true; view.hidden = false; }, { once: true });
+view.src = "/stream.mjpg";
+
+const ribbon = $("ribbon");
+const ctx = ribbon.getContext("2d");
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function drawRibbon(states) {
+  const w = ribbon.width, h = ribbon.height, n = 120, step = w / n;
+  ctx.clearRect(0, 0, w, h);
+  const colors = [css("--rule"), css("--teal"), css("--amber")];
+  const heights = [0.35, 0.9, 0.62];
+  states.forEach((s, i) => {
+    const x = (n - states.length + i) * step;
+    const bh = h * heights[s];
+    ctx.fillStyle = colors[s];
+    ctx.fillRect(x + 1, h - bh - 4, step - 2, bh);
+  });
+}
+
+async function poll() {
+  try {
+    const s = await api("/api/stats");
+    $("sFps").textContent = s.fps.toFixed(0);
+    $("sLat").textContent = s.latency_ms.toFixed(0);
+    $("sFaces").textContent = s.faces;
+    $("sDrop").textContent = s.dropped;
+    drawRibbon(s.ribbon);
+    stalled = s.frames === lastFrames ? stalled + 1 : 0;
+    lastFrames = s.frames;
+    const live = s.frames > 0 && stalled < 3 && !s.error;
+    $("tally").classList.toggle("live", live);
+    if (live && !s.error) { $("notice").hidden = true; view.hidden = false; }
+    $("state").textContent = s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
+    if (s.error) { $("notice").hidden = false; $("notice").textContent = s.error + " Choose a demo source or connect a camera."; }
+    $("srcLabel").textContent = s.config.source === "camera" ? "Camera" : "Demo footage";
+    syncControls(s.config);
+  } catch (e) {
+    $("tally").classList.remove("live");
+    $("state").textContent = "Disconnected";
+  }
+}
+setInterval(poll, 500);
+poll();
+
+// --- picture controls -------------------------------------------------------------
+let editing = 0;
+function syncControls(c) {
+  if (Date.now() - editing < 1500) return;
+  document.querySelectorAll('input[name="mode"]').forEach((r) => { r.checked = r.value === c.mode; });
+  $("source").value = c.source;
+  $("smooth").value = Math.round(c.smoothing * 100);
+  $("smoothOut").textContent = Math.round(c.smoothing * 100) + "%";
+}
+async function setConfig(changes) {
+  editing = Date.now();
+  try {
+    await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) });
+    $("cfgMsg").className = "msg ok"; $("cfgMsg").textContent = "Updated";
+  } catch (e) {
+    $("cfgMsg").className = "msg err"; $("cfgMsg").textContent = e.message;
+  }
+}
+document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", () => setConfig({ mode: r.value })));
+$("source").addEventListener("change", (e) => setConfig({ source: e.target.value }));
+let t;
+$("smooth").addEventListener("input", (e) => {
+  $("smoothOut").textContent = e.target.value + "%";
+  clearTimeout(t); t = setTimeout(() => setConfig({ smoothing: e.target.value / 100 }), 200);
+});
+$("guideToggle").addEventListener("change", (e) => $("guides").classList.toggle("on", e.target.checked));
+
+// --- voice ------------------------------------------------------------------------
+const pitch = $("pitch");
+const fmt = (v) => (v > 0 ? "+" : "") + v + (Math.abs(v) === 1 ? " semitone" : " semitones");
+pitch.addEventListener("input", () => { $("pitchOut").textContent = fmt(Number(pitch.value)); });
+$("pitchOut").textContent = fmt(Number(pitch.value));
+
+async function convert(body, demo) {
+  const buttons = [$("convert"), $("tone")];
+  buttons.forEach((b) => (b.disabled = true));
+  $("voiceMsg").className = "msg"; $("voiceMsg").textContent = "Converting…";
+  try {
+    const blob = await api(`/api/voice?semitones=${pitch.value}${demo ? "&demo=1" : ""}`, { method: "POST", body });
+    const url = URL.createObjectURL(blob);
+    $("player").src = url; $("player").hidden = false;
+    $("download").href = url; $("download").download = "realx-voice.wav"; $("download").hidden = false;
+    $("voiceMsg").className = "msg ok"; $("voiceMsg").textContent = "Done. Press play to listen.";
+  } catch (e) {
+    $("voiceMsg").className = "msg err"; $("voiceMsg").textContent = e.message;
+  } finally {
+    buttons.forEach((b) => (b.disabled = false));
+  }
+}
+$("convert").addEventListener("click", () => {
+  const f = $("file").files[0];
+  if (!f) { $("voiceMsg").className = "msg err"; $("voiceMsg").textContent = "Choose a WAV recording first."; return; }
+  convert(f, false);
+});
+$("tone").addEventListener("click", () => convert(new Blob([]), true));
+
+// --- safety -----------------------------------------------------------------------
+api("/api/safety").then((s) => {
+  const blocked = Object.keys(s.blocked);
+  const models = Object.entries(s.models).map(([n, m]) => `${n} (${m.license})`).join(", ");
+  $("safety").innerHTML = "";
+  [
+    ["Consent", s.consent],
+    ["Provenance", s.watermark],
+    ["Models in use", models],
+    ["Blocked", blocked.length ? blocked.join(", ") + " until licensed" : "none"],
+  ].forEach(([k, v]) => {
+    const li = document.createElement("li");
+    const b = document.createElement("b"); b.textContent = k;
+    const em = document.createElement("em"); em.textContent = v;
+    li.append(b, em); $("safety").append(li);
+  });
+}).catch(() => { $("safety").innerHTML = "<li><em>Safety details are unavailable.</em></li>"; });
+</script>
+</body>
+</html>

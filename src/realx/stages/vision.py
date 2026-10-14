@@ -75,19 +75,62 @@ class Track:
     name = "track"
     stateful = True
 
-    def __init__(self, **options) -> None:
+    def __init__(self, fps: float = 30.0, **options) -> None:
+        self.fps = fps
         self._opts = options
         self._tracker = FaceTracker(**options)
+        self._last_ts: float | None = None
+        self._last_index: int | None = None
 
     def setup(self) -> None:
         self._tracker = FaceTracker(**self._opts)
+        self._last_ts = self._last_index = None
+
+    def _elapsed_frames(self, ctx: FrameContext) -> float:
+        """Real frames since the previous processed frame (skipped frames count)."""
+        dt = 1.0
+        if ctx.timestamp > 0 and self._last_ts is not None and ctx.timestamp > self._last_ts:
+            dt = (ctx.timestamp - self._last_ts) * self.fps
+        elif self._last_index is not None and ctx.index > self._last_index:
+            dt = float(ctx.index - self._last_index)
+        self._last_ts = ctx.timestamp if ctx.timestamp > 0 else self._last_ts
+        self._last_index = ctx.index
+        return min(max(dt, 1.0), 60.0)
 
     def process(self, ctx: FrameContext) -> FrameContext:
-        ctx.faces = self._tracker.update(ctx.faces)
+        ctx.meta["elapsed_frames"] = dt = self._elapsed_frames(ctx)
+        ctx.faces = self._tracker.update(ctx.faces, dt=dt)
         return ctx
 
     def close(self) -> None:
         self._tracker.reset()
+
+
+@register("debug_boxes")
+class DebugBoxes:
+    """Draws what the tracker sees: boxes, landmarks and ids. Amber means coasting."""
+
+    name = "debug_boxes"
+
+    def setup(self) -> None: ...
+
+    def process(self, ctx: FrameContext) -> FrameContext:
+        import cv2
+
+        canvas = np.ascontiguousarray(ctx.pixels)
+        for face in ctx.faces:
+            x1, y1, x2, y2 = (int(round(v)) for v in face.bbox)
+            color = (232, 162, 58) if face.predicted else (14, 190, 140)
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+            if face.landmarks is not None:
+                for px, py in face.landmarks:
+                    cv2.circle(canvas, (int(px), int(py)), 3, color, -1, cv2.LINE_AA)
+            label = f"#{face.track_id}" + (" coasting" if face.predicted else "")
+            cv2.putText(canvas, label, (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+        ctx.pixels = canvas
+        return ctx
+
+    def close(self) -> None: ...
 
 
 _PALETTE = ((255, 205, 148), (134, 212, 192), (180, 160, 255), (255, 170, 190))
