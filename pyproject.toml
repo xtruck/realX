@@ -21,7 +21,7 @@ realx = "realx.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"realx.web" = ["*.html"]
+"realx.web" = ["*.html", "*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

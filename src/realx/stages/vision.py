@@ -51,6 +51,7 @@ class YuNetDetector:
         _, rows = self._det.detect(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         faces: list[Face] = []
         if rows is not None:
+            rows = rows[np.argsort(-rows[:, 14])]  # strongest first, then keep the top_k
             for r in rows[: self.top_k]:
                 x, y, bw, bh = (float(v) / scale for v in r[:4])
                 lm = (np.array(r[4:14], dtype=float).reshape(5, 2)) / scale
@@ -75,16 +76,60 @@ class Track:
     name = "track"
     stateful = True
 
-    def __init__(self, fps: float = 30.0, **options) -> None:
+    def __init__(self, fps: float = 30.0, use_flow: bool = True, **options) -> None:
         self.fps = fps
+        self.use_flow = use_flow
         self._opts = options
         self._tracker = FaceTracker(**options)
         self._last_ts: float | None = None
         self._last_index: int | None = None
+        self._prev_gray: np.ndarray | None = None
 
     def setup(self) -> None:
         self._tracker = FaceTracker(**self._opts)
         self._last_ts = self._last_index = None
+        self._prev_gray = None
+
+    def _flow_hints(self, gray: np.ndarray) -> dict[int, np.ndarray]:
+        """Measure how each tracked face moved since the previous frame (LK flow).
+
+        Follows image texture inside the box, which keeps working when motion blur
+        makes the detector miss the face for a few frames.
+        """
+        import cv2
+
+        prev = self._prev_gray
+        if prev is None or prev.shape != gray.shape:
+            return {}
+        hints: dict[int, np.ndarray] = {}
+        for tid, box, confirmed in self._tracker.track_boxes():
+            if not confirmed:
+                continue
+            x1, y1, x2, y2 = box
+            w, h = x2 - x1, y2 - y1
+            if w < 16 or h < 16:
+                continue
+            xs = np.linspace(x1 + 0.2 * w, x2 - 0.2 * w, 5)
+            ys = np.linspace(y1 + 0.2 * h, y2 - 0.2 * h, 5)
+            pts = np.array([[x, y] for y in ys for x in xs], dtype=np.float32).reshape(-1, 1, 2)
+            inside = (pts[:, 0, 0] >= 0) & (pts[:, 0, 0] < gray.shape[1]) & (pts[:, 0, 1] >= 0) & (pts[:, 0, 1] < gray.shape[0])
+            if inside.sum() < 8:
+                continue
+            nxt, status, err = cv2.calcOpticalFlowPyrLK(
+                prev, gray, pts, None, winSize=(31, 31), maxLevel=4,
+                criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.03),
+            )
+            ok = (status.reshape(-1) == 1) & inside & np.isfinite(nxt).all(axis=(1, 2))
+            if ok.sum() < 8:
+                continue
+            shift = (nxt - pts).reshape(-1, 2)[ok]
+            dx, dy = np.median(shift, axis=0)
+            spread = np.median(np.abs(shift - np.array([dx, dy])), axis=0)
+            size = max(w, h)
+            if spread.max() > 0.25 * size or np.hypot(dx, dy) > 3.0 * size:
+                continue  # points disagree or implausible jump: do not trust
+            hints[tid] = np.array([dx, dy])
+        return hints
 
     def _elapsed_frames(self, ctx: FrameContext) -> float:
         """Real frames since the previous processed frame (skipped frames count)."""
@@ -99,7 +144,15 @@ class Track:
 
     def process(self, ctx: FrameContext) -> FrameContext:
         ctx.meta["elapsed_frames"] = dt = self._elapsed_frames(ctx)
-        ctx.faces = self._tracker.update(ctx.faces, dt=dt)
+        hints: dict[int, np.ndarray] = {}
+        if self.use_flow:
+            import cv2
+
+            gray = cv2.cvtColor(ctx.pixels, cv2.COLOR_RGB2GRAY)
+            if dt <= 8:  # flow is only reliable across short gaps
+                hints = self._flow_hints(gray)
+            self._prev_gray = gray
+        ctx.faces = self._tracker.update(ctx.faces, dt=dt, hints=hints)
         return ctx
 
     def close(self) -> None:
@@ -117,8 +170,10 @@ class DebugBoxes:
     def process(self, ctx: FrameContext) -> FrameContext:
         import cv2
 
-        canvas = np.ascontiguousarray(ctx.pixels)
+        canvas = ctx.pixels.copy()  # never draw on the caller's buffer
         for face in ctx.faces:
+            if not np.all(np.isfinite(face.bbox)):
+                continue
             x1, y1, x2, y2 = (int(round(v)) for v in face.bbox)
             color = (232, 162, 58) if face.predicted else (14, 190, 140)
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
@@ -152,8 +207,10 @@ class AvatarOverlay:
     def process(self, ctx: FrameContext) -> FrameContext:
         import cv2
 
-        canvas = np.ascontiguousarray(ctx.pixels)
+        canvas = ctx.pixels.copy()  # never draw on the caller's buffer
         for face in ctx.faces:
+            if not np.all(np.isfinite(face.bbox)):
+                continue
             x1, y1, x2, y2 = (int(round(v)) for v in face.bbox)
             w, h = max(2, x2 - x1), max(2, y2 - y1)
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2

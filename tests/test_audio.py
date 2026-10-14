@@ -58,7 +58,49 @@ def test_streaming_output_is_continuous_without_clicks():
     assert float(np.max(np.abs(np.diff(steady)))) < 0.35  # no discontinuities at chunk edges
 
 
+def test_pitch_shift_has_unity_gain():
+    x = tone(440, 1.0, amp=0.5)
+    ps = dsp.StreamingPitchShifter(0.0, SR)
+    y = ps.process(np.concatenate([x, np.zeros(ps.n, np.float32)]))
+    body = y[ps.latency_samples + 2000 : ps.latency_samples + 12000]
+    ratio = np.sqrt(np.mean(body**2)) / np.sqrt(np.mean(x**2))
+    assert ratio == pytest.approx(1.0, abs=0.05)
+
+
+def test_pitch_shifter_survives_nan_samples_and_rejects_2d():
+    ps = dsp.StreamingPitchShifter(3, SR)
+    bad = tone(300, 0.2)
+    bad[100] = np.nan
+    bad[200] = np.inf
+    ps.process(bad)
+    out = ps.process(tone(300, 0.5))
+    assert np.all(np.isfinite(out)) and float(np.max(np.abs(out))) > 0.05
+    with pytest.raises(ValueError):
+        ps.process(np.zeros((2, 10)))
+
+
+def test_streaming_gate_keeps_state_across_chunks_so_speech_is_not_chopped():
+    speech = tone(300, 1.0, amp=0.4)
+    whole = dsp.noise_gate(speech, SR, threshold_db=-40)
+    gate = dsp.NoiseGate(SR, threshold_db=-40)
+    chunked = np.concatenate([gate.process(speech[i : i + 160]) for i in range(0, speech.size, 160)])
+    steady = slice(SR // 4, -SR // 4)
+    assert dsp.rms_db(chunked[steady]) > dsp.rms_db(speech[steady]) - 1.0
+    assert abs(dsp.rms_db(chunked[steady]) - dsp.rms_db(whole[steady])) < 1.0
+
+
+def test_normalize_does_not_amplify_near_silence():
+    hiss = (np.random.default_rng(1).normal(0, 1e-4, 4000)).astype(np.float32)
+    assert float(np.max(np.abs(dsp.normalize_peak(hiss, -3)))) < 1e-3
+
+
 def test_pitch_shifter_validates_arguments():
+    with pytest.raises(ValueError):
+        dsp.StreamingPitchShifter(float("nan"), SR)
+    with pytest.raises(ValueError):
+        dsp.StreamingPitchShifter(2, SR, oversample=3)
+    with pytest.raises(ValueError):
+        dsp.StreamingPitchShifter(2, 0)
     with pytest.raises(ValueError):
         dsp.StreamingPitchShifter(30, SR)
     with pytest.raises(ValueError):

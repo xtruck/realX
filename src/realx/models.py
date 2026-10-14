@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+
+MAX_MODEL_BYTES = 64 * 1024 * 1024
 
 
 class ModelError(RuntimeError):
@@ -77,13 +81,27 @@ def ensure_model(name: str, download: bool = True) -> Path:
     if not download:
         raise ModelError(f"{spec.filename} missing; run `realx models fetch`")
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".part")
+    if not spec.url.startswith("https://"):
+        raise ModelError(f"{spec.filename}: refusing a non-HTTPS download")
+    # unique, exclusively created temp file: a pre-planted link cannot redirect the write
+    fd, tmp_name = tempfile.mkstemp(prefix=spec.filename + ".", suffix=".part", dir=path.parent)
+    tmp = Path(tmp_name)
     try:
-        with urllib.request.urlopen(spec.url, timeout=60) as resp, open(tmp, "wb") as out:
-            out.write(resp.read())
-        if sha256_file(tmp) != spec.sha256:
+        h = hashlib.sha256()
+        size = 0
+        with os.fdopen(fd, "wb") as out, urllib.request.urlopen(spec.url, timeout=60) as resp:
+            while True:
+                chunk = resp.read(1 << 16)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_MODEL_BYTES:
+                    raise ModelError(f"{spec.filename}: download is larger than {MAX_MODEL_BYTES} bytes")
+                h.update(chunk)
+                out.write(chunk)
+        if h.hexdigest() != spec.sha256:
             raise ModelError(f"{spec.filename}: downloaded file failed checksum")
-        tmp.replace(path)
+        os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
     return path

@@ -73,12 +73,16 @@ class FaceTracker:
         self._next_id = 1
 
     def reset(self) -> None:
+        # ids keep counting so a rebuilt pipeline never reuses an id for another face
         self._tracks.clear()
-        self._next_id = 1
 
-    def _score(self, track: _Track, det: Face, dt: float) -> float:
+    def track_boxes(self) -> list[tuple[int, np.ndarray, bool]]:
+        """(id, box, confirmed) for every live track, so callers can measure motion."""
+        return [(t.track_id, t.bbox.copy(), t.hits >= self.min_hits) for t in self._tracks]
+
+    def _score(self, track: _Track, det: Face, dt: float, hint: np.ndarray | None = None) -> float:
         elapsed = dt + track.lost  # how long this track has been without a sighting
-        pred = track.bbox + track.velocity * dt
+        pred = track.bbox + (hint if hint is not None else track.velocity * dt)
         overlap = iou(pred, det.bbox)
         dist = float(np.linalg.norm(_center(pred) - _center(det.bbox))) / (
             0.5 * (_size(pred) + _size(det.bbox))
@@ -92,12 +96,35 @@ class FaceTracker:
         # is still clearly the same face
         return 0.5 * overlap + 0.5 * proximity
 
-    def update(self, detections: list[Face], dt: float = 1.0) -> list[Face]:
-        dt = max(1.0, float(dt))
+    def update(
+        self,
+        detections: list[Face],
+        dt: float = 1.0,
+        hints: dict[int, np.ndarray] | None = None,
+    ) -> list[Face]:
+        """`hints` maps a track id to a measured (dx, dy) shift since the last frame
+        (for example from optical flow). It beats extrapolation when available."""
+        hints = hints or {}
+        hint_box = {
+            tid: np.array([h[0], h[1], h[0], h[1]], dtype=float)
+            for tid, h in hints.items()
+            if np.all(np.isfinite(h))
+        }
+        dt = float(dt)
+        dt = min(max(1.0, dt), 60.0) if np.isfinite(dt) else 1.0
+        # a corrupt box must never become a track (it would crash the drawers later)
+        detections = [
+            d
+            for d in detections
+            if np.all(np.isfinite(d.bbox))
+            and d.bbox[2] > d.bbox[0]
+            and d.bbox[3] > d.bbox[1]
+            and np.isfinite(d.score)
+        ]
         pairs = []
         for ti, track in enumerate(self._tracks):
             for di, det in enumerate(detections):
-                s = self._score(track, det, dt)
+                s = self._score(track, det, dt, hint_box.get(track.track_id))
                 if det.score < self.new_track_score:
                     s *= self.low_score_penalty
                 if s >= self.match_threshold:
@@ -126,10 +153,15 @@ class FaceTracker:
         for ti, tr in enumerate(self._tracks):
             if ti in used_t:
                 continue
+            if tr.hits < self.min_hits:
+                tr.lost = self.max_lost + 1  # a tentative track that misses once was noise
+                continue
             tr.lost += dt
-            move = tr.velocity * dt
-            # never extrapolate further than ~1.5 box sizes from the last sighting
-            budget = max(0.0, 1.5 - tr.coasted) * _size(tr.bbox)
+            measured = hint_box.get(tr.track_id)
+            move = measured.copy() if measured is not None else tr.velocity * dt
+            # never travel further than ~1.5 box sizes (3 when measured) from the last sighting
+            limit = 3.0 if measured is not None else 1.5
+            budget = max(0.0, limit - tr.coasted) * _size(tr.bbox)
             step = float(np.linalg.norm(move[:2]))
             if step > budget:
                 move = move * (budget / step if step > 0 else 0.0)
@@ -137,12 +169,20 @@ class FaceTracker:
             tr.bbox = tr.bbox + move
             if tr.landmarks is not None:
                 tr.landmarks = tr.landmarks + move[:2]
-            tr.velocity = tr.velocity * (0.7 ** dt)  # coast, but fade out quickly
+            if measured is not None:
+                tr.velocity = 0.5 * tr.velocity + 0.5 * (move / dt)  # learn from what we saw
+            else:
+                tr.velocity = tr.velocity * (0.7 ** dt)  # coast, but fade out quickly
 
         self._tracks = [t for t in self._tracks if t.lost <= self.max_lost]
+        live = [t.bbox for t in self._tracks]
         for di, det in enumerate(detections):
             if di in used_d or det.score < self.new_track_score:
                 continue
+            # a second box on a face we already follow is a duplicate, not a new person
+            if any(iou(np.asarray(det.bbox, dtype=float), box) > 0.5 for box in live):
+                continue
+            live.append(np.asarray(det.bbox, dtype=float))
             self._tracks.append(
                 _Track(
                     self._next_id,

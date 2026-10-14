@@ -14,36 +14,56 @@ def rms_db(x: np.ndarray) -> float:
     return 20.0 * math.log10(max(r, 1e-6))
 
 
-def normalize_peak(x: np.ndarray, target_db: float = -1.0) -> np.ndarray:
+def normalize_peak(x: np.ndarray, target_db: float = -1.0, floor_db: float = -60.0) -> np.ndarray:
+    """Scale so the peak hits `target_db`. Near-silence is left alone, not amplified."""
     peak = float(np.max(np.abs(x))) if x.size else 0.0
-    if peak < 1e-6:
-        return x.copy()
+    if peak < 10 ** (floor_db / 20.0):
+        return np.asarray(x, dtype=np.float32).copy()
     return (x * (10 ** (target_db / 20.0) / peak)).astype(np.float32)
+
+
+class NoiseGate:
+    """Mute background noise between words, with smooth attack and release.
+
+    Keeps its gain between chunks, so a streaming gate does not chop every chunk's
+    first few milliseconds.
+    """
+
+    def __init__(
+        self, sample_rate: int, threshold_db: float = -50.0, attack_ms: float = 5.0, release_ms: float = 80.0
+    ) -> None:
+        self.sample_rate = sample_rate
+        self.thr = 10 ** (threshold_db / 20.0)
+        self.block = max(1, int(sample_rate * 0.005))
+        self.a_att = 1 - math.exp(-self.block / (sample_rate * attack_ms / 1000.0))
+        self.a_rel = 1 - math.exp(-self.block / (sample_rate * release_ms / 1000.0))
+        self._gain = 0.0
+        self._prev = 0.0
+
+    def process(self, x: np.ndarray) -> np.ndarray:
+        x = np.nan_to_num(np.asarray(x, dtype=np.float32))
+        if x.size == 0:
+            return x.copy()
+        n_blocks = math.ceil(x.size / self.block)
+        padded = np.pad(np.abs(x), (0, n_blocks * self.block - x.size))
+        env = padded.reshape(n_blocks, self.block).max(axis=1)
+        gain = np.empty(n_blocks)
+        g, prev = self._gain, self._prev
+        for i, loud in enumerate(env >= self.thr):
+            t = 1.0 if loud else 0.0
+            g += (self.a_att if t > g else self.a_rel) * (t - g)
+            held = max(g, prev * 0.9)  # hold open briefly so word endings survive
+            gain[i], prev = held, g
+        self._gain, self._prev = g, prev
+        full = np.interp(np.arange(x.size), (np.arange(n_blocks) + 0.5) * self.block, gain)
+        return (x * full).astype(np.float32)
 
 
 def noise_gate(
     x: np.ndarray, sample_rate: int, threshold_db: float = -50.0, attack_ms: float = 5.0, release_ms: float = 80.0
 ) -> np.ndarray:
-    """Mute background noise between words, with smooth attack and release."""
-    if x.size == 0:
-        return x.copy()
-    thr = 10 ** (threshold_db / 20.0)
-    block = max(1, int(sample_rate * 0.005))
-    n_blocks = math.ceil(x.size / block)
-    padded = np.pad(np.abs(x), (0, n_blocks * block - x.size))
-    env = padded.reshape(n_blocks, block).max(axis=1)
-    target = (env >= thr).astype(np.float64)
-    a_att = 1 - math.exp(-block / (sample_rate * attack_ms / 1000.0))
-    a_rel = 1 - math.exp(-block / (sample_rate * release_ms / 1000.0))
-    gain = np.empty(n_blocks)
-    g = 0.0
-    for i, t in enumerate(target):
-        g += (a_att if t > g else a_rel) * (t - g)
-        gain[i] = g
-    # hold the gate open a little after speech so word endings are not clipped
-    gain = np.maximum(gain, np.concatenate([[0.0], gain[:-1]]) * 0.9)
-    full = np.interp(np.arange(x.size), (np.arange(n_blocks) + 0.5) * block, gain)
-    return (x * full).astype(np.float32)
+    """One-shot noise gate for whole recordings."""
+    return NoiseGate(sample_rate, threshold_db, attack_ms, release_ms).process(x)
 
 
 def resample(x: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
@@ -95,8 +115,12 @@ class StreamingPitchShifter:
     def __init__(self, semitones: float, sample_rate: int, fft_size: int = 1024, oversample: int = 4) -> None:
         if fft_size & (fft_size - 1) or fft_size < 256:
             raise ValueError("fft_size must be a power of two >= 256")
-        if not -24 <= semitones <= 24:
+        if not -24 <= semitones <= 24:  # also rejects NaN
             raise ValueError("semitones must be within +-24")
+        if oversample not in (4, 8):
+            raise ValueError("oversample must be 4 or 8")
+        if sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
         self.ratio = 2.0 ** (semitones / 12.0)
         self.sample_rate = sample_rate
         self.n = fft_size
@@ -137,10 +161,16 @@ class StreamingPitchShifter:
         self._sum_phase += 2 * np.pi * dev / self.osamp + self._k * self._expct
         out_spec = syn_magn * np.exp(1j * self._sum_phase)
         out = np.fft.irfft(out_spec, n=self.n) * self._win
-        return out * (2.0 / (self.n / 2 * self.osamp)) * (self.n / 2)
+        # Hann analysis + synthesis windows overlap-add to 3/8 * osamp, so this gives
+        # unity gain (verified by test_pitch_shift_has_unity_gain)
+        return out * (8.0 / (3.0 * self.osamp))
 
     def process(self, x: np.ndarray) -> np.ndarray:
         x = np.asarray(x, dtype=np.float64)
+        if x.ndim != 1:
+            raise ValueError("audio must be 1-D mono")
+        # one bad sample would poison the phase accumulators for good
+        x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
         n_in = x.size
         self._in = np.concatenate([self._in, x])
         while self._in.size >= self.n:

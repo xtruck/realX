@@ -22,16 +22,25 @@ class VoiceGate:
 
     name = "voice_gate"
 
+    stateful = True  # keeps its gain between chunks
+
     def __init__(self, threshold_db: float = -50.0, release_ms: float = 80.0) -> None:
         self.threshold_db, self.release_ms = threshold_db, release_ms
+        self._gate: dsp.NoiseGate | None = None
+        self._rate = 0
 
-    def setup(self) -> None: ...
+    def setup(self) -> None:
+        self._gate = None
 
     def process(self, ctx: AudioContext) -> AudioContext:
-        ctx.samples = dsp.noise_gate(ctx.samples, ctx.sample_rate, self.threshold_db, release_ms=self.release_ms)
+        if self._gate is None or self._rate != ctx.sample_rate:
+            self._gate = dsp.NoiseGate(ctx.sample_rate, self.threshold_db, release_ms=self.release_ms)
+            self._rate = ctx.sample_rate
+        ctx.samples = self._gate.process(ctx.samples)
         return ctx
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        self._gate = None
 
 
 @register("voice_normalize")
@@ -67,11 +76,12 @@ class VoicePitch:
 
     def process(self, ctx: AudioContext) -> AudioContext:
         if self.semitones == 0:
+            ctx.meta["latency_ms"] = 0.0
             return ctx
         if self._shifter is None or self._rate != ctx.sample_rate:
             self._shifter = dsp.StreamingPitchShifter(self.semitones, ctx.sample_rate, self.fft_size)
             self._rate = ctx.sample_rate
-            ctx.meta["latency_ms"] = 1000.0 * self._shifter.latency_samples / ctx.sample_rate
+        ctx.meta["latency_ms"] = 1000.0 * self._shifter.latency_samples / ctx.sample_rate
         ctx.samples = self._shifter.process(ctx.samples)
         return ctx
 
@@ -95,15 +105,27 @@ def register_voice_backend(backend: VoiceBackend) -> None:
 
 
 class PitchMorphBackend:
-    """Baseline backend: shifts pitch toward a target profile. No identity cloning."""
+    """Baseline backend: shifts pitch toward a target profile. No identity cloning.
+
+    Streaming: it keeps one shifter per (target, sample rate), so consecutive chunks
+    join without clicks. Output is delayed by the shifter latency.
+    """
 
     name = "pitch_morph"
 
     def __init__(self, semitones_by_target: dict[str, float] | None = None) -> None:
         self.profiles = semitones_by_target or {}
+        self._shifters: dict[tuple[str, int], dsp.StreamingPitchShifter] = {}
 
     def convert(self, samples: np.ndarray, sample_rate: int, target: str) -> np.ndarray:
-        return dsp.pitch_shift(samples, self.profiles.get(target, 0.0), sample_rate)
+        semitones = self.profiles.get(target, 0.0)
+        if semitones == 0:
+            return np.asarray(samples, dtype=np.float32).copy()
+        key = (target, sample_rate)
+        shifter = self._shifters.get(key)
+        if shifter is None:
+            shifter = self._shifters[key] = dsp.StreamingPitchShifter(semitones, sample_rate)
+        return shifter.process(samples)
 
 
 register_voice_backend(PitchMorphBackend())
@@ -156,8 +178,8 @@ class AudioWatermark:
     def setup(self) -> None: ...
 
     def process(self, ctx: AudioContext) -> AudioContext:
-        pcm = to_pcm16(ctx.samples).copy()
-        low = pcm.view(np.uint8)[::2]  # least significant byte of each sample
+        pcm = np.ascontiguousarray(to_pcm16(ctx.samples), dtype="<i2").reshape(-1).copy()
+        low = pcm.view(np.uint8)[0::2]  # least significant byte of each little-endian sample
         low[:] = watermark.embed(low.copy(), self.payload, self.key)
         ctx.samples = (pcm.astype(np.float32) / 32767.0).astype(np.float32)
         ctx.meta["pcm16"] = pcm
@@ -167,5 +189,5 @@ class AudioWatermark:
 
 
 def extract_audio_mark(pcm16: np.ndarray, key: bytes | None = None) -> bytes | None:
-    pcm = np.ascontiguousarray(pcm16, dtype="<i2")
-    return watermark.extract(pcm.view(np.uint8)[::2].copy(), key=key)
+    pcm = np.ascontiguousarray(pcm16, dtype="<i2").reshape(-1)
+    return watermark.extract(pcm.view(np.uint8)[0::2].copy(), key=key)

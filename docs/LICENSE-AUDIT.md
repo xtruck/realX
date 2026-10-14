@@ -49,7 +49,16 @@ Not legal advice. Have a lawyer review before any commercial release.
   a consented dataset).
 - The codebase is model-agnostic (see ARCHITECTURE.md), so both paths stay open.
 
+## Models currently in use
+
+| Model | License | Commercial use | Notes |
+|---|---|---|---|
+| YuNet face detector (opencv_zoo) | MIT | yes | pinned by sha256 in `realx/models.py` |
+
+Voice processing is pure DSP (no model). The demo footage uses the public-domain NASA
+portrait from scikit-image, only in tests and the demo scene.
+
 ## Repo hygiene
 
-- This repo is currently **public**. Make it private before adding product code.
+- This repo is **public** by the owner's choice. Never commit models, keys or media.
 - Add an explicit LICENSE once the model path is decided.

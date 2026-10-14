@@ -15,5 +15,7 @@
 ## Blocking decisions
 
 - Model path A (license) or B (train): required before M1 ships models.
-- Repo visibility: make private before M1.
+- Repo visibility: the owner chose to keep it public for now. Real swap models and any
+  licensed weights must never be committed; keep swap tiers in a separate private
+  package if that is ever needed.
 - Product license text.

@@ -1,0 +1,140 @@
+const $ = (id) => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, opts);
+  const ct = res.headers.get("content-type") || "";
+  if (!res.ok) {
+    let message = "Something went wrong";
+    try { message = (await res.json()).error || message; } catch (e) {}
+    throw new Error(message);
+  }
+  return ct.includes("json") ? res.json() : res.blob();
+};
+
+// --- live view and measurements -------------------------------------------------
+const view = $("view");
+let lastFrames = -1, stalled = 0;
+view.addEventListener("load", () => { $("notice").hidden = true; view.hidden = false; }, { once: true });
+view.src = "/stream.mjpg";
+
+const ribbon = $("ribbon");
+const ctx = ribbon.getContext("2d");
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function drawRibbon(states) {
+  const w = ribbon.width, h = ribbon.height, n = 120, step = w / n;
+  ctx.clearRect(0, 0, w, h);
+  const colors = [css("--rule"), css("--teal"), css("--amber")];
+  const heights = [0.35, 0.9, 0.62];
+  states.forEach((s, i) => {
+    const x = (n - states.length + i) * step;
+    const bh = h * heights[s];
+    ctx.fillStyle = colors[s];
+    ctx.fillRect(x + 1, h - bh - 4, step - 2, bh);
+  });
+}
+
+async function poll() {
+  try {
+    const s = await api("/api/stats");
+    $("sFps").textContent = s.fps.toFixed(0);
+    $("sLat").textContent = s.latency_ms.toFixed(0);
+    $("sFaces").textContent = s.faces;
+    $("sDrop").textContent = s.dropped;
+    drawRibbon(s.ribbon);
+    stalled = s.frames === lastFrames ? stalled + 1 : 0;
+    lastFrames = s.frames;
+    const live = s.frames > 0 && stalled < 3 && !s.error;
+    $("tally").classList.toggle("live", live);
+    if (live) { $("notice").hidden = true; view.hidden = false; }
+    $("state").textContent = s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
+    if (s.error) {
+      $("notice").hidden = false;
+      $("notice").textContent = s.error + " Choose a demo source or check your camera.";
+    }
+    $("srcLabel").textContent = s.config.source === "camera" ? "Camera" : "Demo footage";
+    syncControls(s.config);
+  } catch (e) {
+    $("tally").classList.remove("live");
+    $("state").textContent = "Disconnected";
+  }
+}
+setInterval(poll, 500);
+poll();
+
+// --- picture controls -------------------------------------------------------------
+let editing = 0;
+function syncControls(c) {
+  if (Date.now() - editing < 1500) return;
+  document.querySelectorAll('input[name="mode"]').forEach((r) => { r.checked = r.value === c.mode; });
+  $("source").value = c.source;
+  $("smooth").value = Math.round(c.smoothing * 100);
+  $("smoothOut").textContent = Math.round(c.smoothing * 100) + "%";
+}
+async function setConfig(changes) {
+  editing = Date.now();
+  try {
+    await api("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) });
+    $("cfgMsg").className = "msg ok"; $("cfgMsg").textContent = "Updated";
+  } catch (e) {
+    $("cfgMsg").className = "msg err"; $("cfgMsg").textContent = e.message;
+  }
+}
+document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", () => setConfig({ mode: r.value })));
+$("source").addEventListener("change", (e) => setConfig({ source: e.target.value }));
+let t;
+$("smooth").addEventListener("input", (e) => {
+  $("smoothOut").textContent = e.target.value + "%";
+  clearTimeout(t); t = setTimeout(() => setConfig({ smoothing: e.target.value / 100 }), 200);
+});
+$("guideToggle").addEventListener("change", (e) => $("guides").classList.toggle("on", e.target.checked));
+
+// --- voice ------------------------------------------------------------------------
+const pitch = $("pitch");
+const fmt = (v) => (v > 0 ? "+" : "") + v + (Math.abs(v) === 1 ? " semitone" : " semitones");
+pitch.addEventListener("input", () => { $("pitchOut").textContent = fmt(Number(pitch.value)); });
+$("pitchOut").textContent = fmt(Number(pitch.value));
+
+async function convert(body, demo) {
+  const buttons = [$("convert"), $("tone")];
+  buttons.forEach((b) => (b.disabled = true));
+  $("voiceMsg").className = "msg"; $("voiceMsg").textContent = "Converting…";
+  try {
+    const blob = await api(`/api/voice?semitones=${pitch.value}${demo ? "&demo=1" : ""}`, { method: "POST", body });
+    const url = URL.createObjectURL(blob);
+    $("player").src = url; $("player").hidden = false;
+    $("download").href = url; $("download").download = "realx-voice.wav"; $("download").hidden = false;
+    $("voiceMsg").className = "msg ok"; $("voiceMsg").textContent = "Done. Press play to listen.";
+  } catch (e) {
+    $("voiceMsg").className = "msg err"; $("voiceMsg").textContent = e.message;
+  } finally {
+    buttons.forEach((b) => (b.disabled = false));
+  }
+}
+$("convert").addEventListener("click", () => {
+  const f = $("file").files[0];
+  if (!f) { $("voiceMsg").className = "msg err"; $("voiceMsg").textContent = "Choose a WAV recording first."; return; }
+  convert(f, false);
+});
+$("tone").addEventListener("click", () => convert(new Blob([]), true));
+
+// --- safety -----------------------------------------------------------------------
+api("/api/safety").then((s) => {
+  const blocked = Object.keys(s.blocked);
+  const models = Object.entries(s.models).map(([n, m]) => `${n} (${m.license})`).join(", ");
+  const list = $("safety");
+  list.textContent = "";
+  [
+    ["Consent", s.consent],
+    ["Provenance", s.watermark],
+    ["Models in use", models],
+    ["Blocked", blocked.length ? blocked.join(", ") + " until licensed" : "none"],
+  ].forEach(([k, v]) => {
+    const li = document.createElement("li");
+    const b = document.createElement("b"); b.textContent = k;
+    const em = document.createElement("em"); em.textContent = v;
+    li.append(b, em); list.append(li);
+  });
+}).catch(() => {
+  const li = document.createElement("li");
+  const em = document.createElement("em"); em.textContent = "Safety details are unavailable.";
+  li.append(em); $("safety").textContent = ""; $("safety").append(li);
+});

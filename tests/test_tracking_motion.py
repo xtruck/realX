@@ -83,6 +83,59 @@ def test_low_score_detection_keeps_track_but_cannot_start_one():
     assert out and not out[0].predicted
 
 
+def test_motion_hints_beat_linear_coasting_when_the_face_accelerates():
+    def run(use_hints):
+        t = FaceTracker(min_hits=2)
+        x = 100.0
+        for v in (10, 10, 10):  # steady, then the detector loses the face
+            x += v
+            t.update([det(x, 100)])
+        errors = []
+        speed = 10.0
+        for _ in range(4):
+            speed += 15.0  # the person suddenly speeds up (a jump or a dance step)
+            x += speed
+            hint = {1: np.array([speed, 0.0])} if use_hints else None
+            out = t.update([], hints=hint)
+            errors.append(abs(out[0].bbox[0] - x))
+        return max(errors)
+
+    assert run(True) < 0.25 * run(False)
+
+
+def test_corrupt_detections_never_become_tracks():
+    t = FaceTracker()
+    nan_box = Face(bbox=np.array([np.nan, 0, 10, 10.0]), score=0.99)
+    flat = Face(bbox=np.array([5, 5, 5, 20.0]), score=0.99)
+    inf_score = Face(bbox=np.array([0, 0, 10, 10.0]), score=float("inf"))
+    for _ in range(4):
+        assert t.update([nan_box, flat, inf_score], dt=float("nan")) == []
+
+
+def test_duplicate_box_on_the_same_face_does_not_make_a_second_id():
+    t = FaceTracker()
+    for _ in range(3):
+        out = t.update([det(100, 100, 100, 0.95), det(104, 102, 100, 0.90)])
+    assert len(out) == 1
+
+
+def test_ids_are_never_reused_after_reset():
+    t = FaceTracker()
+    first = [f.track_id for _ in range(3) for f in t.update([det(50, 50)])][-1]
+    t.reset()
+    second = [f.track_id for _ in range(3) for f in t.update([det(50, 50)])][-1]
+    assert second > first
+
+
+def test_one_frame_noise_blip_does_not_survive_or_steal_a_face():
+    t = FaceTracker()
+    t.update([det(300, 300, 60, 0.9)])  # single sighting: tentative
+    t.update([])  # missed once, so it is discarded as noise
+    for i in range(3):
+        out = t.update([det(300 + 4 * i, 300, 60, 0.9)])
+    assert out and out[0].track_id == 2  # a fresh track, not the blip
+
+
 def test_blocked_and_unknown_models_are_refused():
     with pytest.raises(ModelError):
         ensure_model("inswapper_128")

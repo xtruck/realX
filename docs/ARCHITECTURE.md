@@ -36,7 +36,7 @@ transforms it. Stages are registered by name and assembled from config.
 | 8 | `mask` | keep mouth/occluders from original | built in |
 | 9 | `composite` | color match + blend back | built in |
 | 10 | `watermark` | embed provenance payload | built in |
-| 11 | `sink` | preview / virtual cam / file / stream | pyvirtualcam, FFmpeg |
+| 11 | `sink` | preview / OBS browser source / file / stream | MJPEG preview today; OBS Browser Source and FFmpeg next. `pyvirtualcam` is GPL-2.0 and is not used |
 
 ## Runtime
 

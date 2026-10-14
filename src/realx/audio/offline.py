@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import struct
 import wave
 
 import numpy as np
@@ -15,6 +16,8 @@ from realx.pipeline import Pipeline
 from realx.stages import create
 
 MAX_WAV_BYTES = 20 * 1024 * 1024
+MAX_SECONDS = 600  # ten minutes keeps CPU time and memory bounded
+MIN_RATE, MAX_RATE = 8000, 96000
 MARK = b"realx|voice"
 
 
@@ -25,9 +28,15 @@ def read_wav_bytes(data: bytes) -> tuple[np.ndarray, int]:
         with wave.open(io.BytesIO(data), "rb") as w:
             if w.getsampwidth() != 2:
                 raise ValueError("only 16-bit PCM WAV is supported")
-            rate, channels = w.getframerate(), w.getnchannels()
-            raw = w.readframes(w.getnframes())
-    except wave.Error as exc:
+            rate, channels, frames = w.getframerate(), w.getnchannels(), w.getnframes()
+            if not MIN_RATE <= rate <= MAX_RATE:
+                raise ValueError(f"sample rate must be between {MIN_RATE} and {MAX_RATE} Hz")
+            if channels not in (1, 2):
+                raise ValueError("only mono or stereo audio is supported")
+            if frames / rate > MAX_SECONDS:
+                raise ValueError(f"audio is longer than {MAX_SECONDS // 60} minutes")
+            raw = w.readframes(frames)
+    except (wave.Error, EOFError, struct.error) as exc:
         raise ValueError(f"not a valid WAV file: {exc}") from exc
     pcm = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
     if channels > 1:

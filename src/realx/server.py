@@ -1,8 +1,8 @@
 """Local control-room server: live preview, stats, controls and voice conversion.
 
-Binds to 127.0.0.1 only. Requests must carry a local Host header and, for writes, a
-same-origin Origin, which blocks DNS-rebinding and cross-site requests against the
-camera and microphone features.
+Binds to 127.0.0.1 only. Defences against a hostile web page or local process:
+exact Host match (DNS rebinding), Sec-Fetch-Site/Origin checks (cross-site embedding
+and CSRF), strict CSP, request size and time limits, and a connection cap.
 """
 
 from __future__ import annotations
@@ -26,6 +26,14 @@ from realx.stages import create
 
 MODES = ("avatar", "boxes", "original")
 MAX_JSON = 4096
+MAX_CONNECTIONS = 16
+SOCKET_TIMEOUT = 15.0
+
+CSP = (
+    "default-src 'none'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'; "
+    "object-src 'none'; frame-ancestors 'none'"
+)
 
 
 def _smoothing_to_cutoff(s: float) -> float:
@@ -45,11 +53,18 @@ class Engine:
         self._thread: threading.Thread | None = None
         self._config = {"source": source, "mode": mode, "smoothing": smoothing}
         self._config_version = 0
+        self._open_source: str | None = None
         self._ribbon: deque[int] = deque(maxlen=120)  # 0 lost, 1 detected, 2 predicted
         self._stats = {"fps": 0.0, "latency_ms": 0.0, "faces": 0, "dropped": 0, "frames": 0, "error": None}
 
     # -- public -------------------------------------------------------------------
+    @property
+    def stopped(self) -> bool:
+        return self._stop.is_set()
+
     def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="realx-engine", daemon=True)
         self._thread.start()
@@ -70,26 +85,26 @@ class Engine:
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError(f"unknown settings: {sorted(unknown)}")
-        new = self.config()
+        staged: dict = {}
         if "mode" in changes:
             if changes["mode"] not in MODES:
                 raise ValueError(f"mode must be one of {MODES}")
-            new["mode"] = changes["mode"]
+            staged["mode"] = changes["mode"]
         if "smoothing" in changes:
             s = changes["smoothing"]
             if isinstance(s, bool) or not isinstance(s, (int, float)) or not 0 <= s <= 1:
                 raise ValueError("smoothing must be a number between 0 and 1")
-            new["smoothing"] = float(s)
+            staged["smoothing"] = float(s)
         if "source" in changes:
             src = changes["source"]
             ok = src == "camera" or (isinstance(src, str) and src.startswith("demo:") and src[5:] in MOTIONS)
             if not ok:
                 raise ValueError(f"source must be 'camera' or 'demo:<{'|'.join(MOTIONS)}>'")
-            new["source"] = src
-        with self._lock:
-            self._config = new
+            staged["source"] = src
+        with self._lock:  # one read-modify-write, so concurrent updates cannot lose each other
+            self._config = {**self._config, **staged}
             self._config_version += 1
-        return new
+            return dict(self._config)
 
     def stats(self) -> dict:
         with self._lock:
@@ -106,6 +121,10 @@ class Engine:
             return self._jpeg, self._seq
 
     # -- internals ----------------------------------------------------------------
+    def _snapshot(self) -> tuple[dict, int]:
+        with self._lock:  # config and its version must be read together
+            return dict(self._config), self._config_version
+
     def _build(self, cfg: dict) -> Pipeline:
         stages = [create("detect_yunet", score_threshold=0.3)]
         stages += [create("track"), create("one_euro", min_cutoff=_smoothing_to_cutoff(cfg["smoothing"]), beta=0.5)]
@@ -120,6 +139,19 @@ class Engine:
             return camera_frames(0)
         return SyntheticScene(source.split(":", 1)[1], fps=self.fps, degrade=0.6)
 
+    @staticmethod
+    def _close_source(frames) -> None:
+        close = getattr(frames, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+    def _set_error(self, message: str | None) -> None:
+        with self._lock:
+            self._stats["error"] = message
+
     def _run(self) -> None:
         import cv2
 
@@ -129,83 +161,138 @@ class Engine:
         started = time.perf_counter()
         last_index = -1
         last = time.perf_counter()
+        backoff = 0.5
         try:
             while not self._stop.is_set():
-                cfg = self.config()
-                with self._lock:
-                    current = self._config_version
-                if current != version:
-                    if pipe:
-                        pipe.close()
-                    pipe = self._build(cfg)
-                    pipe.setup()
-                    if frames is None or cfg["source"] != getattr(self, "_open_source", None):
-                        frames = self._open(cfg["source"])
-                        self._open_source = cfg["source"]
-                        started, last_index = time.perf_counter(), -1
-                    version = current
-                dropped = 0
-                if isinstance(frames, SyntheticScene):
-                    # render the frame for "now"; skipped indices are frames we could not afford
-                    index = int((time.perf_counter() - started) * self.fps)
-                    if index == last_index:
-                        self._stop.wait(0.002)
-                        continue
-                    if last_index >= 0:
-                        dropped = index - last_index - 1
-                    last_index = index
-                    ctx = frames.render(index)
-                else:
-                    try:
+                try:
+                    cfg, current = self._snapshot()
+                    if current != version:
+                        if pipe:
+                            pipe.close()
+                            pipe = None
+                        pipe = self._build(cfg)
+                        pipe.setup()
+                        if frames is None or cfg["source"] != self._open_source:
+                            self._close_source(frames)
+                            frames = self._open(cfg["source"])
+                            self._open_source = cfg["source"]
+                            started, last_index = time.perf_counter(), -1
+                        version = current
+
+                    dropped = 0
+                    if isinstance(frames, SyntheticScene):
+                        # render the frame for "now"; skipped indices were unaffordable
+                        index = int((time.perf_counter() - started) * self.fps)
+                        if index == last_index:
+                            self._stop.wait(0.002)
+                            continue
+                        if last_index >= 0:
+                            dropped = index - last_index - 1
+                        last_index = index
+                        ctx = frames.render(index)
+                    else:
                         ctx = next(frames)
-                    except SourceError as exc:
-                        with self._lock:
-                            self._stats["error"] = str(exc)
-                        self._stop.wait(1.0)
-                        continue
-                t0 = time.perf_counter()
-                if cfg["mode"] == "original":
-                    out = ctx
-                    out.faces = []
-                else:
-                    out = pipe.process(ctx)
-                latency = (time.perf_counter() - t0) * 1000
-                ok, buf = cv2.imencode(".jpg", cv2.cvtColor(out.pixels, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])
-                if not ok:
-                    continue
-                state = 0 if not out.faces else (2 if all(f.predicted for f in out.faces) else 1)
-                now = time.perf_counter()
-                inst_fps = 1.0 / max(now - last, 1e-6)
-                last = now
-                with self._cond:
-                    s = self._stats
-                    s["fps"] = round(0.9 * s["fps"] + 0.1 * inst_fps if s["frames"] else inst_fps, 1)
-                    s["latency_ms"] = round(0.9 * s["latency_ms"] + 0.1 * latency if s["frames"] else latency, 1)
-                    s["faces"] = len(out.faces)
-                    s["dropped"] += dropped
-                    s["frames"] += 1
-                    s["error"] = None
-                    self._ribbon.append(state)
-                    self._jpeg = buf.tobytes()
-                    self._seq += 1
-                    self._cond.notify_all()
+
+                    t0 = time.perf_counter()
+                    if cfg["mode"] == "original":
+                        out = ctx
+                        out.faces = []
+                    else:
+                        out = pipe.process(ctx)
+                    latency = (time.perf_counter() - t0) * 1000
+                    ok, buf = cv2.imencode(
+                        ".jpg", cv2.cvtColor(out.pixels, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82]
+                    )
+                    if not ok:
+                        raise RuntimeError("could not encode frame")
+                    state = 0 if not out.faces else (2 if all(f.predicted for f in out.faces) else 1)
+                    now = time.perf_counter()
+                    inst_fps = 1.0 / max(now - last, 1e-6)
+                    last = now
+                    backoff = 0.5
+                    with self._cond:
+                        s = self._stats
+                        s["fps"] = round(0.9 * s["fps"] + 0.1 * inst_fps if s["frames"] else inst_fps, 1)
+                        s["latency_ms"] = round(0.9 * s["latency_ms"] + 0.1 * latency if s["frames"] else latency, 1)
+                        s["faces"] = len(out.faces)
+                        s["dropped"] += dropped
+                        s["frames"] += 1
+                        s["error"] = None
+                        self._ribbon.append(state)
+                        self._jpeg = buf.tobytes()
+                        self._seq += 1
+                        self._cond.notify_all()
+                except (SourceError, StopIteration) as exc:
+                    # camera unplugged or busy: say so, drop the dead generator, retry
+                    self._set_error(str(exc) or "The video source stopped.")
+                    self._close_source(frames)
+                    frames, self._open_source, version = None, None, -1
+                    self._stop.wait(backoff)
+                    backoff = min(backoff * 2, 5.0)
+                except Exception as exc:  # never let the engine thread die silently
+                    self._set_error(f"{type(exc).__name__}: {exc}")
+                    version = -1  # rebuild the pipeline on the next pass
+                    self._stop.wait(backoff)
+                    backoff = min(backoff * 2, 5.0)
         finally:
             if pipe:
-                pipe.close()
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+            self._close_source(frames)
 
 
-def _page() -> bytes:
-    return resources.files("realx.web").joinpath("index.html").read_bytes()
+def _asset(name: str) -> bytes:
+    return resources.files("realx.web").joinpath(name).read_bytes()
+
+
+class _BoundedServer(ThreadingHTTPServer):
+    """Caps simultaneous connections so streams or slow clients cannot exhaust threads."""
+
+    daemon_threads = True
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def process_request(self, request, client_address) -> None:
+        if not self._slots.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 def make_handler(engine: Engine, port_getter):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "realX/" + __version__
+        server_version = "realX"
+        sys_version = ""
+        timeout = SOCKET_TIMEOUT
 
         def log_message(self, *args) -> None:  # quiet
             pass
 
-        # security -------------------------------------------------------------
+        def _headers(self, content_type: str, length: int | None = None, cache: bool = True) -> None:
+            self.send_header("Content-Type", content_type)
+            if length is not None:
+                self.send_header("Content-Length", str(length))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            self.send_header("Referrer-Policy", "no-referrer")
+            if cache:
+                self.send_header("Cache-Control", "no-store")
+
+        # request screening ------------------------------------------------------
         def _local_host(self) -> bool:
             host = (self.headers.get("Host") or "").lower()
             port = port_getter()
@@ -217,25 +304,31 @@ def make_handler(engine: Engine, port_getter):
                 return True
             return origin.lower() in (f"http://127.0.0.1:{port_getter()}", f"http://localhost:{port_getter()}")
 
+        def _not_cross_site(self) -> bool:
+            # browsers label who is asking; a page on another site is "cross-site"
+            return self.headers.get("Sec-Fetch-Site") in (None, "same-origin", "none")
+
         def _deny(self, code: int, msg: str) -> None:
             body = json.dumps({"error": msg}).encode()
             self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
+            self._headers("application/json", len(body))
             self.end_headers()
             self.wfile.write(body)
 
         def _json(self, payload: dict, code: int = 200) -> None:
             body = json.dumps(payload).encode()
             self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
+            self._headers("application/json", len(body))
             self.end_headers()
             self.wfile.write(body)
 
         def _body(self, limit: int) -> bytes:
-            n = int(self.headers.get("Content-Length") or 0)
+            if self.headers.get("Transfer-Encoding"):
+                raise ValueError("chunked uploads are not supported")
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise ValueError("invalid Content-Length") from None
             if n < 0 or n > limit:
                 raise ValueError("request body too large")
             return self.rfile.read(n)
@@ -244,16 +337,23 @@ def make_handler(engine: Engine, port_getter):
         def do_GET(self) -> None:
             if not self._local_host():
                 return self._deny(403, "forbidden host")
+            if not self._not_cross_site():
+                return self._deny(403, "cross-site requests are not allowed")
             path = urlparse(self.path).path
             if path == "/":
-                page = _page()
+                page = _asset("index.html")
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
-                self.send_header("X-Content-Type-Options", "nosniff")
-                self.send_header("Content-Length", str(len(page)))
+                self._headers("text/html; charset=utf-8", len(page))
+                self.send_header("Content-Security-Policy", CSP)
+                self.send_header("X-Frame-Options", "DENY")
                 self.end_headers()
                 self.wfile.write(page)
+            elif path == "/app.js":
+                js = _asset("app.js")
+                self.send_response(200)
+                self._headers("text/javascript; charset=utf-8", len(js))
+                self.end_headers()
+                self.wfile.write(js)
             elif path == "/api/stats":
                 self._json(engine.stats())
             elif path == "/api/safety":
@@ -274,12 +374,11 @@ def make_handler(engine: Engine, port_getter):
 
         def _stream(self) -> None:
             self.send_response(200)
-            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-            self.send_header("Cache-Control", "no-store")
+            self._headers("multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
             seq = -1
             try:
-                while True:
+                while not engine.stopped:
                     jpeg, new = engine.wait_frame(seq)
                     if jpeg is None or new == seq:
                         continue
@@ -287,15 +386,17 @@ def make_handler(engine: Engine, port_getter):
                     self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(jpeg))
                     self.wfile.write(jpeg)
                     self.wfile.write(b"\r\n")
-            except (BrokenPipeError, ConnectionResetError, OSError):
+            except OSError:  # client went away or stalled past the timeout
                 return
 
         def do_POST(self) -> None:
-            if not self._local_host() or not self._same_origin():
+            if not self._local_host() or not self._same_origin() or not self._not_cross_site():
                 return self._deny(403, "forbidden origin")
             parsed = urlparse(self.path)
             try:
                 if parsed.path == "/api/config":
+                    if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+                        raise ValueError("Content-Type must be application/json")
                     changes = json.loads(self._body(MAX_JSON) or b"{}")
                     if not isinstance(changes, dict):
                         raise ValueError("expected a JSON object")
@@ -306,18 +407,23 @@ def make_handler(engine: Engine, port_getter):
                     data = self._body(offline.MAX_WAV_BYTES)
                     if q.get("demo", ["0"])[0] == "1" and not data:
                         t = np.arange(16000 * 2) / 16000
-                        tone = (0.4 * np.sin(2 * np.pi * 220 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 2 * t))).astype(np.float32)
+                        tone = (0.4 * np.sin(2 * np.pi * 220 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 2 * t))).astype(
+                            np.float32
+                        )
                         data = offline.wav_bytes(tone, 16000)
                     out = offline.convert_wav_bytes(data, semitones)
                     self.send_response(200)
-                    self.send_header("Content-Type", "audio/wav")
-                    self.send_header("Content-Length", str(len(out)))
+                    self._headers("audio/wav", len(out))
                     self.end_headers()
                     self.wfile.write(out)
                 else:
                     self._deny(404, "not found")
-            except (ValueError, json.JSONDecodeError) as exc:
-                self._deny(400, str(exc))
+            except (ValueError, json.JSONDecodeError, RecursionError) as exc:
+                self._deny(400, str(exc)[:200])
+            except OSError:
+                return
+            except Exception:  # keep details out of the response
+                self._deny(500, "internal error")
 
     return Handler
 
@@ -325,8 +431,7 @@ def make_handler(engine: Engine, port_getter):
 class Server:
     def __init__(self, engine: Engine, port: int = 8765) -> None:
         self.engine = engine
-        self._httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(engine, lambda: self.port))
-        self._httpd.daemon_threads = True
+        self._httpd = _BoundedServer(("127.0.0.1", port), make_handler(engine, lambda: self.port))
         self._thread: threading.Thread | None = None
 
     @property
@@ -339,6 +444,7 @@ class Server:
         self._thread.start()
 
     def stop(self) -> None:
-        self._httpd.shutdown()
+        self.engine.stop()  # ends open streams first
+        if self._thread:
+            self._httpd.shutdown()
         self._httpd.server_close()
-        self.engine.stop()
