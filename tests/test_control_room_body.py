@@ -191,6 +191,24 @@ def test_legs_and_recenter_reach_the_tracking_page_same_origin(make_room):
     assert [o for o in r.page.eval_on_selector_all("#legsMode option", "o => o.map(x => x.value)")] == ["auto", "off"]
 
 
+def test_desk_view_is_sent_to_the_tracking_page_switches_off_the_legs_options_and_is_remembered(make_room):
+    r = make_room()
+    r.choose_with_keyboard()
+    r.wait("document.querySelector('#tracker').getAttribute('src')")
+    src = lambda: r.page.eval_on_selector("#tracker", "e => e.getAttribute('src')")
+    assert "&view=desk" not in src(), "the default view is the full body"
+    assert [o for o in r.page.eval_on_selector_all("#viewMode option", "o => o.map(x => x.value)")] == ["full", "desk"]
+    r.page.select_option("#viewMode", "desk")
+    r.wait("document.querySelector('#tracker').getAttribute('src').includes('view=desk')")
+    assert r.page.eval_on_selector("#legsMode", "e => e.disabled") and r.page.eval_on_selector("#frameFull", "e => e.disabled")
+    assert "legs=auto" in src() or "legs=off" in src(), "the legs parameter is still sent; the page ignores it in the desk view"
+    assert r.page.evaluate("JSON.parse(localStorage.getItem('realx.studio')).view") == "desk"
+    r.page.select_option("#viewMode", "full")
+    r.wait("!document.querySelector('#tracker').getAttribute('src').includes('view=desk')")
+    assert not r.page.eval_on_selector("#legsMode", "e => e.disabled")
+    assert not r.errors
+
+
 def test_status_line_follows_the_stats_and_tolerates_a_server_without_them(make_room):
     r = make_room()  # no body entry in the stats at all
     r.choose_with_keyboard()

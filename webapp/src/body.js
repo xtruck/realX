@@ -42,18 +42,22 @@ export class BodyFilter {
    * fadeMs      then ease it to the relaxed pose over this long
    * resumeMs    ease a returning limb in over this long, so nothing snaps
    * legs        "auto": legs follow only after they stayed well visible for legsStableMs; "off"; "on"
+   * desk         the desk view: legs are never used, and an arm or hand that drops out of the picture (it went
+   *              below the camera's edge, onto the keyboard) is held where it was for deskHoldMs, then eased to a
+   *              seated pose with the forearms on the desk, not back to arms hanging at the sides
    */
-  constructor({ holdMs = 250, fadeMs = 600, resumeMs = 150, legs = "auto", legsStableMs = 600, idle = idleQuats() } = {}) {
-    this.cfg = { holdMs, fadeMs, resumeMs, legs, legsStableMs };
+  constructor({ holdMs = 250, fadeMs = 600, resumeMs = 150, legs = "auto", legsStableMs = 600, desk = false, deskHoldMs = 1500, deskFadeMs = 900, idle = idleQuats(desk) } = {}) {
+    this.cfg = { holdMs, fadeMs, resumeMs, legs: desk ? "off" : legs, legsStableMs, desk };
     this.idle = Object.fromEntries(BONES.map((b) => [b, [idle[b].x, idle[b].y, idle[b].z, idle[b].w]]));
-    this.bones = Object.fromEntries(BONES.map((b) => [b, { f: makeQuatFilter(b), last: null, lastLive: -Infinity, w: 0 }]));
+    const slow = (b) => desk && kindOf(b) !== "head" && kindOf(b) !== "eye" && kindOf(b) !== "torso" && !LEG.test(b);  // arms, hands, fingers
+    this.bones = Object.fromEntries(BONES.map((b) => [b, { f: makeQuatFilter(b), last: null, lastLive: -Infinity, w: 0, ...(slow(b) ? { hold: deskHoldMs, fade: deskFadeMs } : {}) }]));
     this.expr = Object.fromEntries(EXPRESSIONS.map((e) => [e, { f: makeExprFilter(e), last: 0, lastLive: -Infinity, w: 0 }]));
     this.rootState = { f: makeRootFilters(), last: [0, 0, 1], lastLive: -Infinity, w: 0 };
     this.legState = { left: { since: null, lastSeen: -Infinity }, right: { since: null, lastSeen: -Infinity } };
     this.lastT = null;
   }
 
-  set legsMode(mode) { this.cfg.legs = mode; }
+  set legsMode(mode) { this.cfg.legs = this.cfg.desk ? "off" : mode; }
 
   /** solved: BodySolver output (or null when nothing was tracked); root: [x, y, depth] or null */
   update(solved, now, root = null) {
@@ -70,7 +74,7 @@ export class BodyFilter {
       // a bone with any non-finite number counts as not measured: one bad landmark must not poison the filter
       const live = q0 !== null && Number.isFinite(q0.x + q0.y + q0.z + q0.w) && (side === null || trusted[side]);
       if (live) {
-        if (now - st.lastLive > this.cfg.holdMs + this.cfg.fadeMs) st.f = makeQuatFilter(b);  // back from a long loss: no stale smoothing
+        if (now - st.lastLive > (st.hold ?? this.cfg.holdMs) + (st.fade ?? this.cfg.fadeMs)) st.f = makeQuatFilter(b);  // back from a long loss: no stale smoothing
         const q = s.quats[b];
         st.last = st.f.filter([q.x, q.y, q.z, q.w], now / 1000);
       }
@@ -112,7 +116,8 @@ export class BodyFilter {
       return st.w;
     }
     const age = now - st.lastLive;
-    const target = age <= this.cfg.holdMs ? 1 : Math.max(0, 1 - (age - this.cfg.holdMs) / this.cfg.fadeMs);
+    const hold = st.hold ?? this.cfg.holdMs, fade = st.fade ?? this.cfg.fadeMs;
+    const target = age <= hold ? 1 : Math.max(0, 1 - (age - hold) / fade);
     st.w = Math.min(st.w, target);
     return st.w;
   }

@@ -24,7 +24,8 @@ view.addEventListener("load", () => { $("notice").hidden = true; applyMode(mode)
 const STUDIO_KEY = "realx.studio";
 const QUALITY = ["low", "balanced", "high"];
 const OUTFITS = ["coral", "ocean", "sunny", "berry", "forest"];
-const studio = { cam: null, mic: null, quality: "balanced", outfit: "coral" };
+const VIEWS = ["full", "desk"];
+const studio = { cam: null, mic: null, quality: "balanced", outfit: "coral", view: "full" };
 // The browser only gives the microphone to a page the server sent with that permission, and the server does
 // that only for a page requested with ?mic=1. So a microphone is in use only while this page carries the flag.
 const micAllowed = new URLSearchParams(location.search).get("mic") === "1";
@@ -36,6 +37,7 @@ try {
   studio.mic = micAllowed ? device(saved.mic) : null;
   if (QUALITY.includes(saved.quality)) studio.quality = saved.quality;
   if (OUTFITS.includes(saved.outfit)) studio.outfit = saved.outfit;
+  if (VIEWS.includes(saved.view)) studio.view = saved.view;
 } catch (e) { /* private window or a damaged value: start from the defaults */ }
 function saveStudio() {
   try { localStorage.setItem(STUDIO_KEY, JSON.stringify(studio)); } catch (e) { /* simply not remembered */ }
@@ -47,6 +49,7 @@ function trackerUrl() {
     legs: $("legsMode").value === "off" ? "off" : "auto",
     quality: studio.quality,
   });
+  if (studio.view === "desk") p.set("view", "desk");   // upper body only; the page forces the legs off itself
   if (studio.cam) p.set("cam", studio.cam.id);
   if (studio.mic && micAllowed) p.set("mic", studio.mic.id);
   if (studio.outfit !== "coral") p.set("outfit", studio.outfit);
@@ -121,6 +124,13 @@ fillDevices($("camSelect"), "Default camera", "Camera", [], studio.cam);
 fillDevices($("micSelect"), "Off", "Microphone", [], studio.mic);
 $("qualitySelect").value = studio.quality;
 $("outfitSelect").value = studio.outfit;
+$("viewMode").value = studio.view;
+function syncView() {   // in the desk view the legs and whole-character options do not apply
+  const desk = studio.view === "desk";
+  $("legsMode").disabled = desk;
+  $("frameFull").disabled = desk;
+}
+syncView();
 
 $("camSelect").addEventListener("change", (e) => {
   studio.cam = e.target.value ? { id: e.target.value, label: optionLabel(e.target) } : null;
@@ -137,6 +147,10 @@ $("micSelect").addEventListener("change", (e) => {
 $("qualitySelect").addEventListener("change", (e) => {
   studio.quality = QUALITY.includes(e.target.value) ? e.target.value : "balanced";
   saveStudio(); reloadTracker();
+});
+$("viewMode").addEventListener("change", (e) => {
+  studio.view = VIEWS.includes(e.target.value) ? e.target.value : "full";
+  syncView(); saveStudio(); reloadTracker();
 });
 $("outfitSelect").addEventListener("change", (e) => {
   studio.outfit = OUTFITS.includes(e.target.value) ? e.target.value : "coral";

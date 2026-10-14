@@ -260,6 +260,14 @@
         </fieldset>
         <p class="hint" id="studioPanelHint">Changing the camera, microphone, quality or outfit restarts the camera and reloads the tracker for a moment.</p>
         <fieldset>
+          <legend>Camera view</legend>
+          <select id="viewMode" aria-label="What the camera sees">
+            <option value="full">Standing or full body</option>
+            <option value="desk">Sitting at a desk: upper body</option>
+          </select>
+          <p class="hint" id="viewHint">Desk view follows your head, face, arms, hands and fingers and ignores the hips and legs, which the desk hides. If an arm or hand drops out of the picture (onto the keyboard) it stays where it was for a moment, then rests on the desk.</p>
+        </fieldset>
+        <fieldset>
           <legend>Legs</legend>
           <select id="legsMode" aria-label="When the legs move">
             <option value="auto">Auto: only when clearly in view</option>

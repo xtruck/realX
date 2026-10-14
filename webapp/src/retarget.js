@@ -57,7 +57,11 @@ const aim = (rest, targetLocal) => new Quaternion().setFromUnitVectors(rest, tar
 const local = (parentWorld, world) => parentWorld.clone().invert().multiply(world);
 
 export class BodySolver {
-  constructor(rest, { mirror = true } = {}) { this.rest = rest; this.mirror = mirror; }
+  /**
+   * upperBody: the desk view. The hips and legs are never read, even when the pose model reports them with some
+   * confidence: behind a desk they are guesses, and a guessed hip line tilts the whole torso.
+   */
+  constructor(rest, { mirror = true, upperBody = false } = {}) { this.rest = rest; this.mirror = mirror; this.upperBody = upperBody; }
 
   /** subject-space landmark -> character space */
   conv(p) { return V(this.mirror ? -p.x : p.x, -p.y, -p.z); }
@@ -85,7 +89,7 @@ export class BodySolver {
       const shL = this.conv(P("shoulder", "left")), shR = this.conv(P("shoulder", "right"));
       const torsoOk = [P("hip", "left"), P("hip", "right"), P("shoulder", "left"), P("shoulder", "right")].every((p) => (p.visibility ?? 1) >= MIN_VIS);
       const shouldersOk = [P("shoulder", "left"), P("shoulder", "right")].every((p) => (p.visibility ?? 1) >= MIN_VIS);
-      if (torsoOk) {
+      if (torsoOk && !this.upperBody) {
         const hipMid = hipL.clone().add(hipR).multiplyScalar(0.5), shMid = shL.clone().add(shR).multiplyScalar(0.5);
         const up = shMid.clone().sub(hipMid);
         const hipsQ = basisQuat(hipL.clone().sub(hipR), up), chestQ = basisQuat(shL.clone().sub(shR), up);

@@ -18,7 +18,8 @@ const MIRROR = params.get("mirror") !== "0"; // selfie view: the character moves
 const TRACK = params.get("track") === "1";
 const PUBLISH = TRACK && params.get("publish") === "1";
 const PREVIEW = TRACK && params.get("preview") === "1";
-const LEGS = ["auto", "off", "on"].includes(params.get("legs")) ? params.get("legs") : "auto";
+const DESK = params.get("view") === "desk"; // seated at a desk: only the upper body is seen and followed
+const LEGS = DESK ? "off" : ["auto", "off", "on"].includes(params.get("legs")) ? params.get("legs") : "auto";
 const DELEGATE = ["auto", "cpu", "gpu"].includes(params.get("delegate")) ? params.get("delegate") : "auto";
 const clipParam = (name) => (params.get(name) || "").replace(/[\u0000-\u001f]/g, "").slice(0, 256) || null;
 const CAM = clipParam("cam");               // a camera's deviceId, chosen in the control room
@@ -26,7 +27,7 @@ const QUALITY_NAME = params.get("quality"); // low | balanced | high; anything e
 const MIC = clipParam("mic");               // a microphone's deviceId ("default" for the system one); absent means no microphone
 // the label can be hidden for a plain OBS view, but never on a page that is running someone's camera
 const SHOW_BADGE = params.get("badge") !== "off" || params.get("track") === "1";
-const FRAMING = params.get("frame") === "full" ? { dist: 2.7, y: 0.68 } : { dist: 1.75, y: 0.86 };
+const FRAMING = DESK ? { dist: 1.95, y: 0.80 } : params.get("frame") === "full" ? { dist: 2.7, y: 0.68 } : { dist: 1.75, y: 0.86 };
 
 const OUTFITS = { // [outfit, accent]; the character's skin and face never change
   coral: ["#f28573", "#333f73"], ocean: ["#3a86d1", "#1d2b53"], sunny: ["#f2c14e", "#7a4e1d"],
@@ -47,7 +48,7 @@ const body = { t: -Infinity, quats: null, expr: null, root: [0, 0, 1], flags: nu
 const shownQ = Object.fromEntries(BONES.map((b) => [b, new THREE.Quaternion()]));
 const targetQ = Object.fromEntries(BONES.map((b) => [b, new THREE.Quaternion()]));
 const shownRoot = [0, 0, 1], shownExpr = {};
-const IDLE = idleQuats();
+const IDLE = idleQuats(DESK);
 let bodyWasLive = false;
 let tracker = null, socket = null;
 
@@ -204,9 +205,9 @@ async function beginTracking() {
   };
   // rest directions come from the model itself, so any VRM humanoid works, not just Pip
   const rest = restFrom((name) => { const n = bone(name); return n ? n.position.clone() : null; });
-  const solver = new BodySolver(rest, { mirror: MIRROR });
+  const solver = new BodySolver(rest, { mirror: MIRROR, upperBody: DESK });
   tracker = await startTracker({
-    solver, mirror: MIRROR, legs: LEGS, delegate: DELEGATE, video: PREVIEW ? cam : null, deviceId: CAM, quality: QUALITY_NAME,
+    solver, mirror: MIRROR, legs: LEGS, desk: DESK, delegate: DELEGATE, video: PREVIEW ? cam : null, deviceId: CAM, quality: QUALITY_NAME,
     onStatus: say,
     onFrame: (msg, info) => {
       probe.tracking = { ...probe.tracking, frames: info.frames, fps: Math.round(info.fps), ms: info.ms, hz: info.hz, diag: info.diag, delegates: info.delegates };

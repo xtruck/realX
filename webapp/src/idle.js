@@ -9,11 +9,19 @@ export const IDLE_EULER = {
   leftLowerArm: [0, 0.1, 0.12], rightLowerArm: [0, -0.1, -0.12],
 };
 
-/** bone -> Quaternion for the whole skeleton */
-export function idleQuats() {
+// Seated at a desk: the upper arms hang a little forward and the forearms come up to rest on the desk, where
+// the hands would be on a keyboard. Used for a lost arm in the desk view instead of arms hanging at the sides.
+export const DESK_EULER = {
+  leftUpperArm: [0.35, 0, -1.05], rightUpperArm: [0.35, 0, 1.05],
+  leftLowerArm: [0, -1.0, 0], rightLowerArm: [0, 1.0, 0],
+};
+
+/** bone -> Quaternion for the whole skeleton; `desk` swaps in the seated arm pose */
+export function idleQuats(desk = false) {
+  const table = desk ? { ...IDLE_EULER, ...DESK_EULER } : IDLE_EULER;
   const out = {};
   for (const b of BONES) {
-    const e = IDLE_EULER[b];
+    const e = table[b];
     out[b] = e ? new Quaternion().setFromEuler(new Euler(e[0], e[1], e[2], "YXZ")) : new Quaternion();
   }
   return out;
