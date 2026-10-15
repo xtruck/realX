@@ -83,6 +83,9 @@ each step so a resumed session knows exactly where to continue.
 - [ ] Not verified: any of the above on a real person, a real microphone or a discrete GPU. Browser tracking
       benchmark runs carried a contention warning (other Chrome processes), so they are not representative.
 
+- [x] OBS control dock (`/dock`): voice preset, mic mute, background, blur strength, status lights.
+      Adds blur (3-151) to the config and `/api/dock` for mute and voice; live voice change is still not built.
+
 ## Next (in order)
 
 **Continuing on another computer? Start with `HANDOFF.md`**: where the code is (branch `handoff-2026-10-14`), what is

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>realX dock</title>
+<link rel="stylesheet" href="/dock.css">
+</head>
+<body>
+<main>
+  <header class="lights" aria-label="Status">
+    <span class="light" id="lServer" role="status"><i></i>Server</span>
+    <span class="light" id="lRig" role="status"><i></i>Stream</span>
+    <span class="light" id="lToken" role="status"><i></i>Token</span>
+    <span class="light" id="lMark" role="status"><i></i>Mark</span>
+  </header>
+
+  <section aria-labelledby="hVoice">
+    <h2 id="hVoice">Voice</h2>
+    <div class="row" id="voices" role="group" aria-label="Voice preset"></div>
+    <button id="mute" class="wide" aria-pressed="false">Mute microphone</button>
+  </section>
+
+  <section aria-labelledby="hBg">
+    <h2 id="hBg">Background</h2>
+    <div class="row" id="bgModes" role="group" aria-label="Background">
+      <button data-bg="off">None</button><button data-bg="blur">Blur</button><button data-bg="photo">Photo</button>
+    </div>
+    <label class="slider">Blur <input id="blur" type="range" min="3" max="151" step="2" value="41" aria-label="Blur strength"><output id="blurOut">41</output></label>
+    <label class="file">Choose photo… <input id="photo" type="file" accept="image/png,image/jpeg"></label>
+  </section>
+
+  <p id="msg" role="status" aria-live="polite"></p>
+</main>
+<script src="/dock.js"></script>
+</body>
+</html>

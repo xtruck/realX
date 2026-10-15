@@ -14,7 +14,7 @@ from realx.server import Engine, Server, resolve_token
 pytestmark = pytest.mark.raw_http  # these tests send exactly the headers they mean to
 
 TOKEN = "auth-test-token-abcdef0123456789"
-ROUTES = ["/", "/app.js", "/avatar", "/avatar.bundle.js", "/avatar/model.vrm", "/avatar/background.png", "/favicon.ico", "/api/stats",
+ROUTES = ["/", "/app.js", "/avatar", "/avatar.bundle.js", "/avatar/model.vrm", "/avatar/background.png", "/dock", "/dock.js", "/dock.css", "/favicon.ico", "/api/stats",
           "/api/voices", "/api/safety", "/stream.mjpg", "/mp/wasm/x.js", "/mp/models/x.task", "/nope"]
 
 

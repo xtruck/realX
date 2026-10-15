@@ -1,0 +1,22 @@
+:root { color-scheme: dark; --bg: #14181d; --fg: #e8edf2; --mut: #8d99a6; --btn: #232a32; --on: #2f6fed; --ok: #3fb950; --warn: #d29922; --bad: #f85149; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 12px/1.3 system-ui, sans-serif; }
+main { padding: 6px 8px 8px; min-width: 200px; }
+h2 { margin: 8px 0 4px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); font-weight: 600; }
+.lights { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.light { display: inline-flex; align-items: center; gap: 4px; color: var(--mut); }
+.light i { width: 9px; height: 9px; border-radius: 50%; background: var(--mut); }
+.light[data-state="ok"] i { background: var(--ok); } .light[data-state="warn"] i { background: var(--warn); } .light[data-state="bad"] i { background: var(--bad); }
+.row { display: flex; flex-wrap: wrap; gap: 4px; }
+button, .file { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid transparent; border-radius: 5px; padding: 4px 8px; cursor: pointer; }
+button:hover, .file:hover { border-color: #3a444f; }
+button:focus-visible, input:focus-visible, .file:focus-within { outline: 2px solid var(--on); outline-offset: 1px; }
+button[aria-pressed="true"], button.on { background: var(--on); }
+.wide { width: 100%; margin-top: 6px; }
+#mute[aria-pressed="true"] { background: var(--bad); }
+.slider { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.slider input { flex: 1; min-width: 0; }
+.slider output { width: 3ch; text-align: right; color: var(--mut); }
+.file { display: inline-block; position: relative; }
+.file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+#msg { min-height: 1.3em; margin: 6px 0 0; color: var(--mut); } #msg.err { color: var(--bad); }
