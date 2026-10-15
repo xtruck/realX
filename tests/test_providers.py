@@ -89,6 +89,62 @@ def test_the_key_is_the_model_and_the_provider_list():
     assert cache.get("m.onnx", [CPU, CPU]) is cpu_only, "duplicates in the list do not make a new key"
 
 
+def test_same_model_and_different_providers_give_different_sessions():
+    calls = []
+    cache = SessionCache(make_factory(calls=calls))
+    cuda = cache.get("m.onnx", [CUDA])
+    dml = cache.get("m.onnx", [DML])
+    cpu = cache.get("m.onnx", [CPU])
+    assert len({id(cuda), id(dml), id(cpu)}) == 3
+    assert (cuda.provider, dml.provider, cpu.provider) == (CUDA, DML, CPU)
+    assert len(cache) == 3 and len(calls) == 3
+    assert cache.get("m.onnx", [DML]) is dml and len(calls) == 3, "and each is still reused"
+
+
+def test_provider_order_is_part_of_the_key():
+    cache = SessionCache(make_factory())
+    assert cache.get("m.onnx", [CUDA, DML]) is not cache.get("m.onnx", [DML, CUDA])
+
+
+def test_default_providers_and_the_same_explicit_list_share_one_session(monkeypatch):
+    monkeypatch.setattr(prov, "installed", lambda: [CPU, CUDA])
+    calls = []
+    cache = SessionCache(make_factory(calls=calls))
+    assert cache.get("m.onnx") is cache.get("m.onnx", [CUDA, CPU]) and len(calls) == 1
+
+
+def test_concurrent_gets_with_different_providers_build_one_session_each():
+    calls = []
+    cache = SessionCache(make_factory(calls=calls, delay=0.05))
+    out = []
+
+    def worker(providers):
+        out.append(cache.get("m.onnx", providers))
+
+    threads = [threading.Thread(target=worker, args=(p,)) for p in ([CUDA], [CPU]) * 4]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len({id(s) for s in out}) == 2 and sorted(c[1] for c in calls) == [CPU, CUDA]
+    assert len(cache) == 2
+
+
+def test_a_failed_provider_falls_back_without_poisoning_other_requests():
+    calls = []
+    cache = SessionCache(make_factory(failing={CUDA}, calls=calls))
+    fallen = cache.get("m.onnx", [CUDA])  # CUDA fails, CPU serves this request
+    assert fallen.provider == CPU
+    assert cache.info("m.onnx", [CUDA]).failures.keys() == {CUDA}
+    # a plain CPU request is a different key: it gets its own session, with no failure recorded
+    cpu = cache.get("m.onnx", [CPU])
+    assert cpu is not fallen and cache.info("m.onnx", [CPU]).failures == {}
+    # a request for a working accelerator is not served the CPU fallback either
+    dml = cache.get("m.onnx", [DML])
+    assert dml.provider == DML
+    assert len(cache) == 3
+
+
 def test_providers_are_tried_in_order_and_the_first_that_starts_wins():
     calls = []
     cache = SessionCache(make_factory(failing={TRT}, calls=calls))
