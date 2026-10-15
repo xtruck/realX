@@ -27,7 +27,7 @@ test("backend order: WebGPU first only when the browser has it; WASM always last
 
 test("a real session is created and a test tensor goes through (WASM backend)", async () => {
   ort.env.wasm.numThreads = 1;
-  const { session, backend } = await createInference(addModel(), { ort, nav: {} });
+  const { session, backend } = await createInference(addModel(), { ort, nav: {}, wasmPaths: null })   // Node finds the runtime next to the package; "/ort/" is for the browser;
   assert.equal(backend, "wasm");
   assert.deepEqual(session.inputNames, ["X"]);
   const out = await runInference(session, { X: new ort.Tensor("float32", Float32Array.from([1, 2, 3, 4]), [1, 4]) });
@@ -64,4 +64,12 @@ test("bad input is refused early; wasmPaths is applied; inputs are checked", asy
   assert.equal(fake.env.wasm.wasmPaths, "/ort/");
   await assert.rejects(runInference(r.session, {}), /Missing input tensor: X/);
   await assert.rejects(runInference(null, {}), /No session/);
+});
+
+test("the runtime is looked up on this origin by default", async () => {
+  const { DEFAULT_WASM_PATHS } = await import("../src/utils/onnxInference.js");
+  assert.equal(DEFAULT_WASM_PATHS, "/ort/");
+  const fake = { env: { wasm: {} }, InferenceSession: { create: async () => ({}) } };
+  await createInference(Uint8Array.of(1), { ort: fake, nav: {} });
+  assert.equal(fake.env.wasm.wasmPaths, "/ort/");
 });

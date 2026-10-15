@@ -6,9 +6,11 @@
 // Every backend is tried on its own, so `backend` says what actually runs (ORT itself does not report which
 // provider of a list it picked). Nothing here touches the network by itself: the model arrives as bytes you
 // already hold, and the runtime's .wasm files load from `wasmPaths`, which must be a same-origin URL because the
-// control room's Content-Security-Policy allows nothing else. Not yet used by the avatar page.
+// control room's Content-Security-Policy allows nothing else. Not yet used by the avatar page. The page that
+// uses it needs script-src 'wasm-unsafe-eval' (the avatar page has it; the control room and dock do not).
 
 export const BACKENDS = ["webgpu", "wasm"];
+export const DEFAULT_WASM_PATHS = "/ort/";   // served by realx/server.py from this origin (see _ORT_NAME there)
 
 /** True when this browser exposes WebGPU (it still may fail to give an adapter; createInference handles that). */
 export function webgpuAvailable(nav = globalThis.navigator) {
@@ -31,15 +33,15 @@ async function loadOrt(importer) {
 /**
  * modelBytes   Uint8Array (or ArrayBuffer) of an .onnx file
  * prefer       backend order, default ["webgpu", "wasm"]
- * wasmPaths    URL prefix (same origin) for the runtime's .wasm files; left alone when omitted
+ * wasmPaths    URL prefix (same origin) for the runtime's files; default "/ort/", which the realX server serves
  * ort          an onnxruntime-web module (tests pass a fake); default: imported on first use
  * onFallback   (backend, error) called each time a backend fails, before the next is tried
  * Returns { session, backend, ort, tried }. Throws when even WASM cannot create the session.
  */
-export async function createInference(modelBytes, { prefer = BACKENDS, wasmPaths = null, ort = null, nav = globalThis.navigator, onFallback = () => {}, options = {} } = {}) {
+export async function createInference(modelBytes, { prefer = BACKENDS, wasmPaths = DEFAULT_WASM_PATHS, ort = null, nav = globalThis.navigator, onFallback = () => {}, options = {} } = {}) {
   if (!modelBytes || !(modelBytes.byteLength > 0)) throw new Error("No model was given.");
   const bytes = modelBytes instanceof Uint8Array ? modelBytes : new Uint8Array(modelBytes);
-  const runtime = ort || (await loadOrt(() => import("onnxruntime-web")));
+  const runtime = ort || (await loadOrt(() => import("onnxruntime-web/webgpu")))   // the build with both the WebGPU and the WASM backends;
   if (!runtime || !runtime.InferenceSession) throw new Error("onnxruntime-web could not be loaded.");
   if (wasmPaths && runtime.env && runtime.env.wasm) runtime.env.wasm.wasmPaths = wasmPaths;
 
