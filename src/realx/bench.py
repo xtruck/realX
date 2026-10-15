@@ -18,6 +18,7 @@ The synthetic frames are rendered before anything is timed, so rendering cost is
 from __future__ import annotations
 
 import datetime
+import gc
 import math
 import os
 import platform
@@ -39,6 +40,8 @@ from realx.types import FrameContext
 SCHEMA = "realx-bench/1"
 DEFAULT_RESOLUTIONS = ((320, 240), (640, 480), (1280, 720))
 MIN_FRAMES = 10
+MODES = ("cold", "warm", "both")
+DEFAULT_MODE, DEFAULT_CYCLES, MAX_CYCLES = "warm", 3, 50
 MIN_DIM, MAX_DIM, MAX_RESOLUTIONS = 16, 7680, 8
 MAX_FRAME_BYTES = 1_500_000_000  # frames are pre-rendered; refuse a run that would need more than this
 MIN_CUTOFF = 2.125  # the control room's default steadiness (35%), see server._smoothing_to_cutoff
@@ -231,6 +234,75 @@ def _timing_pass(frames: list[FrameContext], stage_factory, with_background: boo
     }
 
 
+def clear_process_caches() -> None:
+    """What a cold cycle clears by default: garbage the previous cycle left behind.
+
+    No pipeline stage uses `runtime.SessionCache` yet (YuNet and PP-HumanSeg run through OpenCV), so there is no
+    ONNX session cache to empty here; once one is in use, pass its clearing function as `clear_caches`. The
+    operating system's file cache is not touched, so "cold" means "this process starts over", not "after a reboot".
+    """
+    gc.collect()
+
+
+def _cycle(frames: list[FrameContext], stage_factory, with_background: bool, clock) -> dict:
+    """One full run on fresh stages with nothing excluded: setup, the first frame, then the rest."""
+    began = clock()
+    pipe = Pipeline(stage_factory(with_background))
+    pipe.setup()
+    try:
+        setup_ms = (clock() - began) * 1000.0
+        per_frame: list[float] = []
+        for original in frames:
+            ctx = _fresh(original)
+            a = clock()
+            for stage in pipe.stages:
+                ctx = stage.process(ctx)
+            per_frame.append((clock() - a) * 1000.0)
+    finally:
+        pipe.close()
+    total_s = (setup_ms + sum(per_frame)) / 1000.0
+    return {
+        "setup_ms": round(setup_ms, 3),
+        "first_frame_ms": round(per_frame[0], 3),
+        "first_frame_with_setup_ms": round(setup_ms + per_frame[0], 3),
+        "fps": round(len(frames) / max(total_s, 1e-9), 2),
+    }
+
+
+def _fps_summary(cycles: list[dict]) -> dict:
+    fps = [c["fps"] for c in cycles]
+    fastest = max(fps)
+    average = sum(fps) / len(fps)
+    return {
+        "average_fps": round(average, 2),
+        "fastest_fps": round(fastest, 2),
+        "slowest_fps": round(min(fps), 2),
+        "relative_fps": round(average / max(fastest, 1e-9), 4),  # 1.0 = every cycle was as fast as the best one
+        "first_frame_with_setup_ms": _stats([c["first_frame_with_setup_ms"] for c in cycles]),
+        "cycles": cycles,
+    }
+
+
+def _cycle_modes(frames, stage_factory, with_background, clock, mode: str, cycles: int, clear_caches) -> dict:
+    """Cold: caches cleared before every cycle, the first-frame cost is the point. Warm: one untimed run, then timed ones.
+
+    `cold_vs_warm_fps` (both modes only) is the cold average divided by the warm average.
+    """
+    out: dict = {}
+    if mode in ("cold", "both"):
+        runs = []
+        for _ in range(cycles):
+            clear_caches()
+            runs.append(_cycle(frames, stage_factory, with_background, clock))
+        out["cold"] = _fps_summary(runs)
+    if mode in ("warm", "both"):
+        _cycle(frames, stage_factory, with_background, clock)  # untimed warm-up, result discarded
+        out["warm"] = _fps_summary([_cycle(frames, stage_factory, with_background, clock) for _ in range(cycles)])
+    if "cold" in out and "warm" in out:
+        out["cold_vs_warm_fps"] = round(out["cold"]["average_fps"] / max(out["warm"]["average_fps"], 1e-9), 4)
+    return out
+
+
 class _Timed:
     """Wraps a pipeline so the time each frame really takes is measured while the camera thread is running too."""
 
@@ -335,6 +407,9 @@ def run_benchmark(
     hardware: dict | None = None,
     conditions: dict | None = None,
     stream_seconds: float = 6.0,
+    mode: str = DEFAULT_MODE,
+    cycles: int = DEFAULT_CYCLES,
+    clear_caches: Callable[[], None] | None = None,
 ) -> dict:
     if frames < MIN_FRAMES:
         raise ValueError(f"frames must be at least {MIN_FRAMES} so the statistics mean something")
@@ -342,11 +417,16 @@ def run_benchmark(
         raise ValueError("fps must be positive")
     if not stream_seconds > 0:
         raise ValueError("stream_seconds must be positive")
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {', '.join(MODES)}")
+    if isinstance(cycles, bool) or not isinstance(cycles, int) or not 1 <= cycles <= MAX_CYCLES:
+        raise ValueError(f"cycles must be a whole number from 1 to {MAX_CYCLES}")
     for w, h in resolutions:
         if frames * w * h * 3 > MAX_FRAME_BYTES:
             raise ValueError(f"{frames} frames at {w}x{h} would need too much memory (frames are rendered up front); use fewer")
     clock = clock or time.perf_counter
     sleep = sleep or time.sleep
+    clear_caches = clear_caches or clear_process_caches
     scene_factory = scene_factory or default_scene_factory
     stage_factory = stage_factory or default_stage_factory
     conditions = conditions if conditions is not None else measure_conditions()  # before any of our own work starts
@@ -356,7 +436,8 @@ def run_benchmark(
         rendered = [scene.render(i) for i in range(frames)]
         timing = _timing_pass(rendered, stage_factory, with_background, clock)
         stream = _stream_pass(rendered, stage_factory, with_background, fps, clock, sleep, stream_seconds)
-        results.append({"width": w, "height": h, **timing, "stream": stream})
+        modes = _cycle_modes(rendered, stage_factory, with_background, clock, mode, cycles, clear_caches)
+        results.append({"width": w, "height": h, **timing, "stream": stream, "modes": modes})
         del rendered
     return {
         "schema": SCHEMA,
@@ -369,6 +450,8 @@ def run_benchmark(
             "resolutions": [[w, h] for w, h in resolutions],
             "fps": float(fps),
             "stream_seconds": float(stream_seconds),
+            "mode": mode,
+            "cycles": cycles,
             "with_background": bool(with_background),
             "seed": seed,
             "motion": motion,
@@ -383,6 +466,8 @@ def run_benchmark(
             "The stream pass imitates a camera: frames arrive at the target rate whether or not the pipeline is ready, and a "
             f"{CAMERA_BUFFER}-frame buffer overwrites its oldest frame when the pipeline is behind. Those are the drops reported.",
             "These stages run on the CPU through OpenCV. The providers block lists what ONNX Runtime offers; no stage here uses it.",
+            "Cold cycles clear this process's caches and rebuild the stages first; warm cycles follow one untimed run. Cycle fps "
+            "counts every frame and the stage setup; the OS file cache is not cleared.",
             "Numbers describe this machine, this configuration and this moment. They are not a promise for any other.",
         ],
     }
@@ -407,6 +492,22 @@ def _triplet(block, where: str, names: tuple[str, str, str]) -> None:
     mean, p50, p95 = (_num(block.get(n), f"{where}.{n}") for n in names)
     if p50 > p95 + 1e-9:
         raise ValueError(f"{where}: p50 {p50} is above p95 {p95}")
+
+
+def _check_modes(modes, where: str) -> None:
+    if not isinstance(modes, dict) or not set(modes) & {"cold", "warm"}:
+        raise ValueError(f"{where}: expected a cold and/or warm block")
+    for name in ("cold", "warm"):
+        if name not in modes:
+            continue
+        block = modes[name]
+        if not isinstance(block, dict) or not isinstance(block.get("cycles"), list) or not block["cycles"]:
+            raise ValueError(f"{where}.{name}: cycles are missing")
+        slow, avg, fast = (_num(block.get(k), f"{where}.{name}.{k}") for k in ("slowest_fps", "average_fps", "fastest_fps"))
+        _num(block.get("relative_fps"), f"{where}.{name}.relative_fps", 0.0, 1.0 + 1e-9)
+        if not (slow <= avg + 0.01 and avg <= fast + 0.01):
+            raise ValueError(f"{where}.{name}: slowest, average and fastest are out of order")
+        _triplet(block.get("first_frame_with_setup_ms"), f"{where}.{name}.first_frame_with_setup_ms", ("mean", "p50", "p95"))
 
 
 def validate_result(doc) -> None:
@@ -449,6 +550,8 @@ def validate_result(doc) -> None:
         _triplet(r.get("frame_ms"), f"{where}.frame_ms", ("mean", "p50", "p95"))
         _num(r.get("sequential_fps"), f"{where}.sequential_fps")
         _num(r.get("faces_found"), f"{where}.faces_found", 0.0, 1.0)
+        if "modes" in r:
+            _check_modes(r["modes"], f"{where}.modes")
         st = r.get("stream")
         if not isinstance(st, dict):
             raise ValueError(f"{where}.stream is missing")
@@ -472,6 +575,7 @@ def format_summary(doc: dict) -> str:
         f"  machine : {hw.get('cpu_name') or hw.get('machine')}, {hw.get('cpu_count')} threads, {hw.get('platform')}",
         f"  runtime : python {hw.get('python')}, opencv {hw.get('opencv')}, onnxruntime {hw.get('onnxruntime')}",
         f"  stages  : {' > '.join(doc['config']['stages'])}  ({doc['config']['frames']} frames, target {doc['config']['fps']:g} fps)",
+        f"  mode    : {doc['config'].get('mode', 'n/a')}, {doc['config'].get('cycles', 'n/a')} cycles",
     ]
     if doc["conditions"]["warning"]:
         lines.append(f"  WARNING : {doc['conditions']['warning']}")
@@ -484,6 +588,16 @@ def format_summary(doc: dict) -> str:
             f"({s['delivered_fps']:.1f} fps), {s['dropped']} lost to the camera buffer (frame time while streaming: "
             f"mean {s['process_ms']['mean']:.1f} ms, p95 {s['process_ms']['p95']:.1f} ms); face found in {r['faces_found']:.0%}"
         )
+        for name in ("cold", "warm"):
+            m = r.get("modes", {}).get(name)
+            if m:
+                lines.append(
+                    f"    {name:4s} x{len(m['cycles'])} cycles: avg {m['average_fps']:.1f} fps, fastest {m['fastest_fps']:.1f}, "
+                    f"slowest {m['slowest_fps']:.1f}, relative {m['relative_fps']:.2f}; first frame incl. setup "
+                    f"{m['first_frame_with_setup_ms']['mean']:.1f} ms"
+                )
+        if "cold_vs_warm_fps" in r.get("modes", {}):
+            lines.append(f"    cold is {r['modes']['cold_vs_warm_fps']:.2f}x the warm average fps")
         for st in r["stages"]:
             lines.append(f"    {st['name']:14s} mean {st['mean_ms']:7.2f} ms   p50 {st['p50_ms']:7.2f}   p95 {st['p95_ms']:7.2f}")
     return "\n".join(lines)
@@ -502,7 +616,8 @@ def run_cli(args) -> int:
             ensure_model(name, download=False)  # a benchmark must not start downloading things on its own
         doc = run_benchmark(
             frames=args.frames, resolutions=resolutions, fps=args.fps, with_background=args.background, seed=args.seed,
-            stream_seconds=args.stream_seconds,
+            stream_seconds=args.stream_seconds, mode=getattr(args, "mode", DEFAULT_MODE),
+            cycles=getattr(args, "cycles", DEFAULT_CYCLES),
         )
         validate_result(doc)
     except ModelError as exc:

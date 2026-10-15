@@ -229,3 +229,28 @@ and the hardware, and refuses nothing silently: a camera that cannot be opened i
   machine and record the output in this file next to the machine description before quoting any number.
 * **No target numbers are set here.** Targets should be written down only after real runs on the target hardware,
   with the `conditions.warning` field empty.
+
+## Cold and warm modes (`realx bench --mode`)
+
+```powershell
+realx bench --mode both --cycles 5 --json bench-modes.json
+```
+
+* `--mode warm` (the default): one untimed run to warm everything up, then `--cycles` timed runs.
+* `--mode cold`: before every one of the `--cycles` runs the process caches are cleared and the stages are built again, so the
+  first-frame cost is part of every run. `--mode both` does the two in turn.
+* `--cycles N`: 1 to 50, default 3. A cycle is one full pass over the pre-rendered frames on freshly built stages. Its fps counts
+  every frame plus the stage setup time (nothing is excluded, unlike the separate timing pass above).
+* Per resolution and mode the report gives average, fastest and slowest cycle fps, `relative_fps` (average divided by fastest, 1.0
+  meaning every cycle was as fast as the best) and the first frame including setup (mean, p50, p95). With `both`, `cold_vs_warm_fps`
+  is the cold average divided by the warm average.
+* The JSON keeps the hardware record and adds `config.mode`, `config.cycles` and `results[].modes` (same `realx-bench/1` schema; the
+  new block is optional and checked when present). The printed table has a `mode` line and one line per mode under each resolution.
+
+What "cold" clears: Python garbage left by the previous cycle, and every stage and its model, because the stages are rebuilt. No
+pipeline stage uses `runtime.SessionCache` yet, so there is no ONNX session cache to empty; when one is in use, pass its clearing
+function as `clear_caches` to `run_benchmark`. The operating system's file cache is not cleared, so cold means "this process starts
+over", not "after a reboot".
+
+No figures are quoted here: none have been measured for this feature yet. The tests use fake clocks and fake stages only and check
+the bookkeeping, not speed.

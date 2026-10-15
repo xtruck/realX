@@ -540,3 +540,124 @@ def test_browser_script_refuses_to_run_without_the_models(bt, monkeypatch, capsy
     monkeypatch.setattr(bt, "ensure_model", boom)
     assert bt.main(["--seconds", "1"]) == 2
     assert "realx models fetch" in capsys.readouterr().err
+
+
+# --- cold and warm modes ---------------------------------------------------------------------------------
+def _cold_warm_run(mode, cycles=3, **kw):
+    clock = FakeClock()
+    cold = {"pending": False}
+    clears = []
+
+    class Stage(FakeStage):
+        def process(self, ctx):
+            if cold["pending"]:
+                cold["pending"] = False
+                clock.advance(0.050)  # first frame after a cleared cache is expensive
+            return super().process(ctx)
+
+    def stage_factory(with_background):
+        return [Stage("detect", 0.004, clock)]
+
+    def clear():
+        clears.append(1)
+        cold["pending"] = True
+
+    doc = bench.run_benchmark(
+        frames=20, resolutions=[(32, 24)], scene_factory=FakeScene, stage_factory=stage_factory, clock=clock,
+        sleep=clock.sleep, hardware={"platform": "test", "providers": {"installed": []}}, conditions=QUIET,
+        stream_seconds=1.0, mode=mode, cycles=cycles, clear_caches=clear, **kw,
+    )
+    return doc, clears
+
+
+def test_cold_clears_before_every_cycle_and_reports_the_first_frame_cost():
+    doc, clears = _cold_warm_run("cold", cycles=4)
+    bench.validate_result(doc)
+    cold = doc["results"][0]["modes"]["cold"]
+    assert len(clears) == 4 and len(cold["cycles"]) == 4 and "warm" not in doc["results"][0]["modes"]
+    assert all(c["first_frame_ms"] == pytest.approx(54.0, abs=0.01) for c in cold["cycles"])
+    assert cold["first_frame_with_setup_ms"]["mean"] == pytest.approx(54.0, abs=0.01)
+    assert cold["average_fps"] == pytest.approx(20 / (0.050 + 20 * 0.004), rel=0.01)
+    assert cold["relative_fps"] == 1.0
+
+
+def test_warm_does_one_untimed_run_and_never_clears():
+    doc, clears = _cold_warm_run("warm", cycles=2)
+    warm = doc["results"][0]["modes"]["warm"]
+    assert clears == [] and len(warm["cycles"]) == 2 and "cold" not in doc["results"][0]["modes"]
+    assert warm["average_fps"] == pytest.approx(250.0, rel=0.01)  # 1000 / 4 ms
+    assert warm["cycles"][0]["first_frame_ms"] == pytest.approx(4.0, abs=0.01)
+
+
+def test_both_modes_compare_cold_with_warm_and_record_mode_and_cycles():
+    doc, clears = _cold_warm_run("both", cycles=3)
+    bench.validate_result(doc)
+    modes = doc["results"][0]["modes"]
+    assert len(clears) == 3 and doc["config"]["mode"] == "both" and doc["config"]["cycles"] == 3
+    assert modes["cold_vs_warm_fps"] == pytest.approx(modes["cold"]["average_fps"] / modes["warm"]["average_fps"], rel=1e-3)
+    assert modes["cold_vs_warm_fps"] < 1.0
+    assert doc["hardware"]["platform"] == "test"  # the hardware record stays
+    text = bench.format_summary(doc)
+    assert "mode    : both, 3 cycles" in text and "cold" in text and "warm" in text and "fastest" in text and "slowest" in text
+
+
+def test_average_fastest_slowest_and_relative_fps_over_uneven_cycles():
+    summary = bench._fps_summary([
+        {"fps": 100.0, "first_frame_with_setup_ms": 10.0},
+        {"fps": 50.0, "first_frame_with_setup_ms": 30.0},
+        {"fps": 75.0, "first_frame_with_setup_ms": 20.0},
+    ])
+    assert (summary["fastest_fps"], summary["slowest_fps"], summary["average_fps"]) == (100.0, 50.0, 75.0)
+    assert summary["relative_fps"] == 0.75
+    assert summary["first_frame_with_setup_ms"]["p50"] == 20.0
+
+
+def test_default_cleaner_is_used_when_none_is_given():
+    doc, _ = fake_run(mode="cold", cycles=2)
+    bench.validate_result(doc)
+    assert doc["config"]["mode"] == "cold" and doc["config"]["cycles"] == 2
+
+
+def test_bad_mode_or_cycles_is_rejected():
+    for bad in [dict(mode="hot"), dict(cycles=0), dict(cycles=999), dict(cycles=True)]:
+        with pytest.raises(ValueError):
+            fake_run(**bad)
+
+
+def test_validation_catches_inconsistent_mode_blocks():
+    doc, _ = _cold_warm_run("both")
+    broken = copy.deepcopy(doc)
+    broken["results"][0]["modes"]["cold"]["fastest_fps"] = 0.001
+    with pytest.raises(ValueError):
+        bench.validate_result(broken)
+    broken = copy.deepcopy(doc)
+    broken["results"][0]["modes"]["warm"]["cycles"] = []
+    with pytest.raises(ValueError):
+        bench.validate_result(broken)
+
+
+def test_cli_passes_mode_and_cycles_through(monkeypatch, tmp_path, capsys):
+    clock = FakeClock()
+    monkeypatch.setattr(bench, "ensure_model", lambda name, download=True: tmp_path)
+    monkeypatch.setattr(bench, "default_stage_factory", lambda with_background: [FakeStage("detect", 0.004, clock)])
+    monkeypatch.setattr(bench, "default_scene_factory", FakeScene)
+    monkeypatch.setattr(bench.time, "perf_counter", clock)
+    monkeypatch.setattr(bench.time, "sleep", clock.sleep)
+    out = tmp_path / "r.json"
+    assert bench.run_cli(_args(json=str(out), mode="both", cycles=2)) == 0
+    doc = json.loads(out.read_text())
+    assert doc["config"]["mode"] == "both" and doc["config"]["cycles"] == 2
+    assert len(doc["results"][0]["modes"]["cold"]["cycles"]) == 2
+    assert bench.run_cli(_args(mode="both", cycles=0)) == 2
+
+
+def test_the_bench_parser_accepts_mode_and_cycles(monkeypatch):
+    from realx.cli import main
+
+    seen = []
+    monkeypatch.setattr(bench, "run_cli", lambda args: seen.append(args) or 0)
+    assert main(["bench", "--mode", "both", "--cycles", "5"]) == 0
+    assert main(["bench"]) == 0
+    assert (seen[0].mode, seen[0].cycles) == ("both", 5) and (seen[1].mode, seen[1].cycles) == ("warm", 3)
+    with pytest.raises(SystemExit):
+        main(["bench", "--mode", "lukewarm"])
