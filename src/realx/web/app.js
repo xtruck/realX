@@ -262,9 +262,16 @@ function drawRibbon(states) {
   });
 }
 
+let lastDockVoice;   // undefined until the first reading, so a page load does not overwrite the menu
 async function poll() {
   try {
     const s = await api("/api/stats");
+    // the OBS dock's voice choice becomes the converter's preset (only when the dock changes it, so the menu stays free to use)
+    const dockVoice = s.dock && typeof s.dock.voice === "string" ? s.dock.voice : null;
+    if (dockVoice !== null && dockVoice !== lastDockVoice) {
+      if (lastDockVoice !== undefined && [...preset.options].some((o) => o.value === dockVoice)) { preset.value = dockVoice; preset.dispatchEvent(new Event("change")); }
+      lastDockVoice = dockVoice;
+    }
     $("sFps").textContent = s.fps.toFixed(0);
     $("sLat").textContent = s.latency_ms.toFixed(0);
     $("sFaces").textContent = s.faces;

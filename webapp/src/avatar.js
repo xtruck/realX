@@ -126,6 +126,7 @@ function onRig(msg) {
   probe.rigMessages++;
   const face = msg.faces && msg.faces[0];
   followBackground(msg.background);
+  followServerMute(msg.mic);
   if (msg.emote && msg.emote.id !== lastEmoteId) {
     if (msg.emote.age < 2.5) startEmote(msg.emote.name); // never replay an old press after a reconnect
     lastEmoteId = msg.emote.id;
@@ -317,6 +318,15 @@ async function beginMic() {
 
 // Tracked mouth when the face is seen, speech estimate when it is not, cross-faded; the faster of the two
 // streams is delayed so the mouth and the sound line up.
+// the OBS dock's Mute button: the server says so in the rig stream; act only when that value changes, so the fist
+// gesture and the dock do not fight over a state neither of them changed
+let serverMuted = false;
+function followServerMute(m) {
+  const muted = !!(m && m.muted === true);
+  if (muted === serverMuted) return;
+  serverMuted = muted;
+  setMicMuted(muted);
+}
 const faceConfidence = new FaceConfidence();
 function mixMouth(msg, videoLatencyMs, now, cover = 0) {
   if (!mic || !micInfo) return;
