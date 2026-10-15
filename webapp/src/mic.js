@@ -5,8 +5,6 @@
 //  * samples are never recorded, copied out of the page or sent anywhere
 //  * nothing is stored; stop() releases the microphone and closes the audio context
 // The browser does the noise suppression, echo cancellation and gain control (getUserMedia constraints).
-import { rmsOf, rmsToDb } from "./utils/audioLipSync.js";
-
 
 /**
  * deviceId     a microphone id from enumerateDevices(), or omitted for the default one
@@ -53,7 +51,10 @@ export async function startMic({ deviceId, onFeatures, intervalMs = 20 } = {}) {
   const tick = () => {
     analyser.getFloatTimeDomainData(time);
     analyser.getFloatFrequencyData(freq);
-    const levelDb = rmsToDb(rmsOf(time));
+    let sum = 0;
+    for (let i = 0; i < time.length; i++) sum += time[i] * time[i];
+    const rms = Math.sqrt(sum / time.length);
+    const levelDb = rms > 1e-5 ? 20 * Math.log10(rms) : -100;
     try {
       onFeatures({ levelDb, freqDb: freq, sampleRate: ctx.sampleRate, fftSize: analyser.fftSize, t: performance.now() });
     } catch (e) { /* a bug in the consumer must not stop the microphone loop */ }
