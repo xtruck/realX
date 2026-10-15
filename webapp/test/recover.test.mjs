@@ -181,3 +181,26 @@ test("reported text is short and has no control characters", async () => {
     assert.ok(field.length <= 200 && !/[\u0000-\u001f]/.test(field), field);
   }
 });
+
+test("the default timers work when called as methods of the supervisor, as a browser's setTimeout requires", async () => {
+  // a browser's setTimeout/clearTimeout throw "Illegal invocation" unless called with the window (or no receiver);
+  // node does not mind, so imitate the browser's rule
+  const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const strict = (fn) => function (...args) {
+    if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+    return fn(...args);
+  };
+  globalThis.setTimeout = strict(real.setTimeout);
+  globalThis.clearTimeout = strict(real.clearTimeout);
+  try {
+    const sup = new DeviceSupervisor({ kind: "camera", start: async () => { throw err("NotFoundError"); } });
+    await sup.run();                       // the failed start schedules a retry with the default timer
+    assert.equal(sup.state, "lost");
+    assert.notEqual(sup.timer, null);
+    sup.stop();                            // and stop() clears it with the default clearTimer
+    assert.equal(sup.timer, null);
+  } finally {
+    globalThis.setTimeout = real.setTimeout;
+    globalThis.clearTimeout = real.clearTimeout;
+  }
+});

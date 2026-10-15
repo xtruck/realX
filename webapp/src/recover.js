@@ -25,7 +25,7 @@ export class DeviceSupervisor {
    * start    async () => { stop(), tracks?: MediaStreamTrack[] }: opens the device, or throws
    * onState  ({ kind, state, message, detail, attempt, nextRetryMs }) with state running | lost | blocked | stopped
    */
-  constructor({ kind, start, explain = null, onState = () => {}, backoff = new Backoff(), setTimer = setTimeout, clearTimer = clearTimeout }) {
+  constructor({ kind, start, explain = null, onState = () => {}, backoff = new Backoff(), setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (id) => clearTimeout(id) }) {   // wrapped: a browser's setTimeout throws "Illegal invocation" when called as a method of this object
     this.kind = kind; this.startDevice = start; this.explain = explain; this.onState = onState; this.backoff = backoff;
     this.setTimer = setTimer; this.clearTimer = clearTimer;
     this.state = "idle"; this.handle = null; this.timer = null; this.stopped = false;
