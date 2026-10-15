@@ -10,6 +10,7 @@ import { idleQuats } from "./idle.js";
 import { BONES, EXPRESSIONS } from "./skeleton.js";
 import { applyExpressions } from "./express.js";
 import { startMic } from "./mic.js";
+import { GestureController } from "./utils/gestureRecognizer.js";
 import { DeviceSupervisor } from "./recover.js";
 import { DelayLine, MouthBlender, MouthFromAudio, avSyncOffset } from "./speech.js";
 
@@ -41,7 +42,7 @@ const SHOP = clip(params.get("name"), 40), TAGLINE = clip(params.get("tagline"),
 
 // test and debugging hook; holds numbers only
 const probe = (window.__realx = {
-  outfit: OUTFIT, emotes: [], connected: false, modelLoaded: false, error: null, frames: 0, rigMessages: 0, pose: null,
+  outfit: OUTFIT, emotes: [], gestures: [], micMuted: false, connected: false, modelLoaded: false, error: null, frames: 0, rigMessages: 0, pose: null,
   tracking: null, bodyMessages: 0, bodyLive: false, bodyFlags: null, rejected: 0, sent: 0, recenter: () => {},
 });
 
@@ -211,6 +212,7 @@ async function beginTracking() {
   tracker = await startTracker({
     solver, mirror: MIRROR, legs: LEGS, desk: DESK, delegate: DELEGATE, video: PREVIEW ? cam : null, deviceId: CAM, quality: QUALITY_NAME,
     onStatus: say,
+    onHands: (hands, now) => { const hit = gestures.feed(hands, now); if (hit) runGestureAction(hit); },
     onFrame: (msg, info) => {
       probe.tracking = { ...probe.tracking, frames: info.frames, fps: Math.round(info.fps), ms: info.ms, hz: info.hz, diag: info.diag, delegates: info.delegates };
       mixMouth(msg, info.latencyMs, performance.now());
@@ -241,6 +243,23 @@ const MOUTH = ["aa", "ih", "ou", "ee", "oh"];
 const MOUTH_AT = Object.fromEntries(MOUTH.map((k) => [k, EXPRESSIONS.indexOf(k)]));
 const audioMouth = new MouthFromAudio(), blender = new MouthBlender();
 const trackedLine = new DelayLine(), audioLine = new DelayLine();
+// --- hand gestures: fist = mute/unmute the microphone, thumb up = happy, V = wave, open palm = recenter.
+// Recognised here, in the page that holds the camera; only the gesture name is reported to the control room.
+const gestures = new GestureController();
+let micMuted = false;
+function setMicMuted(muted) {
+  micMuted = muted;
+  if (mic) for (const t of mic.tracks || []) t.enabled = !muted;   // a muted track delivers silence
+  probe.micMuted = muted;
+}
+function runGestureAction({ gesture, action }) {
+  if (action === "toggle-mic") setMicMuted(!micMuted);
+  else if (action === "emote-happy") startEmote("happy");
+  else if (action === "emote-wave") startEmote("wave");
+  else if (action === "recenter") { if (tracker) tracker.recenter(); emote = null; }
+  probe.gestures.push(gesture);
+  toParent({ type: "realx-gesture", gesture, action, micMuted });
+}
 let mic = null, micInfo = null, lastAudio = { aa: 0, ih: 0, ou: 0, ee: 0, oh: 0, speaking: false, level: 0 }, avSync = null;
 
 // The microphone is optional and never stops the camera. If it is unplugged, or taken by another app, the
@@ -259,6 +278,7 @@ async function beginMic() {
         },
       });
       mic = m;
+      if (micMuted) for (const t of m.tracks || []) t.enabled = false;   // a reconnected microphone stays muted
       micInfo = { active: true, speaking: false, levelDb: null, latencyMs: m.latencyMs };
       probe.mic = micInfo;
       probe.micError = null;
@@ -306,6 +326,7 @@ async function announceDevices() {
 window.addEventListener("message", (ev) => {
   if (ev.origin !== location.origin || !ev.data || !tracker) return;
   if (ev.data.type === "realx-recenter") tracker.recenter();
+  else if (ev.data.type === "realx-gestures") gestures.setEnabled(ev.data.enabled === true);
   else if (ev.data.type === "realx-legs" && ["auto", "off", "on"].includes(ev.data.mode)) tracker.setLegs(ev.data.mode);
 });
 const damp = (cur, goal, dt, tau) => cur + (goal - cur) * (1 - Math.exp(-dt / tau));

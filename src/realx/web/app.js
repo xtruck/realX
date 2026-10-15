@@ -91,6 +91,9 @@ function applyMode(next) {
 }
 const tellTracker = (message) => { if (tracker.contentWindow) tracker.contentWindow.postMessage(message, location.origin); };
 $("legsMode").addEventListener("change", (e) => tellTracker({ type: "realx-legs", mode: e.target.value === "off" ? "off" : "auto" }));
+const sendGestures = () => tellTracker({ type: "realx-gestures", enabled: $("gesturesOn").checked });
+$("gesturesOn").addEventListener("change", sendGestures);
+tracker.addEventListener("load", sendGestures);   // a reloaded tracking page starts with its default; tell it again
 $("recenter").addEventListener("click", () => tellTracker({ type: "realx-recenter" }));
 function reloadTracker() {   // a new camera, quality or outfit needs a fresh tracking page
   if (mode !== "body") return;
@@ -193,7 +196,11 @@ window.addEventListener("message", (ev) => {
     const d = ev.data;
     if (!d || typeof d !== "object" || Array.isArray(d)) return;
     if (d.type === "realx-devices") onDevices(d);
-    else if (d.type === "realx-stats") {
+    else if (d.type === "realx-gesture") {
+      const names = { Closed_Fist: "fist", Thumb_Up: "thumb up", Victory: "V sign", Open_Palm: "open palm" };
+      if (names[d.gesture] && typeof d.micMuted === "boolean")
+        $("gestureLast").textContent = `Last: ${names[d.gesture]}${d.gesture === "Closed_Fist" ? (d.micMuted ? " (microphone muted)" : " (microphone on)") : ""}.`;
+    } else if (d.type === "realx-stats") {
       const s = parseStats(d);
       if (s) { lastStats = s; lastStatsAt = performance.now(); renderStudio(); }
     }
