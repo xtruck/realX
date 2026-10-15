@@ -21,9 +21,10 @@ const FROZEN_MS = 3000;   // no new camera frame for this long, with the page vi
  * base       URL prefix for /mp/wasm and /mp/models (same origin)
  * video      an existing <video> to show the camera in (a preview), or omitted for a hidden one
  * onFrame    (message, info) called with each packed body message
+ * onHands    (hands, now) once per NEW hand-model result (hands: [{ image, world, label, score }], maybe empty); for gestures
  * onStatus   (state, detail) state: camera | models | running | error | stopped
  */
-export async function startTracker({ solver, mirror = true, legs = "auto", desk = false, delegate = "auto", base = "", video = null, deviceId = null, quality = "balanced", onFrame, onStatus = () => {} }) {
+export async function startTracker({ solver, mirror = true, legs = "auto", desk = false, delegate = "auto", base = "", video = null, deviceId = null, quality = "balanced", onFrame, onHands = null, onStatus = () => {} }) {
   const preset = qualityOf(quality);
   const status = (state, detail = "") => onStatus(state, detail);
   let stopped = false;
@@ -170,6 +171,7 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
       aspect,
     } : null;
 
+    if (onHands && plan.hands && handR) { try { onHands(hands, now); } catch (e) { /* a gesture bug must not stop tracking */ } }
     const assigned = assignHands(hands, poseImage, { aspect });
     const solved = solver.solve({ pose: poseWorld ? { world: poseWorld } : null, hands: assigned, face });
     stats.diag = diagnose({ face, poseWorld, hands, assigned, solved, poseImage });
