@@ -239,3 +239,95 @@ class FaceTracker:
                 )
             )
         return out
+
+
+# --- offline gap filling -------------------------------------------------------
+# Only for clips where past AND future frames are known (never the live tracker).
+# FaceTracker above is untouched; this is a separate pass over finished results.
+
+
+@dataclass
+class InterpolatedFace(Face):
+    """A face synthesised between two real detections of the same track.
+
+    It is never a detection: `interpolated` is always True, `predicted` stays False
+    (that flag means live extrapolation) and the score is the weaker of the two ends.
+    """
+
+    interpolated: bool = True
+
+
+def is_interpolated(face: Face) -> bool:
+    return bool(getattr(face, "interpolated", False))
+
+
+def fill_track_gaps(
+    frames: list[list[Face]],
+    max_gap: int = 5,
+    max_size_ratio: float = 1.5,
+    max_shift: float = 1.5,
+    max_overlap: float = 0.2,
+) -> list[list[Face]]:
+    """Linearly interpolate short gaps in each track of a finished clip.
+
+    `frames[i]` holds the faces of frame i (each with a `track_id`). For every track,
+    a run of 1..`max_gap` frames between two real detections is filled with
+    `InterpolatedFace` boxes (and landmarks when both ends have the same shape).
+    A gap is left alone when:
+      * the two ends differ in size by more than `max_size_ratio` (long side ratio),
+      * their centres are further apart than `max_shift` * mean box size,
+      * any filled box would overlap (IoU > `max_overlap`) a different face in that frame.
+    Faces with `predicted=True` or already interpolated are not used as ends; a live
+    prediction inside a bridged gap is replaced by the interpolated box.
+
+    Returns new per-frame lists; the input lists and Face objects are not modified
+    (untouched faces are shared by reference). Faces without a track id are kept.
+    """
+    if max_gap < 1:
+        return [list(f) for f in frames]
+    out = [list(f) for f in frames]
+
+    anchors: dict[int, list[tuple[int, Face]]] = {}
+    for i, faces in enumerate(frames):
+        for f in faces:
+            if f.track_id is not None and not f.predicted and not is_interpolated(f):
+                anchors.setdefault(f.track_id, []).append((i, f))
+
+    for tid, seq in anchors.items():
+        for (i, a), (j, b) in zip(seq, seq[1:]):
+            gap = j - i - 1
+            if gap < 1 or gap > max_gap:
+                continue
+            sa, sb = _size(a.bbox), _size(b.bbox)
+            if min(sa, sb) <= 0 or max(sa, sb) / min(sa, sb) > max_size_ratio:
+                continue
+            if np.linalg.norm(_center(a.bbox) - _center(b.bbox)) > max_shift * (sa + sb) / 2:
+                continue
+            lm = (
+                a.landmarks is not None
+                and b.landmarks is not None
+                and a.landmarks.shape == b.landmarks.shape
+            )
+            made = []
+            for k in range(i + 1, j):
+                t = (k - i) / (j - i)
+                box = (1 - t) * np.asarray(a.bbox, float) + t * np.asarray(b.bbox, float)
+                if any(iou(box, o.bbox) > max_overlap for o in frames[k] if o.track_id != tid):
+                    made = []
+                    break
+                made.append(
+                    (
+                        k,
+                        InterpolatedFace(
+                            bbox=box,
+                            landmarks=(1 - t) * a.landmarks + t * b.landmarks if lm else None,
+                            score=min(a.score, b.score),
+                            track_id=tid,
+                        ),
+                    )
+                )
+            for k, face in made:
+                # drop a live prediction of this track inside the gap
+                out[k] = [f for f in out[k] if f.track_id != tid]
+                out[k].append(face)
+    return out
