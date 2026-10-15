@@ -13,6 +13,7 @@ and the first page load swaps the query form for the cookie and drops it from th
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import hmac
 import json
@@ -580,6 +581,42 @@ def _asset(name: str) -> bytes:
     return resources.files("realx.web").joinpath(name).read_bytes()
 
 
+_GZIP_CACHE: dict[str, bytes] = {}
+_GZIP_LOCK = threading.Lock()
+
+
+def _gzip_asset(name: str) -> bytes:
+    """The gzipped bytes of a bundled static asset, compressed once per process (assets never change while running)."""
+    packed = _GZIP_CACHE.get(name)
+    if packed is None:
+        packed = gzip.compress(_asset(name), compresslevel=9, mtime=0)
+        with _GZIP_LOCK:
+            packed = _GZIP_CACHE.setdefault(name, packed)
+    return packed
+
+
+def _accepts_gzip(header: str | None) -> bool:
+    """True when an Accept-Encoding header allows gzip (explicitly or via *, and not with q=0)."""
+    allowed = None
+    for part in (header or "").split(","):
+        name, _, params = part.strip().partition(";")
+        name = name.strip().lower()
+        if name not in ("gzip", "x-gzip", "*"):
+            continue
+        q = 1.0
+        params = params.strip().lower()
+        if params.startswith("q="):
+            try:
+                q = float(params[2:])
+            except ValueError:
+                q = 0.0
+        if name != "*" or allowed is None:
+            allowed = q > 0
+        if name != "*":
+            break
+    return bool(allowed)
+
+
 class _BoundedServer(ThreadingHTTPServer):
     """Caps simultaneous connections so streams or slow clients cannot exhaust threads."""
 
@@ -668,10 +705,31 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
         def log_message(self, *args) -> None:  # quiet
             pass
 
-        def _headers(self, content_type: str, length: int | None = None, cache: bool = True, max_age: int | None = None) -> None:
+        def _static(self, name: str, content_type: str, extra: tuple[tuple[str, str], ...] = ()) -> None:
+            """Send a bundled text asset, gzipped when the client accepts it. Same headers either way."""
+            gz = _accepts_gzip(self.headers.get("Accept-Encoding"))
+            body = _gzip_asset(name) if gz else _asset(name)
+            self.send_response(200)
+            self._headers(content_type, len(body), encoding="gzip" if gz else None)
+            for key, value in extra:
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _headers(
+            self,
+            content_type: str,
+            length: int | None = None,
+            cache: bool = True,
+            max_age: int | None = None,
+            encoding: str | None = None,
+        ) -> None:
             self.send_header("Content-Type", content_type)
             if length is not None:
                 self.send_header("Content-Length", str(length))
+            if encoding:
+                self.send_header("Content-Encoding", encoding)
+                self.send_header("Vary", "Accept-Encoding")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             self.send_header("Referrer-Policy", "no-referrer")
@@ -778,46 +836,39 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             if source == "query" and path in ("/", "/avatar", "/dock"):  # first visit from a link (browser or OBS): token into a cookie
                 return self._adopt_token(path)
             if path == "/":
-                page = _asset("index.html")
-                self.send_response(200)
-                self._headers("text/html; charset=utf-8", len(page))
-                self.send_header("Content-Security-Policy", CSP)
-                self.send_header("Permissions-Policy", permissions_for(urlparse(self.path).query))
-                self.send_header("X-Frame-Options", "DENY")
-                self.end_headers()
-                self.wfile.write(page)
+                self._static(
+                    "index.html",
+                    "text/html; charset=utf-8",
+                    (
+                        ("Content-Security-Policy", CSP),
+                        ("Permissions-Policy", permissions_for(urlparse(self.path).query)),
+                        ("X-Frame-Options", "DENY"),
+                    ),
+                )
             elif path == "/app.js":
-                js = _asset("app.js")
-                self.send_response(200)
-                self._headers("text/javascript; charset=utf-8", len(js))
-                self.end_headers()
-                self.wfile.write(js)
+                self._static("app.js", "text/javascript; charset=utf-8")
             elif path == "/avatar":
-                page = _asset("avatar.html")
-                self.send_response(200)
-                self._headers("text/html; charset=utf-8", len(page))
-                self.send_header("Content-Security-Policy", avatar_csp(port_getter()))
-                self.send_header("Permissions-Policy", permissions_for(urlparse(self.path).query))
-                self.send_header("X-Frame-Options", "SAMEORIGIN")
-                self.end_headers()
-                self.wfile.write(page)
-            elif path in ("/dock", "/dock.js", "/dock.css"):
-                name = "dock.html" if path == "/dock" else path[1:]
-                body = _asset(name)
-                kind = {"/dock": "text/html; charset=utf-8", "/dock.js": "text/javascript; charset=utf-8", "/dock.css": "text/css; charset=utf-8"}[path]
-                self.send_response(200)
-                self._headers(kind, len(body))
-                if path == "/dock":
-                    self.send_header("Content-Security-Policy", dock_csp(port_getter()))
-                    self.send_header("X-Frame-Options", "DENY")
-                self.end_headers()
-                self.wfile.write(body)
+                self._static(
+                    "avatar.html",
+                    "text/html; charset=utf-8",
+                    (
+                        ("Content-Security-Policy", avatar_csp(port_getter())),
+                        ("Permissions-Policy", permissions_for(urlparse(self.path).query)),
+                        ("X-Frame-Options", "SAMEORIGIN"),
+                    ),
+                )
+            elif path == "/dock":
+                self._static(
+                    "dock.html",
+                    "text/html; charset=utf-8",
+                    (("Content-Security-Policy", dock_csp(port_getter())), ("X-Frame-Options", "DENY")),
+                )
+            elif path == "/dock.js":
+                self._static("dock.js", "text/javascript; charset=utf-8")
+            elif path == "/dock.css":
+                self._static("dock.css", "text/css; charset=utf-8")
             elif path == "/avatar.bundle.js":
-                js = _asset("avatar.bundle.js")
-                self.send_response(200)
-                self._headers("text/javascript; charset=utf-8", len(js))
-                self.end_headers()
-                self.wfile.write(js)
+                self._static("avatar.bundle.js", "text/javascript; charset=utf-8")
             elif path == BACKGROUND_THUMB_PATH:
                 thumb = engine.background_thumb()
                 if thumb is None:

@@ -15,7 +15,6 @@
     "three": "0.178.0"
   },
   "devDependencies": {
-    "esbuild": "0.25.5",
-    "rea-agents": "^6.4.0"
+    "esbuild": "0.25.5"
   }
 }

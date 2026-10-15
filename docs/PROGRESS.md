@@ -82,6 +82,8 @@ each step so a resumed session knows exactly where to continue.
       a full-suite run was not repeated after this last change.
 - [ ] Not verified: any of the above on a real person, a real microphone or a discrete GPU. Browser tracking
       benchmark runs carried a contention warning (other Chrome processes), so they are not representative.
+- [x] Static pages and scripts (`/`, `/app.js`, `/avatar`, `/avatar.bundle.js`) are served gzipped when the
+      request says `Accept-Encoding: gzip`, compressed once per process; API, MJPEG and WebSocket are not.
 
 - [x] OBS control dock (`/dock`): voice preset, mic mute, background, blur strength, status lights.
       Adds blur (3-151) to the config and `/api/dock` for mute and voice; live voice change is still not built.
