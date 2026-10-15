@@ -79,6 +79,12 @@ adopting anything.
 - Ideas only (licence or hardware): SMPL-X family, WHAM, 4DHumans, MotionBERT (licence unchecked),
   and every proprietary app (Move AI, DeepMotion, Rokoko Vision, Animaze, Warudo).
 
+- Offline gap filling (FaceFusion study, idea 5): `realx.tracking.fill_track_gaps` linearly
+  interpolates 1..5 missed frames of a track in a finished clip, marks them `InterpolatedFace`
+  (`interpolated=True`, never a detection) and refuses to bridge size jumps, big position jumps or
+  boxes that overlap another face. Not wired to any entry point yet (no offline clip pipeline
+  exists); the live `FaceTracker` is untouched. Written from scratch.
+
 ## Rejected or deferred
 
 - Cloud GPU backend, accounts, billing: premature before the avatar tier has users.
