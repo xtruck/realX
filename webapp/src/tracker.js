@@ -6,6 +6,7 @@
 // calls that would break that.
 import { FaceLandmarker, FilesetResolver, HandLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { assignHands } from "./assign.js";
+import { mouthCover } from "./utils/audioLipSync.js";
 import { BodyFilter, RootTracker, Stagger, packBody, qualityOf } from "./body.js";
 import { DeviceSupervisor } from "./recover.js";
 
@@ -172,6 +173,7 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
     } : null;
 
     if (onHands && plan.hands && handR) { try { onHands(hands, now); } catch (e) { /* a gesture bug must not stop tracking */ } }
+    stats.mouthCover = mouthCover(face ? face.landmarks : null, hands);   // landmark numbers only: is a hand on the mouth?
     const assigned = assignHands(hands, poseImage, { aspect });
     const solved = solver.solve({ pose: poseWorld ? { world: poseWorld } : null, hands: assigned, face });
     stats.diag = diagnose({ face, poseWorld, hands, assigned, solved, poseImage });

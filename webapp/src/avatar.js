@@ -11,6 +11,7 @@ import { BONES, EXPRESSIONS } from "./skeleton.js";
 import { applyExpressions } from "./express.js";
 import { startMic } from "./mic.js";
 import { GestureController } from "./utils/gestureRecognizer.js";
+import { FaceConfidence, withAmplitudeFloor } from "./utils/audioLipSync.js";
 import { DynamicLighting, makeCanvasSampler } from "./utils/dynamicLighting.js";
 import { DeviceSupervisor } from "./recover.js";
 import { DelayLine, MouthBlender, MouthFromAudio, avSyncOffset } from "./speech.js";
@@ -229,7 +230,7 @@ async function beginTracking() {
     onHands: (hands, now) => { const hit = gestures.feed(hands, now); if (hit) runGestureAction(hit); },
     onFrame: (msg, info) => {
       probe.tracking = { ...probe.tracking, frames: info.frames, fps: Math.round(info.fps), ms: info.ms, hz: info.hz, diag: info.diag, delegates: info.delegates };
-      mixMouth(msg, info.latencyMs, performance.now());
+      mixMouth(msg, info.latencyMs, performance.now(), info.mouthCover);
       onBody(msg);
       const now = performance.now();
       if (PREVIEW && note && info.diag && now - lastReadout > 400) {   // a live account of what the models see, for the person being tracked
@@ -286,7 +287,7 @@ async function beginMic() {
       const m = await startMic({
         deviceId: MIC === "default" ? undefined : MIC,
         onFeatures: (f) => {
-          lastAudio = audioMouth.update(f, f.t);
+          lastAudio = withAmplitudeFloor(audioMouth.update(f, f.t), f.levelDb);
           micInfo = { active: true, speaking: lastAudio.speaking, levelDb: f.levelDb, latencyMs: mic ? mic.latencyMs : null };
           probe.mic = micInfo;
         },
@@ -310,15 +311,17 @@ async function beginMic() {
 
 // Tracked mouth when the face is seen, speech estimate when it is not, cross-faded; the faster of the two
 // streams is delayed so the mouth and the sound line up.
-function mixMouth(msg, videoLatencyMs, now) {
+const faceConfidence = new FaceConfidence();
+function mixMouth(msg, videoLatencyMs, now, cover = 0) {
   if (!mic || !micInfo) return;
   const tracked = Object.fromEntries(MOUTH.map((k) => [k, msg.e[MOUTH_AT[k]]]));
   const sync = avSyncOffset({ audioLatencyMs: mic.latencyMs, videoLatencyMs: Number.isFinite(videoLatencyMs) ? videoLatencyMs : 0 });
   trackedLine.push(tracked, now);
   audioLine.push(lastAudio, now);
-  const mix = blender.update(trackedLine.read(now, sync.delayVideoMs) ?? tracked, hasFlag(msg.f, "face") ? 1 : 0, audioLine.read(now, sync.delayAudioMs) ?? lastAudio, now);
+  const confidence = faceConfidence.update({ faceSeen: hasFlag(msg.f, "face"), cover, trackedAa: tracked.aa, audio: lastAudio }, now);
+  const mix = blender.update(trackedLine.read(now, sync.delayVideoMs) ?? tracked, confidence, audioLine.read(now, sync.delayAudioMs) ?? lastAudio, now);
   for (const k of MOUTH) msg.e[MOUTH_AT[k]] = Math.round(Math.min(1, Math.max(0, mix[k])) * 1000) / 1000;
-  probe.mouth = { ...Object.fromEntries(MOUTH.map((k) => [k, msg.e[MOUTH_AT[k]]])), source: mix.source };
+  probe.mouth = { ...Object.fromEntries(MOUTH.map((k) => [k, msg.e[MOUTH_AT[k]]])), source: mix.source, confidence: Math.round(confidence * 100) / 100 };
   avSync =Number.isFinite(videoLatencyMs) ? sync.offsetMs : null;
 }
 
