@@ -4,8 +4,14 @@ Written when the owner left the work laptop. Read this first, then `PROGRESS.md`
 
 ## Where the code is
 
-Branch `handoff-2026-10-14` on GitHub holds everything. `main` on GitHub is **behind it** on purpose: the last
-changes are not fully tested, and the rule is that `main` only receives work whose tests all pass.
+**Update 2026-10-15:** the full suite was run and passed (Python 613 passed, 2 POSIX-only skips, Chromium tests
+included; node 95), so `main` was fast-forwarded to `c4151a3` and is the same as branch `handoff-2026-10-14`.
+Running the browser tests found a real bug the node tests could not see: `DeviceSupervisor` called `setTimeout` as a
+method of itself, which a browser rejects ("Illegal invocation"), so a lost camera or microphone never reconnected.
+Fixed, with a node test that imitates the browser's rule. The rest of this file describes the state before that run.
+
+Branch `handoff-2026-10-14` on GitHub held everything while `main` was behind on purpose: the rule is that `main`
+only receives work whose tests all pass.
 
 ## Decisions the owner made
 
