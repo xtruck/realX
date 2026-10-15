@@ -163,7 +163,12 @@ EMOTES = ("wave", "happy", "surprised", "bow")
 
 
 def rig_message(
-    seq: int, timestamp: float, frame_size: tuple[int, int], faces: list[dict], emote: dict | None = None
+    seq: int,
+    timestamp: float,
+    frame_size: tuple[int, int],
+    faces: list[dict],
+    emote: dict | None = None,
+    background: dict | None = None,
 ) -> dict:
     msg = {
         "v": RIG_VERSION,
@@ -175,6 +180,8 @@ def rig_message(
     }
     if emote:
         msg["emote"] = emote  # {"name", "id", "age"}: a button the streamer pressed, not tracked data
+    if background:
+        msg["background"] = background  # {"url"}: a tiny same-origin picture of the active background photo, for lighting
     return msg
 
 

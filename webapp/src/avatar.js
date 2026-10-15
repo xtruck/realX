@@ -78,16 +78,21 @@ sun.position.set(0.8, 1.2, 1.5);
 const ambient = new THREE.AmbientLight(0xffffff, 1.0);
 scene.add(sun, ambient);
 
-// Optional (?light=auto&lightimg=/path): tint and dim the light after a same-origin background picture. The camera
-// is never sampled (see utils/dynamicLighting.js). Without it the lights stay fixed, as before.
-let lighting = null;
-{
-  const src = params.get("lightimg") || "";
-  if (params.get("light") === "auto" && /^\/(?!\/)[\w./%-]{1,200}$/.test(src)) {
-    const img = new Image();
-    img.src = src;   // same origin only (img-src 'self'), so the canvas is never tainted
-    lighting = new DynamicLighting({ ambient, sun, sample: makeCanvasSampler(img) });
-  }
+// Dynamic lighting follows the background photo chosen in the control room. The server names it in the rig
+// stream as a tiny same-origin picture (see followBackground); with no photo in use the light eases back to neutral.
+// The camera is never sampled (see utils/dynamicLighting.js). ?light=off keeps the lights fixed.
+const lighting = params.get("light") === "off" ? null : new DynamicLighting({ ambient, sun, sample: null });
+let lightUrl = null;
+const LIGHT_URL = /^\/avatar\/background\.png\?v=\d{1,9}$/;
+function followBackground(bg) {
+  const url = bg && typeof bg.url === "string" && LIGHT_URL.test(bg.url) ? bg.url : null;
+  if (!lighting || url === lightUrl) return;
+  lightUrl = url;
+  probe.lightUrl = url;
+  if (!url) return lighting.setSample(null);
+  const img = new Image();
+  img.src = url;   // same origin only (img-src 'self'), so the canvas is never tainted
+  lighting.setSample(makeCanvasSampler(img));
 }
 
 function resize() {
@@ -119,6 +124,7 @@ function startEmote(name) {
 function onRig(msg) {
   probe.rigMessages++;
   const face = msg.faces && msg.faces[0];
+  followBackground(msg.background);
   if (msg.emote && msg.emote.id !== lastEmoteId) {
     if (msg.emote.age < 2.5) startEmote(msg.emote.name); // never replay an old press after a reconnect
     lastEmoteId = msg.emote.id;

@@ -81,3 +81,19 @@ test("the sampler draws the source into a 16x16 canvas and returns its bytes; a 
   ctx.drawImage = () => { throw new Error("tainted"); };
   assert.equal(sample(), null);
 });
+
+test("changing the picture switches the target; removing it eases back to the starting light", () => {
+  const ambient = light(1);
+  const L = new DynamicLighting({ ambient, sample: null, tau: 0.2 });
+  for (let t = 0; t < 1000; t += 16) L.update(t, 0.016);
+  near(ambient.intensity, 1, 1e-9);   // no picture: nothing changes
+  L.setSample(() => px([30, 30, 200, 255]));
+  for (let t = 1000; t < 4000; t += 16) L.update(t, 0.016);
+  assert.ok(ambient.intensity < 0.8 && ambient.color.b > ambient.color.r, "dim and blue");
+  L.setSample(() => px([250, 250, 250, 255]));
+  for (let t = 4000; t < 7000; t += 16) L.update(t, 0.016);
+  assert.ok(ambient.intensity > 1.0, "bright picture");
+  L.setSample(null);
+  for (let t = 7000; t < 10000; t += 16) L.update(t, 0.016);
+  near(ambient.intensity, 1, 0.01); near(ambient.color.r, 1, 0.01); near(ambient.color.b, 1, 0.01);
+});
