@@ -11,6 +11,7 @@ import { BONES, EXPRESSIONS } from "./skeleton.js";
 import { applyExpressions } from "./express.js";
 import { startMic } from "./mic.js";
 import { GestureController } from "./utils/gestureRecognizer.js";
+import { DynamicLighting, makeCanvasSampler } from "./utils/dynamicLighting.js";
 import { DeviceSupervisor } from "./recover.js";
 import { DelayLine, MouthBlender, MouthFromAudio, avSyncOffset } from "./speech.js";
 
@@ -74,7 +75,20 @@ camera.position.set(0, FRAMING.y + 0.05, FRAMING.dist);
 camera.lookAt(0, FRAMING.y, 0);
 const sun = new THREE.DirectionalLight(0xffffff, 1.5);
 sun.position.set(0.8, 1.2, 1.5);
-scene.add(sun, new THREE.AmbientLight(0xffffff, 1.0));
+const ambient = new THREE.AmbientLight(0xffffff, 1.0);
+scene.add(sun, ambient);
+
+// Optional (?light=auto&lightimg=/path): tint and dim the light after a same-origin background picture. The camera
+// is never sampled (see utils/dynamicLighting.js). Without it the lights stay fixed, as before.
+let lighting = null;
+{
+  const src = params.get("lightimg") || "";
+  if (params.get("light") === "auto" && /^\/(?!\/)[\w./%-]{1,200}$/.test(src)) {
+    const img = new Image();
+    img.src = src;   // same origin only (img-src 'self'), so the canvas is never tainted
+    lighting = new DynamicLighting({ ambient, sun, sample: makeCanvasSampler(img) });
+  }
+}
 
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -434,6 +448,7 @@ function frame() {
     pose(t, dt);
     vrm.update(dt);
   }
+  if (lighting) lighting.update(performance.now(), dt);
   renderer.render(scene, camera);
   probe.frames++;
 }
