@@ -51,16 +51,31 @@ figures that cover more than half the screen.
 
 ## Options on the address
 
-Add them after `/avatar?`, separated by `&`:
+Add them after `/avatar?`, separated by `&`. A value that is not listed behaves like the default. The
+control room builds its own tracking address (`track=1&publish=1&preview=1&...`); for a plain OBS Browser
+Source you normally need only the token and, if you like, `outfit`, `frame`, `name` and `tagline`.
 
-| Option | Effect |
-|---|---|
-| `outfit=ocean` | coral (default), ocean, sunny, berry, forest |
-| `frame=full` | show the whole body instead of the upper body |
-| `mirror=0` | do not mirror: the character copies you as the camera sees you |
-| `name=Mika&tagline=Live+now` | a name bar at the bottom |
+| Parameter | Values | Default | What it does |
+|---|---|---|---|
+| `mirror` | `0` | on (any other value or absent) | `0` turns the selfie mirror off: the character copies you as the camera sees you |
+| `track` | `1` | off | runs this page's own camera and tracking and drives the character from it |
+| `publish` | `1` | off | with `track=1`, also shares the result with other pages (an OBS Browser Source); ignored without `track=1` |
+| `preview` | `1` | off | with `track=1`, shows the camera picture and a status line in a corner; ignored without `track=1` |
+| `view` | `desk` | full view | `desk` is seated at a desk: only the upper body is followed, legs are forced off, and the framing is wider |
+| `legs` | `auto`, `off`, `on` | `auto` | `auto` follows the legs once they stay clearly visible for about 0.6 s; ignored (always off) when `view=desk` |
+| `delegate` | `auto`, `cpu`, `gpu` | `auto` | which processor runs the tracking models: `auto` tries the GPU and falls back to the CPU, the others force one |
+| `cam` | a camera's deviceId | the browser's default camera | the camera to track from (up to 256 characters); used with `track=1` |
+| `quality` | `low`, `balanced`, `high` | `balanced` | tracking camera size and time per frame: low 320x240 and 25 ms, balanced 640x480 and 40 ms, high 1280x720 and 60 ms |
+| `mic` | a microphone's deviceId, or `default` | no microphone | turns on the microphone for mouth movement (up to 256 characters); `default` uses the system one. |
+| `frame` | `full` | upper body | `full` shows the whole body; `view=desk` uses its own framing and ignores it |
+| `outfit` | `coral`, `ocean`, `sunny`, `berry`, `forest` | `coral` | the character's clothes; skin and face never change |
+| `name` | text | none | a name bar at the bottom (up to 40 characters; control characters are dropped) |
+| `tagline` | text | none | a second line for the name bar (up to 80 characters; control characters are dropped) |
+| `badge` | `off` | label shown | `off` hides the **Virtual character** label on a plain OBS page only; it is ignored when `track=1` |
+| `light` | `off` | follows the background photo | `off` keeps the lighting fixed instead of following the background photo chosen in the control room |
 
-The camera, microphone, quality and legs settings belong to the control room; set them there.
+`name` and `tagline` need URL encoding for spaces, for example `name=Mika&tagline=Live+now`. The control
+room sets camera, microphone, quality and legs for you.
 
 ## Check that it works
 
