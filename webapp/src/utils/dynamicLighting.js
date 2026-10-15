@@ -67,17 +67,24 @@ export class DynamicLighting {
   constructor({ ambient, sun = null, sample, intervalMs = 500, tau = 0.8, minIntensity = MIN_INTENSITY, maxIntensity = MAX_INTENSITY, sunShare = 0.75 }) {
     Object.assign(this, { ambient, sun, sample, intervalMs, tau, minIntensity, maxIntensity, sunShare });
     this.sunBase = sun ? sun.intensity : 0;
+    this.neutral = { tint: { r: 1, g: 1, b: 1 }, intensity: ambient.intensity };   // the light as first set up
     this.enabled = true;
     this.lastSample = -Infinity;
-    this.target = { tint: { r: 1, g: 1, b: 1 }, intensity: ambient.intensity };
+    this.target = this.neutral;
     this.shown = { r: ambient.color.r, g: ambient.color.g, b: ambient.color.b, intensity: ambient.intensity };
   }
   setEnabled(on) { this.enabled = !!on; }
+  /** Follow a new picture (a sampler function), or none (null): the light then eases back to where it started. */
+  setSample(sample) {
+    this.sample = sample;
+    this.lastSample = -Infinity;
+    if (!sample) this.target = this.neutral;
+  }
   update(nowMs, dt) {
     if (!this.enabled) return;
     if (nowMs - this.lastSample >= this.intervalMs) {
       this.lastSample = nowMs;
-      const avg = averageColor(this.sample() ?? []);
+      const avg = this.sample ? averageColor(this.sample() ?? []) : null;
       if (avg) this.target = { tint: tintOf(avg), intensity: intensityOf(avg.luma, { min: this.minIntensity, max: this.maxIntensity }) };
     }
     const k = smoothing(dt, this.tau), s = this.shown, t = this.target;

@@ -48,6 +48,8 @@ log = rlog.get_logger("server")
 # "body": the browser tracks the camera (full body) and publishes it; the Python side releases the camera
 MODES = ("avatar", "character", "boxes", "original", "body")
 BACKGROUNDS = ("off", "blur", "photo")
+BACKGROUND_THUMB_PATH = "/avatar/background.png"
+BACKGROUND_THUMB_SIDE = 32  # px on the long edge
 MAX_JSON = 4096
 MAX_AVATAR_BYTES = 32 * 1024 * 1024
 MAX_CONNECTIONS = 16
@@ -152,6 +154,8 @@ class Engine:
         self._thread: threading.Thread | None = None
         self._config = {"source": source, "mode": mode, "smoothing": smoothing, "background": "off"}
         self._bg_photo: np.ndarray | None = None  # kept in memory only, never written to disk
+        self._bg_version = 0  # counts photo changes; part of the thumbnail URL so a new photo is fetched anew
+        self._bg_thumb: tuple[int, bytes] | None = None
         self._config_version = 0
         self._open_source: str | None = None
         self._ribbon: deque[int] = deque(maxlen=120)  # 0 lost, 1 detected, 2 predicted
@@ -226,6 +230,7 @@ class Engine:
         """Use this RGB photo behind the person. Rebuilds the pipeline to pick it up."""
         with self._lock:
             self._bg_photo = photo
+            self._bg_version += 1
             self._config_version += 1
 
     def stats(self) -> dict:
@@ -319,8 +324,35 @@ class Engine:
             self._jpeg = None  # no stale picture for the MJPEG stream
             self._seq += 1
             self._rev += 1
-            self._rig = json.dumps(rig_message(self._seq, now, (0, 0), [], self._emote_state()))
+            self._rig = json.dumps(rig_message(self._seq, now, (0, 0), [], self._emote_state(), self._background_state()))
             self._cond.notify_all()
+
+    def _background_state(self) -> dict | None:  # caller holds the lock (or is the only writer)
+        """Tells the avatar page which photo is behind the person, only while that photo is in use."""
+        if self._config["background"] != "photo" or self._bg_photo is None:
+            return None
+        return {"url": f"{BACKGROUND_THUMB_PATH}?v={self._bg_version}"}
+
+    def background_thumb(self) -> bytes | None:
+        """PNG of the active photo shrunk to {BACKGROUND_THUMB_SIDE} px: all the lighting needs, never the photo itself."""
+        with self._lock:
+            photo, version = (self._bg_photo, self._bg_version) if self._config["background"] == "photo" else (None, 0)
+            cached = self._bg_thumb
+        if photo is None:
+            return None
+        if cached and cached[0] == version:
+            return cached[1]
+        import cv2
+
+        scale = BACKGROUND_THUMB_SIDE / max(photo.shape[:2])
+        small = cv2.resize(photo, None, fx=min(1.0, scale), fy=min(1.0, scale), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".png", cv2.cvtColor(small, cv2.COLOR_RGB2BGR))
+        if not ok:
+            return None
+        data = buf.tobytes()
+        with self._lock:
+            self._bg_thumb = (version, data)
+        return data
 
     def _emote_state(self) -> dict | None:  # caller holds the lock (or is the only writer)
         if not self._emote:
@@ -468,7 +500,7 @@ class Engine:
                         self._seq += 1
                         self._rev += 1
                         em = self._emote_state()
-                        self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces, em))
+                        self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces, em, self._background_state()))
                         self._cond.notify_all()
                 except (SourceError, StopIteration) as exc:
                     # camera unplugged or busy: say so, drop the dead generator, retry
@@ -726,6 +758,14 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                 self._headers("text/javascript; charset=utf-8", len(js))
                 self.end_headers()
                 self.wfile.write(js)
+            elif path == BACKGROUND_THUMB_PATH:
+                thumb = engine.background_thumb()
+                if thumb is None:
+                    return self._deny(404, "no background photo is in use")
+                self.send_response(200)
+                self._headers("image/png", len(thumb))
+                self.end_headers()
+                self.wfile.write(thumb)
             elif path == "/avatar/model.vrm":
                 self.send_response(200)
                 self._headers("model/gltf-binary", len(avatar))
