@@ -28,6 +28,19 @@ await build({
 copyFileSync("src/dock/dock.html", "../src/realx/web/dock.html");
 copyFileSync("src/dock/dock.css", "../src/realx/web/dock.css");
 
+// The face-mesh prototype page (step S1): its script (MediaPipe's face landmarker plus the canonical mesh) and its page.
+await build({
+  entryPoints: ["src/facemesh/page.js"],
+  bundle: true,
+  minify: true,
+  format: "iife",
+  target: ["chrome110", "firefox110", "safari16"],
+  legalComments: "none",
+  outfile: "../src/realx/web/facemesh.bundle.js",
+  logLevel: "info",
+});
+copyFileSync("src/facemesh/facemesh.html", "../src/realx/web/facemesh.html");
+
 // onnxruntime-web's runtime (the all-in-one "jsep" build, which runs WebGPU and WebAssembly), copied from the
 // installed package so a version bump is one `npm run build` away. Served from /ort/ by the local server.
 mkdirSync("../src/realx/web/ort", { recursive: true });

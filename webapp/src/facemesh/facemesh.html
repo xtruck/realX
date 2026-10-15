@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>realX face mesh (prototype)</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; min-height: 100%; background: #0c141b; color: #e8f0f5; font: 14px/1.4 system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 12px; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  p.note { margin: 0 0 10px; opacity: .8; font-size: 12px; }
+  #stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; }
+  #stage.mirror { transform: scaleX(-1); }
+  #wrap { position: relative; }
+  #badge { position: absolute; left: 10px; bottom: 10px; background: rgba(12, 20, 27, .75); color: #fff; font-size: 12px; padding: 4px 10px; border-radius: 999px; pointer-events: none; }
+  #cam, #face, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; align-items: center; }
+  button { font: inherit; color: inherit; background: #1d2b36; border: 1px solid #3a4c5a; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button[aria-pressed="true"] { background: #1f5b4d; border-color: #38a68c; }
+  button:disabled { opacity: .5; cursor: default; }
+  #hud { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; margin: 8px 0; }
+  #hud div { background: #14212b; border-radius: 8px; padding: 6px 10px; }
+  #hud b { display: block; font-size: 18px; }
+  #gate { font-weight: 600; } #gate.ok { color: #5fe0a8; } #gate.bad { color: #ff8a7a; }
+  #status, #measure { min-height: 1.4em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Face mesh prototype (steps S1-S2)</h1>
+  <p class="note">Shows the 468-point face mesh over your own camera picture, and can draw a photo of you on it. The camera picture
+    is never read back, copied, stored or sent: it is shown here, given to the face model, and, while "Colour match" is above 0,
+    to the graphics card only, so the photo takes your face's colour and light. Your photo stays in this page too: it is not
+    uploaded or saved. Use a photo of yourself only; a "Virtual face" label stays on screen while a photo is drawn.</p>
+  <div id="wrap">
+    <div id="stage">
+      <video id="cam" muted playsinline aria-label="Your camera"></video>
+      <canvas id="face" aria-label="Your photo drawn on your face"></canvas>
+      <canvas id="overlay" aria-label="Face mesh drawn over your camera picture"></canvas>
+    </div>
+    <div id="badge" hidden>Virtual face: a photo of you is drawn on your live face (prototype)</div>
+  </div>
+  <div id="bar">
+    <button id="photoBtn" type="button">Choose my photo</button>
+    <button id="photoClear" type="button">Remove photo</button>
+    <input id="photoFile" type="file" accept="image/*" hidden>
+    <button id="keepFace" type="button" aria-pressed="true">Keep my eyes and mouth</button>
+    <label>Colour match <input id="match" type="range" min="0" max="100" value="100" step="5"> <span id="matchValue">100%</span></label>
+    <button id="wire" type="button" aria-pressed="true">Mesh lines</button>
+    <button id="points" type="button" aria-pressed="false">Points</button>
+    <button id="mirror" type="button" aria-pressed="true">Mirror</button>
+    <button id="go" type="button" disabled>Measure 10 s</button>
+    <span id="gate">measuring</span>
+  </div>
+  <div id="hud" role="status">
+    <div>frames per second<b id="fps">-</b></div>
+    <div>face found<b id="found">-</b></div>
+    <div>detection time<b id="ms">-</b></div>
+    <div>runs on<b id="delegate">-</b></div>
+  </div>
+  <p id="status" role="status"></p>
+  <p id="measure"></p>
+</main>
+<script src="/facemesh.bundle.js"></script>
+</body>
+</html>

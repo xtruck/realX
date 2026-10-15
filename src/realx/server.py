@@ -833,7 +833,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             if source is None:
                 return self._deny(401, "access token required")
             path = urlparse(self.path).path
-            if source == "query" and path in ("/", "/avatar", "/dock"):  # first visit from a link (browser or OBS): token into a cookie
+            if source == "query" and path in ("/", "/avatar", "/dock", "/facemesh"):  # first visit from a link (browser or OBS): token into a cookie
                 return self._adopt_token(path)
             if path == "/":
                 self._static(
@@ -857,6 +857,18 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                         ("X-Frame-Options", "SAMEORIGIN"),
                     ),
                 )
+            elif path == "/facemesh":  # face-mesh prototype (step S1): the camera, the face model and a wireframe, nothing else
+                self._static(
+                    "facemesh.html",
+                    "text/html; charset=utf-8",
+                    (
+                        ("Content-Security-Policy", avatar_csp(port_getter())),
+                        ("Permissions-Policy", PERMISSIONS),
+                        ("X-Frame-Options", "DENY"),
+                    ),
+                )
+            elif path == "/facemesh.bundle.js":
+                self._static("facemesh.bundle.js", "text/javascript; charset=utf-8")
             elif path == "/dock":
                 self._static(
                     "dock.html",
