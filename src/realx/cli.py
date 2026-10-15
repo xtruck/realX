@@ -162,6 +162,9 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--resolutions", default="320x240,640x480,1280x720", help="comma-separated WxH list")
     b.add_argument("--fps", type=float, default=30.0, help="rate at which frames are offered in the stream pass")
     b.add_argument("--stream-seconds", type=float, default=6.0, help="how long each resolution is streamed at --fps (default 6)")
+    b.add_argument("--mode", choices=("cold", "warm", "both"), default="warm",
+                   help="cold = clear caches before each cycle (first-run cost); warm = one untimed run, then timed cycles (default warm)")
+    b.add_argument("--cycles", type=int, default=3, help="timed cycles per resolution and mode, 1 to 50 (default 3)")
     b.add_argument("--background", action="store_true", help="include background replacement (needs the pphumanseg model)")
     b.add_argument("--seed", type=int, default=0)
     b.add_argument("--json", default=None, metavar="PATH", help="also write the full result as JSON")
