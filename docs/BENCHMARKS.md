@@ -254,3 +254,48 @@ over", not "after a reboot".
 
 No figures are quoted here: none have been measured for this feature yet. The tests use fake clocks and fake stages only and check
 the bookkeeping, not speed.
+
+## 8. DirectML A/B on the Intel UHD 620 (2026-10-15)
+
+Question (FACEFUSION-STUDY idea 1): does `onnxruntime-directml` speed up YuNet and PP-HumanSeg on this laptop?
+
+**Short answer: no. DirectML ties on PP-HumanSeg, is about 2x slower on YuNet, and costs 1 to 36 s of session creation. Do not add a DirectML default; no `runtime.py` change is proposed.**
+
+**Setup.** Same laptop as section 4 (i5-8365U, UHD 620, 7.8 GB RAM, Windows 11 22000, Python 3.14.6, OpenCV 5.0.0, numpy 2.5.4). Two venvs on D:, one with `onnxruntime` 1.31.0 (providers `Azure`, `CPU`), one with `onnxruntime-directml` 1.24.4 *instead of* it (providers `Dml`, `CPU`). `DmlExecutionProvider` was confirmed in `get_available_providers()`. Licence of `onnxruntime-directml` 1.24.4: MIT (package metadata). Models: the pinned YuNet 2023mar and PP-HumanSeg 2023mar from `realx models`.
+
+**The `realx bench` A/B cannot show a difference.** The bench stages call OpenCV (`cv2.dnn`, `stages/background.py:137`); nothing in `src/` runs a model through ONNX Runtime except the unused `SessionCache`. Four `realx bench --background --resolutions 640x480 --frames 90 --stream-seconds 8` runs (2 per venv, interleaved) confirm it, and all four carried the "CPU already 39-61% busy" warning, so none is representative:
+
+| venv | run | detect mean (p50) | bg_replace mean (p50) | stream pass |
+|---|---|---|---|---|
+| ORT 1.31 CPU | 1 | 30.8 (29.5) ms | 144.5 (140.3) ms | 51/240 delivered |
+| ORT 1.31 CPU | 2 | 29.0 (28.9) ms | 133.3 (130.9) ms | 49/240 |
+| ORT-DirectML 1.24.4 | 1 | 29.2 (27.8) ms | 134.9 (128.5) ms | 48/240 |
+| ORT-DirectML 1.24.4 | 2 | 29.8 (27.3) ms | 138.6 (127.7) ms | 42/240 |
+
+Differences are inside the run-to-run spread, as expected. (Side observation: with `--background` on a busy machine the full pipeline manages about 6 fps, 90% of it in `bg_replace`; the matte stage is the bottleneck, not detection.)
+
+**Direct ONNX Runtime micro-benchmark** (`ortbench.py`, kept outside the repo): one session per model, 10 warm-up then 100 timed `run()` calls on a fixed random input (YuNet 1x3x640x640, PP-HumanSeg 1x3x192x192), 3 interleaved rounds. A third configuration, CPU provider inside the 1.24.4 venv, separates the ORT version from the provider. Median ms per call (p95 in brackets); CPU load % before the round in the last column.
+
+| round | config | YuNet p50 (p95) | PP-HumanSeg p50 (p95) | CPU busy before |
+|---|---|---|---|---|
+| 1 | CPU, ORT 1.31 | 68.4 (181.8) | 40.7 (94.3) | 100% **contended** |
+| 1 | CPU, ORT 1.24.4 | 37.6 (149.0) | 16.0 (19.1) | 94% **contended** |
+| 1 | DirectML | 37.1 (60.1) | 13.2 (14.3) | 100% **contended** |
+| 2 | CPU, ORT 1.31 | 20.2 (31.8) | 15.8 (21.7) | 38% |
+| 2 | CPU, ORT 1.24.4 | 17.2 (22.0) | 13.7 (15.6) | 21% |
+| 2 | DirectML | 33.6 (35.0) | 14.7 (18.3) | 47% |
+| 3 | CPU, ORT 1.31 | 18.2 (27.5) | 15.2 (19.7) | 21% |
+| 3 | CPU, ORT 1.24.4 | 27.8 (65.8) | 18.1 (25.0) | 24% |
+| 3 | DirectML | 34.5 (57.6) | 13.7 (16.2) | 23% |
+
+Rounds 2 and 3 are the least contended; no round was on an idle machine (other sessions shared the laptop, free RAM 0.5 to 1.4 GB), so treat all of it as indicative. Round 1 is excluded from the conclusions.
+
+* **YuNet:** CPU 17 to 20 ms vs DirectML 34 to 35 ms in the quiet rounds, so DirectML is about 1.7 to 2x *slower*. This is outside the noise (DirectML's best single call, 29.6 ms, is slower than the CPU p50).
+* **PP-HumanSeg:** CPU 13.7 to 15.8 ms vs DirectML 13.7 to 14.7 ms. A tie; the 1 ms difference is smaller than the spread.
+* DirectML's one clear property is steadier tails under load (round 1 p95 14 ms vs 19 to 94 ms on CPU), because the work moves off the busy CPU. That is real but small in absolute terms and does not apply to a quiet machine.
+* **Cost:** session creation took 0.9 to 2.0 s for YuNet and 29 to 36 s for PP-HumanSeg on DirectML (CPU: 0.05 to 0.4 s). First call 24 to 66 ms. A stage that waits 30 s to start is a regression for a live toggle.
+* The ORT versions differ (1.31.0 vs 1.24.4: the DirectML wheel lags). The 1.24.4 CPU row shows the version makes no consistent difference (CPU 1.31 vs 1.24.4 YuNet 20.2/18.2 vs 17.2/27.8 ms) within this noise.
+
+**Not measured:** other resolutions or batch sizes, power/thermal behaviour under sustained load, a GPU other than the UHD 620, and an idle machine. A different Windows GPU (the owner's other machine mentioned in AUDIT_REPORT) could behave differently; the same `ortbench.py` approach would answer that in a few minutes.
+
+**Recommendation:** stop here. No opt-in provider flag is proposed for `runtime.py`; on this hardware it would add a 30 s start-up and slow detection for no gain. Revisit only if (a) a stage is actually moved onto `SessionCache`, and (b) measurements on a discrete or newer GPU show a win. The biggest speed lever found is not the provider but `bg_replace` (about 130 ms of a 170 ms frame in the contended run).
