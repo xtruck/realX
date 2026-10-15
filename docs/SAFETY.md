@@ -40,7 +40,7 @@ and most jurisdictions now expect them.
   frame the page makes. Models and the WASM runtime are served by this computer, so no third party
   sees the camera or loads code at run time.
 - **What leaves the page is numbers.** One message, `{type:"body", f, q, e, r}`: group flags, one
-  rotation per bone (212 numbers), 9 expression weights and a position. About 2 KB. Nothing in it
+  rotation per bone (212 numbers), 11 expression weights and a position. About 2 KB. Nothing in it
   identifies a person or carries an image. The server checks size, structure and that every number is
   finite and in range before it forwards anything, and it re-serialises the message itself.
 - **The relay (OBS Browser Source).** A tracking page publishes to `/ws/rig?publish=1`; a plain `/avatar`

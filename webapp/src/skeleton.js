@@ -43,6 +43,6 @@ for (const s of sides) {
   }
 }
 
-export const EXPRESSIONS = ["blink", "blinkLeft", "blinkRight", "aa", "ih", "ou", "ee", "oh", "happy"];
+export const EXPRESSIONS = ["blink", "blinkLeft", "blinkRight", "aa", "ih", "ou", "ee", "oh", "happy", "angry", "surprised"];   // new names go last: the order is the wire format
 export const GROUPS = ["face", "pose", "legs", "leftHand", "rightHand"]; // flags sent with each message
 export const MAX_Q = BONES.length * 4;

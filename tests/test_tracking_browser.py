@@ -155,7 +155,7 @@ def test_camera_page_tracks_publishes_numbers_only_and_a_viewer_sees_it(stack):
             assert len(text) <= 6144
             msg = json.loads(text)
             assert sorted(msg) == ["e", "f", "q", "r", "type"] and msg["type"] == "body"
-            assert len(msg["q"]) == 212 and len(msg["e"]) == 9 and len(msg["r"]) == 3
+            assert len(msg["q"]) == 212 and len(msg["e"]) == 11 and len(msg["r"]) == 3
             assert all(isinstance(v, (int, float)) and math.isfinite(v) for v in msg["q"] + msg["e"] + msg["r"])
         assert not errors, errors
         assert not [c for c in console if "Content Security Policy" in c], console

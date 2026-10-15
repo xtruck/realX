@@ -5,7 +5,8 @@
   "description": "Browser renderer for the realX original character. Bundled into src/realx/web/avatar.bundle.js.",
   "license": "MIT",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.21",

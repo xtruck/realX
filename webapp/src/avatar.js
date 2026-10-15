@@ -8,6 +8,7 @@ import { startTracker } from "./tracker.js";
 import { hasFlag, packStats, unpackBody } from "./body.js";
 import { idleQuats } from "./idle.js";
 import { BONES, EXPRESSIONS } from "./skeleton.js";
+import { applyExpressions } from "./express.js";
 import { startMic } from "./mic.js";
 import { DeviceSupervisor } from "./recover.js";
 import { DelayLine, MouthBlender, MouthFromAudio, avSyncOffset } from "./speech.js";
@@ -346,7 +347,7 @@ function pose(t, dt) {
     set("rightLowerArm", 0, -0.1, -0.12);
   }
   bodyWasLive = bodyLive;
-  let bounce = 0, happyBoost = 0, ohBoost = 0;
+  let bounce = 0, happyBoost = 0, ohBoost = 0, surprisedBoost = 0;
   if (emote) {
     const p = (t - emote.start) / EMOTE_SECONDS[emote.name];
     if (p >= 1) emote = null;
@@ -360,7 +361,7 @@ function pose(t, dt) {
         bounce = Math.abs(Math.sin(t * 9)) * 0.06 * env; happyBoost = env;
         set("leftUpperArm", 0, 0, -1.15 + env * 0.5); set("rightUpperArm", 0, 0, 1.15 - env * 0.5);
       } else if (emote.name === "surprised") {
-        ohBoost = 0.85 * env; bounce = 0.04 * env;
+        ohBoost = 0.85 * env; surprisedBoost = env; bounce = 0.04 * env;
         set("head", -s.pitch * 0.6 - 0.18 * env, s.yaw * 0.6, -s.roll * 0.65);
       } else if (emote.name === "bow") {
         set("spine", 0.55 * env, 0, 0); set("neck", 0.25 * env, 0, 0); happyBoost = 0.5 * env;
@@ -370,20 +371,12 @@ function pose(t, dt) {
   const where = bodyLive ? { x: shownRoot[0], y: shownRoot[1], depth: shownRoot[2] } : s;
   vrm.scene.position.set(clamp(where.x, -1.2, 1.2) * 0.28, -clamp(where.y, -1, 1) * 0.12 + bounce, clamp((where.depth - 1) * 0.5, -0.4, 0.4));
 
-  const em = vrm.expressionManager;
-  if (bodyLive) {
-    // tracked face: blinks, mouth shapes and smile come from the 52 blendshapes; with no face in view the
-    // character keeps its own idle blink instead of staring
-    const faceSeen = body.flags && body.flags.face;
-    em.setValue("blink", Math.max(shownExpr.blink || 0, faceSeen ? 0 : blinkValue(t)));
-    for (const name of ["blinkLeft", "blinkRight", "aa", "ih", "ou", "ee"]) em.setValue(name, shownExpr[name] || 0);
-    em.setValue("happy", clamp(Math.max(shownExpr.happy || 0, happyBoost), 0, 1));
-    em.setValue("oh", Math.max(shownExpr.oh || 0, ohBoost));
-  } else {
-    em.setValue("blink", blinkValue(t));
-    em.setValue("happy", clamp(clamp(s.smile, 0, 1) * 0.9 + happyBoost, 0, 1));
-    em.setValue("oh", ohBoost);
-  }
+  // tracked face: blinks, mouth shapes, smile, brows come from the 52 blendshapes; with no face in view the
+  // character keeps its own idle blink instead of staring
+  applyExpressions(vrm.expressionManager, shownExpr, {
+    live: bodyLive, faceSeen: !!(body.flags && body.flags.face), idleBlink: blinkValue(t), smile: s.smile,
+    boost: { happy: happyBoost, oh: ohBoost, surprised: surprisedBoost },
+  });
   probe.pose = { ...s, live: live || bodyLive };
 }
 

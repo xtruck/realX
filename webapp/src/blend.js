@@ -5,7 +5,7 @@ const clamp = (v, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 export function faceToExpressions(b, mirror = true) {
   const g = (n) => b[n] || 0;
   const eyeL = g(mirror ? "eyeBlinkRight" : "eyeBlinkLeft"), eyeR = g(mirror ? "eyeBlinkLeft" : "eyeBlinkRight");
-  const blink = Math.min(eyeL, eyeR);
+  const blink = clamp(Math.min(eyeL, eyeR));
   const stretch = (g("mouthStretchLeft") + g("mouthStretchRight")) / 2;
   const smile = (g("mouthSmileLeft") + g("mouthSmileRight")) / 2;
   let aa = clamp(g("jawOpen") * 1.4 - g("mouthClose") * 0.6 - g("mouthFunnel") * 0.5 - g("mouthPucker") * 0.5);
@@ -16,8 +16,10 @@ export function faceToExpressions(b, mirror = true) {
   const sum = aa + oh + ou + ee + ih;
   if (sum > 1) { aa /= sum; oh /= sum; ou /= sum; ee /= sum; ih /= sum; } // one mouth shape at a time
   return {
-    blink, blinkLeft: Math.max(0, eyeL - blink), blinkRight: Math.max(0, eyeR - blink),
+    blink, blinkLeft: clamp(eyeL - blink), blinkRight: clamp(eyeR - blink),
     aa, ih, ou, ee, oh, happy: clamp(smile * 1.3),
+    angry: clamp(((g("browDownLeft") + g("browDownRight")) / 2) * 1.5),   // both brows pulled down
+    surprised: clamp(g("browInnerUp") * 1.3),                              // inner brows raised
   };
 }
 

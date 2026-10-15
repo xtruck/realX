@@ -183,7 +183,7 @@ def rig_message(
 # bone's quaternion, the expressions and the position in the picture. Numbers only. The server never relays the
 # raw text: it re-serialises what it validated. Limits mirror LIMITS in webapp/src/body.js; a test compares the counts.
 BODY_BONES = 53
-BODY_EXPRESSIONS = 9
+BODY_EXPRESSIONS = 11
 BODY_GROUPS = 5
 MAX_BODY_BYTES = 6144
 _QUAT_BOUND = 1.0001
