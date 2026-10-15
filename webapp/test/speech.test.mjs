@@ -250,6 +250,8 @@ test("a/v sync: plain-language description", () => {
 
 // --- microphone glue, against fake browser objects ---------------------------------------------------
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// waits for a condition instead of a fixed time: on a loaded machine timers run late, a fixed wait then sees too few frames
+const until = async (cond, ms = 3000) => { const end = Date.now() + ms; while (!cond() && Date.now() < end) await wait(5); };
 const GLOBALS = ["navigator", "AudioContext", "window"];
 
 function installFakes({ failWith = null } = {}) {
@@ -308,7 +310,7 @@ test("mic: delivers level, spectrum and timing; reports its label and latency", 
   const seen = [];
   try {
     const mic = await startMic({ onFeatures: (f) => seen.push(f), intervalMs: 5 });
-    await wait(80);
+    await until(() => seen.length >= 3);
     mic.stop();
     assert.ok(seen.length >= 3, `${seen.length} frames`);
     const f = seen[0];
@@ -365,7 +367,7 @@ test("mic: a throwing callback does not kill the timer or leak the microphone", 
   let calls = 0;
   try {
     const mic = await startMic({ onFeatures: () => { calls++; throw new Error("consumer bug"); }, intervalMs: 5 });
-    await wait(60);
+    await until(() => calls >= 3);
     assert.ok(calls >= 3, "kept going");
     mic.stop();
     assert.equal(log.stopped, 1);

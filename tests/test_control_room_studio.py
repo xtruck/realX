@@ -135,7 +135,7 @@ class Studio:
         self.wait("window.frames.length > 0")
         self.frame()  # the stub has loaded
 
-    def frame(self, timeout=8.0):
+    def frame(self, timeout=20.0):   # generous: a loaded machine can take over 8 s to load the stub; success returns at once
         deadline = time.time() + timeout
         while time.time() < deadline:
             for f in self.page.frames:
@@ -157,7 +157,7 @@ class Studio:
     def query(self):
         return parse_qs(urlparse(self.src()).query, keep_blank_values=True)
 
-    def wait(self, js, timeout=8.0):
+    def wait(self, js, timeout=20.0):
         """Poll with plain evaluate calls: the page's CSP forbids the eval that wait_for_function uses."""
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -258,7 +258,7 @@ def test_quality_and_outfit_changes_reload_the_tracker_and_say_so(make_studio):
     s.page.select_option("#qualitySelect", "high")
     s.wait(f"document.querySelector('#tracker').getAttribute('src').includes('quality=high')")
     s.wait("document.querySelector('#studioPanelHint').textContent.toLowerCase().includes('restart')")
-    deadline = time.time() + 5
+    deadline = time.time() + 15
     while time.time() < deadline and len(s.avatar_urls) <= before:
         time.sleep(0.1)
     assert len(s.avatar_urls) > before and "quality=high" in s.avatar_urls[-1], "the tracker page was loaded again"
@@ -411,7 +411,7 @@ def test_measurements_go_stale_instead_of_staying_on_screen(make_studio):
     s.enter_body_mode()
     s.send(stats_message())
     s.wait("!document.querySelector('#stFps').textContent.includes('No measurement yet')")
-    s.wait("document.querySelector('#stFps').textContent.includes('No recent measurement')", timeout=9.0)
+    s.wait("document.querySelector('#stFps').textContent.includes('No recent measurement')", timeout=20.0)
 
 
 # --- the server side of the microphone opt-in -------------------------------------------------------------
