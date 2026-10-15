@@ -169,6 +169,7 @@ def rig_message(
     faces: list[dict],
     emote: dict | None = None,
     background: dict | None = None,
+    mic_muted: bool = False,
 ) -> dict:
     msg = {
         "v": RIG_VERSION,
@@ -180,6 +181,8 @@ def rig_message(
     }
     if emote:
         msg["emote"] = emote  # {"name", "id", "age"}: a button the streamer pressed, not tracked data
+    if mic_muted:
+        msg["mic"] = {"muted": True}  # the streamer pressed Mute in the OBS dock; absent means "not muted"
     if background:
         msg["background"] = background  # {"url"}: a tiny same-origin picture of the active background photo, for lighting
     return msg

@@ -85,6 +85,9 @@ each step so a resumed session knows exactly where to continue.
 - [x] Static pages and scripts (`/`, `/app.js`, `/avatar`, `/avatar.bundle.js`) are served gzipped when the
       request says `Accept-Encoding: gzip`, compressed once per process; API, MJPEG and WebSocket are not.
 
+- [x] OBS control dock (`/dock`): voice preset, mic mute, background, blur strength, status lights.
+      Adds blur (3-151) to the config and `/api/dock` for mute and voice; live voice change is still not built.
+
 ## Next (in order)
 
 **Continuing on another computer? Start with `HANDOFF.md`**: where the code is (branch `handoff-2026-10-14`), what is

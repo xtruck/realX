@@ -84,12 +84,24 @@ def permissions_for(query: str) -> str:
 ASSET_MAX_AGE = 3600  # seconds: MediaPipe runtime and models are pinned by hash, so they cannot change within a release
 MP_MODELS = ("mp_face", "mp_pose", "mp_hand")  # the only models /mp/models serves
 _WASM_NAME = re.compile(r"[a-z0-9_]+\.(js|wasm)")
+# onnxruntime-web's runtime, served from this origin because the CSP allows nothing else. Only the all-in-one "jsep" build
+# (it runs both the WebGPU and the WebAssembly backends), under its exact file names.
+_ORT_NAME = re.compile(r"ort-wasm-simd-threaded\.jsep\.(mjs|wasm)")
 
 CSP = (
     "default-src 'none'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; "
     "style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'; "
     "object-src 'none'; frame-ancestors 'none'"
 )
+
+
+def dock_csp(port: int) -> str:
+    """The OBS dock: its own script and styles, this server's API, one read-only WebSocket. Nothing else, and no framing."""
+    sockets = f"ws://127.0.0.1:{port} ws://localhost:{port}"
+    return (
+        f"default-src 'none'; connect-src 'self' {sockets}; style-src 'self'; script-src 'self'; "
+        "base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'"
+    )
 
 
 def avatar_csp(port: int) -> str:
@@ -153,8 +165,11 @@ class Engine:
         self._epoch = secrets.token_hex(4)  # changes on every server start, so ids never collide across restarts
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._config = {"source": source, "mode": mode, "smoothing": smoothing, "background": "off"}
+        self._config = {"source": source, "mode": mode, "smoothing": smoothing, "background": "off", "blur": 41}
         self._bg_photo: np.ndarray | None = None  # kept in memory only, never written to disk
+        self._mic_muted = False  # set from the OBS dock; the avatar page follows it
+        self._voice_preset = ""  # the preset the dock chose ("" = none); the control room's converter starts from it
+        self.token_fixed = False  # set by Server: True when the token was chosen (REALX_TOKEN) rather than made per run
         self._bg_version = 0  # counts photo changes; part of the thumbnail URL so a new photo is fetched anew
         self._bg_thumb: tuple[int, bytes] | None = None
         self._config_version = 0
@@ -189,7 +204,7 @@ class Engine:
             return dict(self._config)
 
     def update(self, changes: dict) -> dict:
-        allowed = {"source", "mode", "smoothing", "background"}
+        allowed = {"source", "mode", "smoothing", "background", "blur"}
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError(f"unknown settings: {sorted(unknown)}")
@@ -209,6 +224,11 @@ class Engine:
             if changes["background"] == "photo" and self._bg_photo is None:
                 raise ValueError("choose a background photo first")
             staged["background"] = changes["background"]
+        if "blur" in changes:
+            b = changes["blur"]
+            if isinstance(b, bool) or not isinstance(b, int) or not 3 <= b <= 151:
+                raise ValueError("blur must be a whole number between 3 and 151")
+            staged["blur"] = b | 1  # the blur kernel must be odd
         if "source" in changes:
             src = changes["source"]
             ok = src == "camera" or (isinstance(src, str) and src.startswith("demo:") and src[5:] in MOTIONS)
@@ -219,6 +239,31 @@ class Engine:
             self._config = {**self._config, **staged}
             self._config_version += 1
             return dict(self._config)
+
+    def set_dock(self, changes: dict) -> dict:
+        """Settings the OBS dock owns that need no pipeline rebuild: the microphone mute and the voice preset."""
+        unknown = set(changes) - {"mic_muted", "voice"}
+        if unknown:
+            raise ValueError(f"unknown dock settings: {sorted(unknown)}")
+        staged = {}
+        if "mic_muted" in changes:
+            if not isinstance(changes["mic_muted"], bool):
+                raise ValueError("mic_muted must be true or false")
+            staged["mic_muted"] = changes["mic_muted"]
+        if "voice" in changes:
+            v = changes["voice"]
+            if not isinstance(v, str) or (v and v not in presets.PRESETS):
+                raise ValueError(f"voice must be '' or one of {sorted(presets.PRESETS)}")
+            staged["voice"] = v
+        with self._lock:
+            if "mic_muted" in staged:
+                self._mic_muted = staged["mic_muted"]
+            if "voice" in staged:
+                self._voice_preset = staged["voice"]
+            return self.dock_state()
+
+    def dock_state(self) -> dict:  # caller holds the lock, or accepts a slightly stale read
+        return {"mic_muted": self._mic_muted, "voice": self._voice_preset}
 
     def emote(self, name: str) -> None:
         """Play a short gesture on the character (wave, happy, surprised, bow)."""
@@ -241,6 +286,8 @@ class Engine:
             out["config"] = dict(self._config)
             out["version"] = __version__
             out["body"] = {"publishing": self._publishing, "viewers": self._viewers}
+            out["dock"] = self.dock_state()
+            out["security"] = {"token": "fixed" if self.token_fixed else "per-run", "watermark": True}   # never the token itself
             pipe, src = self._pipe, self._frames_src
         stage_ms = {name: t.mean_ms for name, t in list(pipe.timings.items())} if pipe is not None else {}
         capture = None
@@ -325,7 +372,7 @@ class Engine:
             self._jpeg = None  # no stale picture for the MJPEG stream
             self._seq += 1
             self._rev += 1
-            self._rig = json.dumps(rig_message(self._seq, now, (0, 0), [], self._emote_state(), self._background_state()))
+            self._rig = json.dumps(rig_message(self._seq, now, (0, 0), [], self._emote_state(), self._background_state(), self._mic_muted))
             self._cond.notify_all()
 
     def _background_state(self) -> dict | None:  # caller holds the lock (or is the only writer)
@@ -376,7 +423,7 @@ class Engine:
             with self._lock:
                 photo = self._bg_photo
             # cut the person out before anything is drawn on top of the picture
-            stages.append(create("bg_replace", mode=background, image=photo))
+            stages.append(create("bg_replace", mode=background, image=photo, blur=cfg["blur"]))
         if mode == "avatar":
             stages.append(create("avatar"))
         elif mode == "boxes":
@@ -501,7 +548,7 @@ class Engine:
                         self._seq += 1
                         self._rev += 1
                         em = self._emote_state()
-                        self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces, em, self._background_state()))
+                        self._rig = json.dumps(rig_message(self._seq, now, (fw, fh), rig_faces, em, self._background_state(), self._mic_muted))
                         self._cond.notify_all()
                 except (SourceError, StopIteration) as exc:
                     # camera unplugged or busy: say so, drop the dead generator, retry
@@ -600,6 +647,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
     # MediaPipe runtime files: exactly the ones bundled in the package, by name. Nothing else under /mp is served.
     wasm_root = resources.files("realx.web").joinpath("mp/wasm")
     wasm_files = {p.name: p for p in wasm_root.iterdir() if _WASM_NAME.fullmatch(p.name)} if wasm_root.is_dir() else {}
+    ort_root = resources.files("realx.web").joinpath("ort")
+    ort_files = {p.name: p for p in ort_root.iterdir() if _ORT_NAME.fullmatch(p.name)} if ort_root.is_dir() else {}
     hw_lock = threading.Lock()
     hw_cache: dict = {"t": 0.0, "doc": None}
 
@@ -784,7 +833,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             if source is None:
                 return self._deny(401, "access token required")
             path = urlparse(self.path).path
-            if source == "query" and path in ("/", "/avatar"):  # first visit from a link (browser or OBS): token into a cookie
+            if source == "query" and path in ("/", "/avatar", "/dock"):  # first visit from a link (browser or OBS): token into a cookie
                 return self._adopt_token(path)
             if path == "/":
                 self._static(
@@ -808,6 +857,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                         ("X-Frame-Options", "SAMEORIGIN"),
                     ),
                 )
+            elif path == "/dock":
+                self._static(
+                    "dock.html",
+                    "text/html; charset=utf-8",
+                    (("Content-Security-Policy", dock_csp(port_getter())), ("X-Frame-Options", "DENY")),
+                )
+            elif path == "/dock.js":
+                self._static("dock.js", "text/javascript; charset=utf-8")
+            elif path == "/dock.css":
+                self._static("dock.css", "text/css; charset=utf-8")
             elif path == "/avatar.bundle.js":
                 self._static("avatar.bundle.js", "text/javascript; charset=utf-8")
             elif path == BACKGROUND_THUMB_PATH:
@@ -825,6 +884,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                 self.wfile.write(avatar)
             elif path.startswith("/mp/wasm/"):
                 self._mp_wasm(path[len("/mp/wasm/") :])
+            elif path.startswith("/ort/"):
+                self._ort_file(path[len("/ort/") :])
             elif path.startswith("/mp/models/"):
                 self._mp_model(path[len("/mp/models/") :])
             elif path == "/favicon.ico":
@@ -877,6 +938,21 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             )
             self.end_headers()
             self.wfile.write(data)
+
+        def _ort_file(self, name: str) -> None:
+            entry = ort_files.get(name)
+            if entry is None:
+                return self._deny(404, "not found")
+            with entry.open("rb") as fh:  # the runtime is tens of MB: stream it, do not hold it in memory
+                size = fh.seek(0, 2)
+                fh.seek(0)
+                self.send_response(200)
+                self._headers(
+                    "application/wasm" if name.endswith(".wasm") else "text/javascript; charset=utf-8", size, max_age=ASSET_MAX_AGE
+                )
+                self.end_headers()
+                while chunk := fh.read(1 << 20):
+                    self.wfile.write(chunk)
 
         def _mp_model(self, name: str) -> None:
             key = next((k for k in MP_MODELS if MANIFEST[k].filename == name), None)
@@ -1022,6 +1098,13 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     if changes.get("mode") == "body":
                         prefetch_models()
                     self._json(result)
+                elif parsed.path == "/api/dock":
+                    if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+                        raise ValueError("Content-Type must be application/json")
+                    changes = json.loads(self._body(MAX_JSON) or b"{}")
+                    if not isinstance(changes, dict):
+                        raise ValueError("expected a JSON object")
+                    self._json(engine.set_dock(changes))
                 elif parsed.path == "/api/emote":
                     if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
                         raise ValueError("Content-Type must be application/json")
@@ -1068,6 +1151,7 @@ class Server:
         self.engine = engine
         avatar = load_avatar(avatar_path)
         self.token = resolve_token(token)
+        engine.token_fixed = token is not None or bool(os.environ.get(TOKEN_ENV))
         self._httpd = _BoundedServer(("127.0.0.1", port), make_handler(engine, lambda: self.port, avatar, self.token))
         self._thread: threading.Thread | None = None
 

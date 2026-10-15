@@ -130,3 +130,19 @@ picture; that is what `SOFTCAM.md` studies.
 | Arms or hands lag | read *Model updates per second* in the status panel: low pose or hand numbers mean the computer is the limit, so try **Low** quality and close other GPU programs |
 | Black box instead of transparency | in OBS the source must be a Browser Source, not a window capture |
 | Only one tracker may publish | a second control room tab or window is also publishing; close it |
+
+## Control dock (optional)
+
+A small control panel can live inside OBS: **View > Docks > Custom Browser Docks**, name it `realX`, URL
+`http://127.0.0.1:8765/dock?token=YOUR_TOKEN`. Set a fixed `REALX_TOKEN` first (see above), or the dock's link
+changes every run.
+
+It has four lights (server, character stream, access token, provenance mark), the voice preset buttons
+(pip, bear, imp, robot, radio), a Mute button, and the background controls (none, blur, photo, blur strength).
+
+- **Mute** silences the microphone feeding the character's mouth (the Full body tracking page must be open).
+- **Voice preset** records the studio's chosen preset; realX has no live voice changer yet, so today it is the
+  preset the control room's file converter starts from.
+- **Blur** and **photo** apply to the camera picture modes, not to the 3D character (that background is transparent).
+- Commands travel over the same token-protected `/api` routes as the control room. `/ws/rig` only shows the dock
+  that the character stream is alive. The token is never shown in the dock.
