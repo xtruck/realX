@@ -41,6 +41,14 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:32]
 
 
+def _revoke_code() -> str:
+    """A random code that is safe to type after `--code`: a leading '-' would be read as another option."""
+    while True:
+        code = secrets.token_urlsafe(12)
+        if not code.startswith("-"):
+            return code
+
+
 @dataclass(frozen=True)
 class Grant:
     record: ConsentRecord
@@ -109,7 +117,7 @@ class CohostVault:
         if not name or not _slug(name):
             raise ValueError("a display name with letters or digits is required")
         record = self._store.issue(_slug(name), scope, days * 86400)
-        code = secrets.token_urlsafe(12)
+        code = _revoke_code()
         doc = {
             "display_name": name,
             "record": {

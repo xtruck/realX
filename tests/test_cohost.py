@@ -270,3 +270,26 @@ def test_emote_ids_carry_a_per_start_token_so_restarts_cannot_collide():
         e.emote("wave")
         e.emote("wave")
     assert a._epoch != b._epoch
+
+
+def test_revoke_codes_never_start_with_a_dash(tmp_path, monkeypatch):
+    # token_urlsafe can begin with '-', which argparse would take for an option: `--code -abc...` fails
+    import realx.safety.cohost as cohost_mod
+
+    real = cohost_mod.secrets.token_urlsafe
+    draws = iter(["-" + "A" * 15, "-" + "B" * 15])
+    monkeypatch.setattr(cohost_mod.secrets, "token_urlsafe", lambda n=None: next(draws, None) or real(n))
+    g = CohostVault(tmp_path / "v").grant("Kofi", agreed=True)
+    assert not g.revoke_code.startswith("-") and len(g.revoke_code) >= 16
+
+
+def test_cli_revoke_works_for_every_kind_of_code(tmp_path, monkeypatch, capsys):
+    from realx.cli import main
+
+    monkeypatch.setenv("REALX_HOME", str(tmp_path))
+    for _ in range(100):   # the old code failed about 1 time in 64
+        assert main(["cohost", "grant", "--name", "Kofi", "--friend-agreed"]) == 0
+        out = capsys.readouterr().out
+        code = out.split("shown only once): ")[1].split()[0]
+        rid = os.path.basename(out.split("consent saved: ")[1].split()[0])[:-5]
+        assert main(["cohost", "revoke", "--id", rid, "--code", code]) == 0
