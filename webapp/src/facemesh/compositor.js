@@ -14,6 +14,7 @@ import { HEAD_VERTEX_COUNT, RING_TRIANGLES, headFade, ringFlag, ringPoints, ring
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
 const RING_MATCH = 0.35;   // how much of the live colour the head ring takes (the face takes the Colour match setting in full)
+const SPOTS = [10, 1, 50, 280, 152];   // mesh points whose brightness stands for the face's own skin level: forehead, nose tip, cheeks, chin
 const BLUR = 0.12;      // colour is matched at the scale of this fraction of the face width
 
 const VERT = `attribute vec2 a_pos; attribute vec2 a_uv; attribute float a_fade; attribute float a_keep; attribute float a_ring;
@@ -32,6 +33,8 @@ varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_kee
 uniform sampler2D u_photo; uniform sampler2D u_cam; uniform sampler2D u_mask;
 uniform float u_head; uniform float u_ringMatch;
 uniform float u_match; uniform float u_keep; uniform float u_opacity; uniform vec2 u_rl; uniform vec2 u_rp;
+uniform float u_relight; uniform vec2 u_lp[5]; uniform vec2 u_pp[5];   // S11: lighting-only match, see lightOf()
+uniform float u_glasses; uniform vec2 u_eyeA; uniform vec2 u_eyeB; uniform vec2 u_eyeAsp;   // S11: the photo's spectacles (see glassesBand)
 
 // 13 taps: the centre and two hexagon rings. A cheap blur whose size follows the face.
 vec3 soften(sampler2D t, vec2 c, vec2 r) {
@@ -44,13 +47,36 @@ vec3 soften(sampler2D t, vec2 c, vec2 r) {
   return s / 13.0;
 }
 
+float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+// the average brightness of a face from five spots on it (forehead, nose, both cheeks, chin): the face's own skin level
+float lightOf(sampler2D t, vec2 p[5], vec2 r) {
+  float s = 0.0;
+  for (int i = 0; i < 5; i++) s += lum(texture2D(t, p[i]).rgb) + lum(texture2D(t, p[i] + r).rgb) + lum(texture2D(t, p[i] - r).rgb);
+  return s / 15.0;
+}
+float glassesBand() {
+  vec2 d = (v_uv - u_eyeA) * u_eyeAsp, e = (u_eyeB - u_eyeA) * u_eyeAsp;
+  float t = clamp(dot(d, e) / max(dot(e, e), 1e-6), -0.6, 1.6);
+  return 1.0 - smoothstep(0.34, 0.5, length(d - e * t) / sqrt(max(dot(e, e), 1e-6)));
+}
+
 void main() {
   vec3 photo = texture2D(u_photo, v_uv).rgb;
   vec3 matched = photo;
-  if (u_match > 0.0) {
+  if (u_match > 0.0 && u_relight > 0.0) {
+    // S11, lighting only: the photo keeps ITS OWN skin colour and detail; from the live face it takes only where the light falls.
+    // gain = (how bright the live face is here compared with its own average) / (the same for the photo), so a dark-skinned photo on
+    // a light-skinned face stays dark-skinned, and a purple room light does not tint it. Spectacles are smoothed away first.
+    vec3 p = photo;
+    if (u_glasses > 0.0) p = mix(photo, soften(u_photo, v_uv, u_rp * 0.8), u_glasses * glassesBand() * 0.9);
+    float live = lum(soften(u_cam, v_scr, u_rl)) / max(lightOf(u_cam, u_lp, u_rl * 0.5), 0.03);
+    float ref = lum(soften(u_photo, v_uv, u_rp)) / max(lightOf(u_photo, u_pp, u_rp * 0.5), 0.03);
+    matched = clamp(p * mix(1.0, clamp(live / max(ref, 0.05), 0.75, 1.3), u_relight), 0.0, 1.0);
+  } else if (u_match > 0.0) {
     // the photo's detail (what is left when its own blur is taken away) on top of the live face's colour and light
     // limited, so strong edges in the photo (lips, glasses' glare) do not leave bright halos on the live colours
     vec3 detail = clamp(photo - soften(u_photo, v_uv, u_rp), -0.16, 0.16);
+    if (u_glasses > 0.0) detail *= 1.0 - u_glasses * glassesBand() * 0.85;   // spectacles: frames and glare are fine detail along the eye line
     matched = clamp(soften(u_cam, v_scr, u_rl) + detail, 0.0, 1.0);
   }
   // whole head: the ring around the face keeps most of the photo's own colour (the live picture there is hair or room, not skin)
@@ -123,14 +149,15 @@ export class MeshCompositor {
     this.positions = new Float32Array(HEAD_VERTEX_COUNT * 2);   // 468 face points, then the head ring
     this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
-    this.look = { match: 1, keep: 1, skin: 0 };
+    this.look = { match: 1, keep: 1, skin: 0, glasses: 1, relight: 1 };
+    this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
     this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
     this.program = link(gl, VERT, FRAG);
     gl.useProgram(this.program);
     const attr = (name) => gl.getAttribLocation(this.program, name);
     this.loc = { pos: attr("a_pos"), uv: attr("a_uv"), fade: attr("a_fade"), keep: attr("a_keep"), ring: attr("a_ring") };
-    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_opacity", "u_rl", "u_rp"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
+    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
     this.posBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.positions.byteLength, gl.DYNAMIC_DRAW);
@@ -352,8 +379,8 @@ export class MeshCompositor {
   setHead(on) { this.head = !!on; }
 
   /** How the photo is drawn: `match` 0..1 (how much of the live face's colour and light it takes), `keep` (live eyes and mouth show through). */
-  setLook({ match = this.look.match, keep = this.look.keep, skin = this.look.skin } = {}) {
-    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), keep: keep ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)) };
+  setLook({ match = this.look.match, keep = this.look.keep, skin = this.look.skin, glasses = this.look.glasses, relight = this.look.relight } = {}) {
+    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), keep: keep ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)), glasses: glasses ? 1 : 0, relight: relight ? 1 : 0 };
   }
 
   /**
@@ -380,6 +407,10 @@ export class MeshCompositor {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);   // the photo
     setSampling(gl);
     this.photoRing = ring;
+    const eye = (a, b) => [(flat[a * 2] + flat[b * 2]) / 2, (flat[a * 2 + 1] + flat[b * 2 + 1]) / 2];   // the eye corners 33/133 and 362/263 of the face mesh
+    const ea = eye(33, 133), eb = eye(362, 263);
+    this.photoEyes = [ea[0], ea[1], eb[0], eb[1], w / h];
+    this.photoSpots = Float32Array.from(SPOTS.flatMap((i) => [flat[i * 2], flat[i * 2 + 1]]));
     this.photoCheek = [(flat[50 * 2] + flat[280 * 2]) / 2, (flat[50 * 2 + 1] + flat[280 * 2 + 1]) / 2];
     this.setHeadMask(null);                         // a new photo has no mask until it has been cut
     this.clearHair();                               // and no moving hair
@@ -450,6 +481,12 @@ export class MeshCompositor {
     gl.uniform1f(this.uni.u_opacity, Math.min(1, opacity));
     gl.uniform2f(this.uni.u_rl, BLUR * box.w, BLUR * box.w * aspect);
     gl.uniform2f(this.uni.u_rp, this.photoRadius[0], this.photoRadius[1]);
+    const pe = this.photoEyes;
+    gl.uniform1f(this.uni.u_glasses, this.look.glasses);
+    gl.uniform1f(this.uni.u_relight, this.look.relight);
+    const lp = new Float32Array(10); SPOTS.forEach((v, i) => { lp[i * 2] = this.positions[v * 2]; lp[i * 2 + 1] = this.positions[v * 2 + 1]; });
+    gl.uniform2fv(this.uni.u_lp, lp); gl.uniform2fv(this.uni.u_pp, this.photoSpots);
+    gl.uniform2f(this.uni.u_eyeA, pe[0], pe[1]); gl.uniform2f(this.uni.u_eyeB, pe[2], pe[3]); gl.uniform2f(this.uni.u_eyeAsp, pe[4], 1);
     const triangles = TRIANGLE_COUNT + (head ? RING_TRIANGLES : 0);
     gl.drawElements(gl.TRIANGLES, triangles * 3, gl.UNSIGNED_SHORT, 0);
     this.liveDrawn = liveNow ? this._drawLive(opacity) : 0;                // your own hands go over everything, face included

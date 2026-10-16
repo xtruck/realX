@@ -247,7 +247,9 @@ def test_colour_match_takes_the_live_colours_and_the_picture_is_never_read_back(
         matched = gain(_stage_pixels(page))
         print(f"\nblue skin of the photo: raw {raw:+.0f}, colour matched {matched:+.0f} (0 = the live colours)")
         assert raw > 60, "with no matching the photo's blue skin should show"
-        assert abs(matched) < raw / 2, "colour matching must pull the photo's skin to the live face's colours"
+        # S11: matching now takes only the live LIGHT; the photo keeps its own skin colour (that is the identity), so a purple room light or a
+        # differently coloured live face must not turn the photo's skin into the live colours
+        assert matched > raw * 0.6, "colour matching must keep the photo's own skin colour and only follow the live light"
 
         for keep in (False, True):          # keeping the live eyes and mouth, and not, must both draw
             page.click("#keepFace")

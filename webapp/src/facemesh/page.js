@@ -32,7 +32,7 @@ let detectMs = 0, lastTs = 0, lastVideoTime = -1, measure = null;
 // Numbers only, for the browser test and for anyone reading the page's state: no picture, no landmark.
 const probe = window.__facemesh = { state: "starting", frames: 0, found: 0, fps: 0, foundPct: 0, detectMs: 0, delegate: "", measured: null, photo: "none", drawn: 0, box: null };
 let compositor = null;   // made when the first photo is chosen; draws the photo on the live face
-const look = { match: 100, keep: true, hideHands: false, skin: false };   // colour match in percent; keep the live eyes and mouth; fade out when a hand covers the face
+const look = { match: 100, keep: true, hideHands: false, skin: false, glasses: true };   // colour match in percent; keep the live eyes and mouth; fade out when a hand covers the face
 probe.match = look.match; probe.keep = look.keep;
 // Step S4: smoothing, losing and regaining the face, a hand over the face (the hand model runs only when that option is on).
 const presence = new FacePresence();
@@ -56,8 +56,8 @@ const gallery = new Gallery(), liveTimer = new LiveTimer(), toast = new Toast();
 Object.assign(probe, { avatars: 0, avatar: "", session: "idle", liveSeconds: 0, toast: "", fullscreen: false });
 let switching = false, cancelAsk = null, liveText = "";
 function applyLook() {
-  probe.match = look.match; probe.keep = look.keep; probe.skin = look.skin ? 1 : 0;
-  if (compositor) compositor.setLook({ match: look.match / 100, keep: look.keep, skin: look.skin ? 1 : 0 });
+  probe.match = look.match; probe.keep = look.keep; probe.skin = look.skin ? 1 : 0; probe.glasses = look.glasses ? 1 : 0;
+  if (compositor) compositor.setLook({ match: look.match / 100, keep: look.keep, skin: look.skin ? 1 : 0, glasses: look.glasses ? 1 : 0 });
 }
 
 // Step S8, whole head (option, off by default): hair, ears, top of the forehead and neck come from the same photo. The photo
@@ -913,6 +913,10 @@ function wireControls() {
       probe.liveHands = "error"; probe.lastError = String((err && err.message) || err).slice(0, 160);
       setStatus(`The hand model could not start: ${err && err.message ? err.message : err}`);
     } finally { button.disabled = false; }
+  });
+  $("glassesBtn").addEventListener("click", (e) => {   // S11: spectacles in the photo are not drawn on the live face
+    look.glasses = !look.glasses; e.currentTarget.setAttribute("aria-pressed", String(look.glasses)); applyLook();
+    setStatus(look.glasses ? "The photo's glasses are hidden: your own face shows there." : "The photo's glasses are drawn as they are.");
   });
   $("skinBtn").addEventListener("click", (e) => {      // S10h: the live hand's skin colour moves towards the photo's, on the graphics card only
     look.skin = !look.skin; e.currentTarget.setAttribute("aria-pressed", String(look.skin)); applyLook();

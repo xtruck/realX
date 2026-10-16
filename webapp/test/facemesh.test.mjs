@@ -234,7 +234,7 @@ test("the live frame goes to the graphics card only while colour matching is on 
   c.draw(face(0.3, 0.3), live);
   assert.equal(uploadsOf(live), 2, "colour match at 0: the live picture is not touched");
   c.setLook({ match: 0.5, keep: false });
-  assert.deepEqual(c.look, { match: 0.5, keep: 0, skin: 0 });   // S10h added skin (hand skin-tone matching, off by default)
+  assert.deepEqual(c.look, { match: 0.5, keep: 0, skin: 0, glasses: 1, relight: 1 });   // S10h added skin (off by default); S11 added glasses and relight (on by default)
   c.setLook({ skin: 3 });
   assert.equal(c.look.skin, 1, "skin is limited to 0..1");
   c.setLook({ skin: 0 });
