@@ -162,6 +162,9 @@ background (under 2% or over 95% of the photo), the option says so and draws the
 * The photo is chosen in the page, never uploaded or stored, and is read by a second, short-lived face model.
 * A photo with no face, more than one face, a small face or a face cut by the edge is refused, with the reason shown.
 * A visible "Virtual face" label stays on screen while a photo is drawn, and the photo pauses without it (S5).
+* The one read-back the page makes is of **your photo's** segmentation class map (`getAsUint8Array`, class numbers, for Whole head,
+  Hair and Body). The page raises a number-only flag (`readingPhotoMask`) while it copies it, and the browser test counts those calls
+  separately; any other read-back by the page, and any at all of the camera, still fails the test.
 * The camera picture is never **read back**: no `readPixels`, `getImageData`, `toDataURL`, `toBlob`, `drawImage`,
   `createImageBitmap`, capture or recording, no network, no storage, anywhere in the page.
 * **The exception.** `MeshCompositor.uploadCamera` (the only place the video is named in `compositor.js`) gives the current
@@ -171,7 +174,13 @@ background (under 2% or over 95% of the photo), the option says so and draws the
   three texture uploads in the file, a list of forbidden calls everywhere in the page), and
   `tests/test_facemesh_browser.py` hooks the browser's read-back calls and fails if any comes from the face-mesh code. MediaPipe's
   own runtime reads pixels for its inference; those calls are recognised by their origin and are not the page's.
-* Wanting more (for example reading the live skin colour on the CPU) needs a new reviewed exception; this one does not cover it.
+* **A second use of the same upload (S10c, "Show my hands on top", off by default).** The owner asked for his own live hands, and what
+  they hold, to stay visible over the photo's body. With that option on, the same `uploadCamera` also runs while "Colour match" is 0,
+  and a second shader draws the live picture only inside soft shapes around the tracked hands. It is sampled by the shader and goes to
+  the screen only: no read-back, no copy, no storage, no network. It adds no new upload call and no new way out. **Status: requested by
+  the owner in chat on 2026-10-16 and written down here; it still needs his explicit confirmation as a reviewed exception.** Nothing in
+  the live picture is analysed on the CPU for it (the hand shapes come from the hand model's own landmarks).
+* Wanting more (for example reading the live skin colour on the CPU) needs a new reviewed exception; these do not cover it.
 
 ## Use
 

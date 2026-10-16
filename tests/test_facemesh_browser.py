@@ -199,9 +199,14 @@ def _set_match(page, percent):
 
 # Counts every call that could read the picture back. MediaPipe's own runtime reads pixels for its inference, so a call is
 # "ours" when it does not come from MediaPipe's files: the face-mesh code itself must never make one.
-_READ_HOOK = """window.__reads = {n: 0, ours: 0};
+_READ_HOOK = """window.__reads = {n: 0, ours: 0, photoMask: 0};
 const wrap = (proto, name) => { const o = proto && proto[name]; if (!o) return; proto[name] = function (...a) {
-  window.__reads.n++; if (!/vision_wasm_internal|mediapipe/i.test(new Error().stack)) window.__reads.ours++; return o.apply(this, a); }; };
+  window.__reads.n++;
+  if (!/vision_wasm_internal|mediapipe/i.test(new Error().stack)) {
+    // the one allowed read-back: the segmenter's class map of the user's PHOTO, which the page flags while it copies it (never the camera)
+    if (window.__facemesh && window.__facemesh.readingPhotoMask) window.__reads.photoMask++; else window.__reads.ours++;
+  }
+  return o.apply(this, a); }; };
 for (const p of [WebGLRenderingContext.prototype, WebGL2RenderingContext.prototype]) wrap(p, 'readPixels');
 wrap(HTMLCanvasElement.prototype, 'toDataURL'); wrap(HTMLCanvasElement.prototype, 'toBlob');
 wrap(CanvasRenderingContext2D.prototype, 'getImageData'); wrap(CanvasRenderingContext2D.prototype, 'drawImage'); wrap(window, 'createImageBitmap');"""

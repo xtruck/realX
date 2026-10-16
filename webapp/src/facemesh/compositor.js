@@ -1,11 +1,12 @@
 // Draws a photo wrapped on the tracked face mesh (steps S2-S3), on a transparent WebGL canvas laid over the live camera <video>.
 //
-// Privacy rule, and the one exception (reviewed and granted for step S3):
+// Privacy rule, and the exceptions (the first reviewed and granted for step S3; the second, S10c, requested by the owner and recorded in
+// docs/FACEMESH.md, awaiting his explicit confirmation):
 //  * The camera picture is never READ BACK. Nothing here, or anywhere in the page, may call readPixels, getImageData,
 //    toDataURL, toBlob, drawImage, createImageBitmap, capture or record it, or send it anywhere. The result of the colour
 //    work goes to the screen and nowhere else.
 //  * The exception: `uploadCamera` hands the current video frame to the graphics card as a texture, once per drawn frame,
-//    and only while colour matching is on. The shader reads it to take the live face's colour and lighting (a blurred
+//    while colour matching is on, and (S10c) while "Show my hands on top" is on. The shader reads it to take the live face's colour and lighting (a blurred
 //    copy) and give them to the photo's detail, so the photo does not look like a sticker. That one method is the only
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
 import { TRIANGLE_COUNT, VERTEX_COUNT, edgeDepth, faceBox, flatten, keepMask } from "./mesh.js";
@@ -77,6 +78,15 @@ void main() {
   gl_FragColor = vec4(texture2D(u_photo, v_uv).rgb * a, a);
 }`;
 
+// Step S10c, your hands on top: the live picture drawn only inside the soft shapes around the tracked hands (handlayer.js), so the
+// photo's sleeves do not cover your hands or what you hold. THE SAME EXCEPTION as colour matching: the picture reaches the graphics
+// card only through uploadCamera(), is only sampled by this shader, and goes to the screen and nowhere else. Never read back.
+const LIVE_VERT = `attribute vec2 a_pos; attribute float a_alpha; varying vec2 v_scr; varying float v_alpha;
+void main() { v_scr = a_pos; v_alpha = a_alpha; gl_Position = vec4(a_pos.x * 2.0 - 1.0, 1.0 - a_pos.y * 2.0, 0.0, 1.0); }`;
+const LIVE_FRAG = `precision mediump float;
+varying vec2 v_scr; varying float v_alpha; uniform sampler2D u_cam; uniform float u_opacity;
+void main() { float a = v_alpha * u_opacity; gl_FragColor = vec4(texture2D(u_cam, v_scr).rgb * a, a); }`;
+
 export class MeshCompositor {
   /** canvas: the WebGL canvas; mesh: buildMesh()'s result. Throws when WebGL is not available. */
   constructor(canvas, mesh) {
@@ -116,6 +126,36 @@ export class MeshCompositor {
     this.hairUni = Object.fromEntries(["u_photo", "u_hair", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.hairProgram, n)]));
     this.hairDrawn = 0;
     this.body = null; this.bodyDrawn = 0;      // S10: the body and dress layer
+    this.liveProgram = link(gl, LIVE_VERT, LIVE_FRAG);                  // S10c: your hands on top
+    this.liveLoc = { pos: gl.getAttribLocation(this.liveProgram, "a_pos"), alpha: gl.getAttribLocation(this.liveProgram, "a_alpha") };
+    this.liveUni = Object.fromEntries(["u_cam", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.liveProgram, n)]));
+    this.live = { posBuffer: gl.createBuffer(), alphaBuffer: gl.createBuffer(), indexBuffer: gl.createBuffer(), indexCount: 0, on: false };
+    this.liveDrawn = 0;
+  }
+
+  /** The shapes around the hands for this frame (handlayer.js handFans()'s result), or null to draw none. */
+  setLiveHands(fans) {
+    const gl = this.gl, l = this.live;
+    if (!fans || fans.indices.length === 0) { l.on = false; l.indexCount = 0; return; }
+    gl.bindBuffer(gl.ARRAY_BUFFER, l.posBuffer); gl.bufferData(gl.ARRAY_BUFFER, fans.positions, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, l.alphaBuffer); gl.bufferData(gl.ARRAY_BUFFER, fans.alphas, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, l.indexBuffer); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, fans.indices, gl.DYNAMIC_DRAW);
+    l.indexCount = fans.indices.length; l.on = true;
+  }
+
+  get liveHandsReady() { return this.live.on; }
+
+  _drawLive(opacity) {
+    const gl = this.gl, l = this.live;
+    gl.useProgram(this.liveProgram);
+    this.point(l.posBuffer, this.liveLoc.pos, 2);
+    this.point(l.alphaBuffer, this.liveLoc.alpha, 1);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, l.indexBuffer);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.camera);
+    gl.uniform1i(this.liveUni.u_cam, 1);
+    gl.uniform1f(this.liveUni.u_opacity, Math.min(1, opacity));
+    gl.drawElements(gl.TRIANGLES, l.indexCount, gl.UNSIGNED_SHORT, 0);
+    return l.indexCount / 3;
   }
 
   // --- photo layers drawn behind the face: the body and dress (S10) and the moving hair (S9) ---------------------------------
@@ -267,7 +307,7 @@ export class MeshCompositor {
     if (this.photo) this.gl.deleteTexture(this.photo);
     this.photo = null; this.photoRing = null;
     this.setHeadMask(null);
-    this.clearHair(); this.clearBody();
+    this.clearHair(); this.clearBody(); this.setLiveHands(null);
     this.clear();
   }
 
@@ -287,8 +327,9 @@ export class MeshCompositor {
     this.clear();
     if (!this.photo || !(opacity > 0.002) || !flatten(liveLandmarks, this.positions)) return 0;
     const box = faceBox(liveLandmarks);
-    const useCamera = this.look.match > 0 && camera !== null;
-    if (useCamera) this.uploadCamera(camera);
+    const useCamera = this.look.match > 0 && camera !== null;          // colour matching
+    const liveNow = this.live.on && camera !== null;                    // your hands on top
+    if (useCamera || liveNow) this.uploadCamera(camera);
     const aspect = this.canvas.width / Math.max(1, this.canvas.height);
     let head = this.headActive;
     if (head) {                                     // the ring around the live face; if the face is degenerate, the face alone
@@ -322,6 +363,7 @@ export class MeshCompositor {
     gl.uniform2f(this.uni.u_rp, this.photoRadius[0], this.photoRadius[1]);
     const triangles = TRIANGLE_COUNT + (head ? RING_TRIANGLES : 0);
     gl.drawElements(gl.TRIANGLES, triangles * 3, gl.UNSIGNED_SHORT, 0);
+    this.liveDrawn = liveNow ? this._drawLive(opacity) : 0;                // your own hands go over everything, face included
     return triangles;
   }
 
@@ -345,7 +387,8 @@ export class MeshCompositor {
   dispose() {
     const gl = this.gl;
     this.clearHair(); this.clearBody();
-    gl.deleteProgram(this.hairProgram);
+    for (const b of [this.live.posBuffer, this.live.alphaBuffer, this.live.indexBuffer]) gl.deleteBuffer(b);
+    gl.deleteProgram(this.liveProgram); gl.deleteProgram(this.hairProgram);
     for (const t of [this.photo, this.camera, this.maskTex]) if (t) gl.deleteTexture(t);
     for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.headFadeBuffer, this.ringBuffer, this.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.program);

@@ -34,7 +34,7 @@ def test_body_and_clothes_start_cleanly_and_draw_behind_the_face(stack, tmp_path
         _wait(page, "window.__facemesh.body !== 'loading' && window.__facemesh.drawn > 0", SLOW)   # the cut blocks the page for a while
         state = page.evaluate("window.__facemesh")
         print("body state:", state["body"], "points:", state["bodyPoints"], "bones:", state["bodyBones"], "poseMs:", round(state["poseMs"], 1))
-        assert state["body"] in ("on", "nopose", "nomask"), state
+        assert state["body"] in ("on", "nopose", "nomask"), state.get("lastError")
         assert page.get_attribute("#bodyBtn", "aria-pressed") == "true"
         if state["body"] == "on":
             assert state["bodyPoints"] > 20 and state["bodyBones"] >= 1
@@ -45,6 +45,50 @@ def test_body_and_clothes_start_cleanly_and_draw_behind_the_face(stack, tmp_path
         page.click("#bodyBtn")                                                          # off again: back to the face alone
         _wait(page, "window.__facemesh.body === 'off'", SLOW)
         assert page.evaluate("window.__facemesh.drawn") > 0
+        assert not errors, errors
+    finally:
+        browser.close()
+
+
+def test_hands_on_top_with_the_body_starts_cleanly_and_never_reads_the_picture_back(stack, tmp_path):  # noqa: F811
+    """S10c: the option loads the hand model and sets up the live-hands pass. The fake camera shows no hand, so nothing is drawn by it
+    (the shapes come from a hand the model must find); what is checked is that it starts, the face and body keep drawing, and the new
+    use of the camera picture never reads anything back: the read-back hook must count zero calls from the face-mesh code."""
+    from conftest import token_cookie
+    from test_facemesh_browser import _READ_HOOK, _assert_requests_are_ours, _launch
+    from test_tracking_browser import FAKE_CAMERA
+
+    p, exe, clip, srv = stack
+    browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
+    try:
+        ctx = browser.new_context(viewport={"width": 800, "height": 1700}, permissions=["camera"])
+        ctx.add_init_script(_READ_HOOK)
+        ctx.add_cookies(token_cookie(srv.port))
+        page = ctx.new_page()
+        requests, errors = [], []
+        page.on("request", lambda r: requests.append((r.method, r.url, r.post_data)))
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"http://127.0.0.1:{srv.port}/facemesh")
+        _wait(page, "window.__facemesh.state === 'running' && window.__facemesh.found >= 3", 150)
+        _use_photo(page, _shoulders_photo(tmp_path), SLOW)
+        _wait(page, "window.__facemesh.drawn > 0", SLOW)
+        page.click("#handsTop")
+        _wait(page, "window.__facemesh.liveHands === 'on' || window.__facemesh.liveHands === 'error'", SLOW)
+        page.click("#bodyBtn")
+        _wait(page, "['on', 'nopose', 'nomask', 'error'].includes(window.__facemesh.body) && window.__facemesh.body !== 'loading'", SLOW)
+        _wait(page, "window.__facemesh.drawn > 0", SLOW)
+        state = page.evaluate("window.__facemesh")
+        print("hands on top:", state["liveHands"], "circles:", state["handCircles"], "live triangles drawn:", state["liveDrawn"], "body:", state["body"])
+        assert state["liveHands"] == "on", state.get("lastError")
+        assert state["body"] in ("on", "nopose", "nomask"), state.get("lastError")
+        _wait(page, "window.__facemesh.drawn > 0", SLOW)                       # drawing pauses while a slow model stalls the page; it comes back
+        assert page.get_attribute("#handsTop", "aria-pressed") == "true"
+        page.click("#handsTop")
+        _wait(page, "window.__facemesh.liveHands === 'off'", SLOW)
+        assert page.evaluate("window.__facemesh.drawn") > 0
+        reads = page.evaluate("window.__reads")
+        assert reads["ours"] == 0, f"the face-mesh code read the picture back: {reads}"
+        _assert_requests_are_ours(requests, srv)
         assert not errors, errors
     finally:
         browser.close()

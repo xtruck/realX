@@ -15,6 +15,7 @@ import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
 import { BODY_CLASSES, HAIR_CLASSES, headMask, maskUsable } from "./head.js";
 import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
 import { buildBodyPuppet, jointsFromPose, smoothJoints } from "./puppet.js";
+import { handFans, handShapes } from "./handlayer.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -37,6 +38,7 @@ const presence = new FacePresence();
 const jitter = new JitterMeter();
 let handLandmarker = null, hands = [], handLast = -Infinity, handTs = 0, handMs = 0;
 Object.assign(probe, { smooth: true, shown: false, opacity: 0, cover: 0, jitterRaw: 0, jitterSmooth: 0, hands: "off", handMs: 0 });
+const HAND_EVERY_MS_TOP = 50;   // while "Show my hands on top" is on (S10c)
 const HAND_EVERY_MS = 100;   // the hand model costs about as much as the face model, so it looks only every few frames
 
 // Step S5: the photo is drawn only under a signed consent for that exact photo, re-checked with the server about every 2 s,
@@ -93,7 +95,11 @@ async function cutHead(item) {
   const result = segmenter.segment(item.image);
   try {
     const cat = result.categoryMask;
-    const classes = cat ? cat.getAsUint8Array() : null;
+    // The one read-back of this page, and it is of the PHOTO: the segmenter's class map of the chosen picture (a list of class numbers).
+    // The flag lets the privacy test tell it from any read-back of the camera, which must never happen.
+    probe.readingPhotoMask = 1;
+    let classes = null;
+    try { classes = cat ? cat.getAsUint8Array() : null; } finally { probe.readingPhotoMask = 0; }
     const found = classes ? headMask(classes, cat.width, cat.height) : null;
     if (maskUsable(found)) mask = found;
     const hairFound = classes ? headMask(classes, cat.width, cat.height, 2, 512, HAIR_CLASSES) : null;   // the same cut, hair only (S9)
@@ -167,7 +173,7 @@ async function applyHair() {
     Object.assign(probe, { hair: "on", hairPoints: geometry.stats.points, hairFree: geometry.stats.free });
     setStatus("Moving hair is on: the hair of your photo swings with your head and your hands can push it. Look at the frames per second.");
   } catch (err) {
-    forgetHair(); probe.hair = "error";
+    forgetHair(); probe.hair = "error"; probe.lastError = String((err && err.message) || err).slice(0, 160);
     setStatus(`Moving hair could not start: ${err && err.message ? err.message : err}`);
   }
 }
@@ -258,7 +264,7 @@ async function applyBody() {
     Object.assign(probe, { body: "on", bodyPoints: geometry.stats.points, bodyBones: geometry.stats.bones });
     setStatus("Body and clothes on: the shirt and sleeves of your photo follow your shoulders and arms. Look at the frames per second.");
   } catch (err) {
-    forgetBody(); probe.body = "error";
+    forgetBody(); probe.body = "error"; probe.lastError = String((err && err.message) || err).slice(0, 160);
     setStatus(`Body and clothes could not start: ${err && err.message ? err.message : err}`);
   }
 }
@@ -279,6 +285,22 @@ function stepBody(now, shown) {
   }
   if (!poseJoints || !puppet.update(poseJoints)) { compositor.setBodyPositions(null); return; }
   compositor.setBodyPositions(puppet.pos, aspect);
+}
+
+// Step S10c, your hands on top (option, off by default): the photo's sleeves are drawn over your live body, which would cover your hands
+// and what you hold. This draws the live picture back on top, only inside soft shapes around the tracked hands (handlayer.js). The camera
+// picture goes to the graphics card only through the compositor's one upload method and only to the screen: never read back or stored.
+let liveHandsOn = false, handReach = 1;
+Object.assign(probe, { liveHands: "off", liveDrawn: 0, handCircles: 0 });
+
+function stepLiveHands(shown) {
+  if (!liveHandsOn || !shown || hands.length === 0) { compositor.setLiveHands(null); probe.handCircles = 0; return; }
+  const aspect = faceCanvas.width / Math.max(1, faceCanvas.height);
+  const live = shown.landmarks;
+  const faceWidth = Math.hypot((live[454].x - live[234].x) * aspect, live[454].y - live[234].y);
+  const circles = handShapes(hands, aspect, faceWidth, handReach);
+  probe.handCircles = circles.length;
+  compositor.setLiveHands(handFans(circles, aspect));
 }
 
 function setStatus(text) { $("status").textContent = text; }
@@ -333,7 +355,7 @@ async function openHandLandmarker() {
 
 // How much of the face a hand covers, from the hand model run every HAND_EVERY_MS (the last result is reused in between).
 function coverNow(now, rawLandmarks) {
-  if (now - handLast >= HAND_EVERY_MS) {
+  if (now - handLast >= (liveHandsOn ? HAND_EVERY_MS_TOP : HAND_EVERY_MS)) {   // faster while the hands are drawn, so the shape keeps up
     handLast = now; handTs = Math.max(handTs + 1, now);
     const t0 = performance.now();
     try { hands = handLandmarker.detectForVideo(video, handTs).landmarks || []; } catch (err) { hands = []; }
@@ -673,7 +695,7 @@ function frame() {
     if (landmarks) probe.box = faceBox(landmarks);   // where the face is, as fractions of the frame: four numbers
     if (measure) { measure.ms.push(took); measure.found += landmarks ? 1 : 0; measure.times.push(now); }
     // What is drawn is the steadied face (smoothed, held for a moment when lost, faded when covered), not the raw detection.
-    const handsWanted = handLandmarker && (look.hideHands || hairOn);   // the hair option reads the same hand model as the cover option
+    const handsWanted = handLandmarker && (look.hideHands || hairOn || liveHandsOn);   // the hair and hands options read the same hand model as the cover option
     const handCoverNow = handsWanted ? coverNow(now, landmarks) : 0;
     const cover = look.hideHands ? handCoverNow : 0;
     const shown = presence.update(landmarks, now, cover);
@@ -692,6 +714,7 @@ function frame() {
       else if (!verdict.ok) endPhoto(verdict.reason);
       else if (gate.label) { compositor.clear(); probe.drawn = 0; }
       else {
+        stepLiveHands(shown);                      // your own hands, drawn over everything (S10c)
         if (bodyOn) stepBody(now, shown);          // the body and dress for this frame (drawn first, behind the hair and the face)
         if (hairOn) stepHair(now, shown);          // the hair sheet for this frame (drawn behind the face by the compositor)
         // the video goes to the graphics card for colour matching only: see compositor.js
@@ -699,6 +722,7 @@ function frame() {
         probe.headDrawn = compositor.headActive;
         probe.hairDrawn = compositor.hairDrawn;
         probe.bodyDrawn = compositor.bodyDrawn;
+        probe.liveDrawn = compositor.liveDrawn;
       }
     }
     tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
@@ -813,6 +837,31 @@ function wireControls() {
       else setStatus("Whole head is on: it applies to the next photo you choose.");
     } finally { button.disabled = false; }
   });
+  $("handsTop").addEventListener("click", async (e) => {
+    const button = e.currentTarget;
+    if (liveHandsOn) {
+      liveHandsOn = false; button.setAttribute("aria-pressed", "false");
+      if (compositor) compositor.setLiveHands(null);
+      probe.liveHands = "off"; probe.handCircles = 0;
+      if (!look.hideHands && !hairOn) closeHands();            // keep the hand model if the cover or hair option still uses it
+      setStatus("Your hands are no longer drawn on top.");
+      return;
+    }
+    button.disabled = true;
+    setStatus("Loading the hand model...");
+    try {
+      handLandmarker = handLandmarker || await openHandLandmarker();
+      liveHandsOn = true; button.setAttribute("aria-pressed", "true"); probe.liveHands = "on";
+      setStatus("Your own hands are drawn on top of the photo: what you hold stays visible. This costs speed: look at the frames per second.");
+    } catch (err) {
+      probe.liveHands = "error"; probe.lastError = String((err && err.message) || err).slice(0, 160);
+      setStatus(`The hand model could not start: ${err && err.message ? err.message : err}`);
+    } finally { button.disabled = false; }
+  });
+  $("handReach").addEventListener("input", (e) => {
+    handReach = Number(e.currentTarget.value) / 100;
+    $("handReachValue").textContent = `${e.currentTarget.value}%`;
+  });
   $("bodyBtn").addEventListener("click", async (e) => {
     const button = e.currentTarget;
     if (bodyOn) {
@@ -834,7 +883,7 @@ function wireControls() {
     if (hairOn) {
       hairOn = false; button.setAttribute("aria-pressed", "false");
       forgetHair(); probe.hair = "off";
-      if (!look.hideHands) closeHands();                       // keep the hand model if the cover option still uses it
+      if (!look.hideHands && !liveHandsOn) closeHands();       // keep the hand model if the cover or hands option still uses it
       if (!headOn && !bodyOn) closeSegmenter();                // and the segmenter if Whole head or the body still uses it
       setStatus("Moving hair off.");
       return;
@@ -849,7 +898,7 @@ function wireControls() {
   $("hideHands").addEventListener("click", async (e) => {
     const button = e.currentTarget;
     if (look.hideHands) {
-      look.hideHands = false; if (!hairOn) closeHands(); probe.hands = "off"; probe.handMs = 0; button.setAttribute("aria-pressed", "false");
+      look.hideHands = false; if (!hairOn && !liveHandsOn) closeHands(); probe.hands = "off"; probe.handMs = 0; button.setAttribute("aria-pressed", "false");
       return;
     }
     button.disabled = true;
