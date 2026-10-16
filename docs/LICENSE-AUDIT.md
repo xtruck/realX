@@ -84,6 +84,13 @@ server only serves the model files, after checking their pinned sha256.
 Voice processing is pure DSP (no model). The demo footage uses the public-domain NASA
 portrait from scikit-image, only in tests and the demo scene.
 
+### Object detectors considered for showing a held object (checked 2026-10-16)
+
+| Model | License evidence | Commercial use | Status |
+|---|---|---|---|
+| MediaPipe Object Detector, EfficientDet-Lite0 (`efficientdet_lite0.tflite`) | the MediaPipe docs page states no licence for the weights (only for the page and the code samples); only a third-party package claims Apache-2.0; no model card found; trained on COCO | unverified | **not adopted** (2026-10-16): checked the docs page, the Kaggle listing (did not render) and MediaPipe's model list; needs a primary-source licence statement first |
+| OpenCV Zoo NanoDet-Plus and YOLOX (`object_detection_nanodet`, `object_detection_yolox`) | the directory README says "All files in this directory are licensed under Apache 2.0 License" (LICENSE file present); both trained on COCO | yes, on the licence | **not adopted**: they are ONNX models, and running them in the page needs the camera pixels in JavaScript, which the page's no-read-back rule forbids (docs/FACEMESH.md) |
+
 ## Repo hygiene
 
 - This repo is **public** by the owner's choice. Never commit models, keys or media.

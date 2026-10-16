@@ -180,6 +180,10 @@ background (under 2% or over 95% of the photo), the option says so and draws the
   the screen only: no read-back, no copy, no storage, no network. It adds no new upload call and no new way out. **Status: requested by
   the owner in chat on 2026-10-16 and written down here; it still needs his explicit confirmation as a reviewed exception.** Nothing in
   the live picture is analysed on the CPU for it (the hand shapes come from the hand model's own landmarks).
+* **Why there is no object detector (S10d).** Showing a held object by detecting it was looked at and not adopted: MediaPipe's EfficientDet-Lite0
+  weights have no licence statement from Google that I could verify, and the OpenCV Zoo detectors (Apache-2.0) are ONNX models that would need
+  the camera pixels in JavaScript, which this page never does. Rows in `docs/LICENSE-AUDIT.md`. Instead "Grip reach" stretches the live area
+  along the knuckle line of a curled hand (a geometric guess, off at 0).
 * Wanting more (for example reading the live skin colour on the CPU) needs a new reviewed exception; these do not cover it.
 
 ## Use

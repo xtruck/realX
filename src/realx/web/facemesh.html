@@ -69,6 +69,7 @@
     <button id="headBtn" type="button" aria-pressed="false" aria-describedby="headNote">Whole head (hair, ears, neck)</button>
     <button id="handsTop" type="button" aria-pressed="false" aria-describedby="handsNote">Show my hands on top</button>
     <label>Hand reach <input id="handReach" type="range" min="50" max="200" value="100" step="10"> <span id="handReachValue">100%</span></label>
+    <label>Grip reach <input id="gripReach" type="range" min="0" max="200" value="100" step="10"> <span id="gripReachValue">100%</span></label>
     <button id="bodyBtn" type="button" aria-pressed="false" aria-describedby="bodyNote">Body and clothes</button>
     <button id="hairBtn" type="button" aria-pressed="false" aria-describedby="hairNote">Hair that moves</button>
     <button id="keepFace" type="button" aria-pressed="true">Keep my eyes and mouth</button>
@@ -86,7 +87,7 @@
     It moves like a soft sheet of hair, not single strands, and only the hair that shows in the photo.</p>
   <p class="note" id="handsNote">Show my hands on top (off by default): your own live hands, and what is in them, are drawn over the photo's body, so a bottle in your hand stays visible.
     It uses the hand model, and it sends your live picture to the graphics card for this, the same way colour matching does: it is only drawn on this screen, never read back, saved or sent.
-    Only the area around your hands is shown; <em>Hand reach</em> makes that area bigger or smaller, and an object much bigger than your hand is cut off at its edge. Your hand keeps your own skin colour.</p>
+    Only the area around your hands is shown; <em>Hand reach</em> makes that area bigger or smaller. When your hand is curled around something, <em>Grip reach</em> stretches the area along your knuckles, where a bottle or a cup usually sits: this is a <strong>guess</strong>, not detection (0 turns it off), and it also shows whatever else is in that area. Your hand keeps your own skin colour.</p>
   <p class="note" id="bodyNote">Body and clothes (off by default): the shirt and sleeves of your photo follow your shoulders and arms and are sized to you.
     It cuts the body and clothes out of your <em>photo</em> (not the camera), finds the photo's shoulders once, and runs the body model on the live video about 14 times a second, so watch the frames per second.
     It works best when your photo shows the shoulders. It is a flat cut-out bent along the arms, not a 3D body, and it does not yet hide your own clothes underneath.</p>

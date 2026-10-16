@@ -15,7 +15,7 @@ import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
 import { BODY_CLASSES, HAIR_CLASSES, headMask, maskUsable } from "./head.js";
 import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
 import { buildBodyPuppet, jointsFromPose, smoothJoints } from "./puppet.js";
-import { handFans, handShapes } from "./handlayer.js";
+import { gripShapes, handFans, handShapes } from "./handlayer.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -290,8 +290,8 @@ function stepBody(now, shown) {
 // Step S10c, your hands on top (option, off by default): the photo's sleeves are drawn over your live body, which would cover your hands
 // and what you hold. This draws the live picture back on top, only inside soft shapes around the tracked hands (handlayer.js). The camera
 // picture goes to the graphics card only through the compositor's one upload method and only to the screen: never read back or stored.
-let liveHandsOn = false, handReach = 1;
-Object.assign(probe, { liveHands: "off", liveDrawn: 0, handCircles: 0 });
+let liveHandsOn = false, handReach = 1, gripReach = 1;
+Object.assign(probe, { liveHands: "off", liveDrawn: 0, handCircles: 0, gripCircles: 0 });
 
 function stepLiveHands(shown) {
   if (!liveHandsOn || !shown || hands.length === 0) { compositor.setLiveHands(null); probe.handCircles = 0; return; }
@@ -299,8 +299,9 @@ function stepLiveHands(shown) {
   const live = shown.landmarks;
   const faceWidth = Math.hypot((live[454].x - live[234].x) * aspect, live[454].y - live[234].y);
   const circles = handShapes(hands, aspect, faceWidth, handReach);
-  probe.handCircles = circles.length;
-  compositor.setLiveHands(handFans(circles, aspect));
+  const grip = gripShapes(hands, aspect, faceWidth, gripReach);    // a guess about a curled hand's object: stretches along the knuckle line
+  probe.handCircles = circles.length; probe.gripCircles = grip.length;
+  compositor.setLiveHands(handFans(circles.concat(grip), aspect));
 }
 
 function setStatus(text) { $("status").textContent = text; }
@@ -861,6 +862,10 @@ function wireControls() {
   $("handReach").addEventListener("input", (e) => {
     handReach = Number(e.currentTarget.value) / 100;
     $("handReachValue").textContent = `${e.currentTarget.value}%`;
+  });
+  $("gripReach").addEventListener("input", (e) => {
+    gripReach = Number(e.currentTarget.value) / 100;
+    $("gripReachValue").textContent = `${e.currentTarget.value}%`;
   });
   $("bodyBtn").addEventListener("click", async (e) => {
     const button = e.currentTarget;

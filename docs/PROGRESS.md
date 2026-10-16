@@ -140,3 +140,5 @@ tested and what is not, the owner's decisions, and the commands to rerun everyth
 - Speed: about 9-14 fps at 640x480 on the dev laptop's CPU.
 
 - S9/S10: Hair that moves, Body and clothes, and Show my hands on top, all off by default, on the face-mesh page. Body: the photo shirt and sleeves follow the live shoulders and arms (puppet.js). Hands on top draws the live picture around the tracked hands (a second documented use of the one camera upload, awaiting the owner confirmation: docs/FACEMESH.md). Tested: Node suite, and browser smoke tests on a software renderer with the photo and camera being the same picture. Not shown: how it looks on a real webcam, real speed, hiding the live clothes underneath, the live hand recoloured to the photo skin tone, stains and eating.
+
+- S10d: no object detector adopted (licence unverified for MediaPipe EfficientDet-Lite0; OpenCV Zoo detectors would need the camera pixels in JavaScript). "Grip reach" stretches the live-hand area along the knuckle line of a curled hand: a geometric guess, tested with synthetic hands only, never with a real bottle.

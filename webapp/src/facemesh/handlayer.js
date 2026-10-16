@@ -74,3 +74,54 @@ export function handFans(circles, aspect) {
   });
   return { positions, alphas, indices: indices.subarray(0, ii), count: n * per };
 }
+
+// --- the grip shape (step S10d): a guess about what a curled hand is holding ----------------------------------------------------
+//
+// No detector is used (the available object-detector weights have no verified licence, and the others would need the camera pixels
+// in JavaScript; see docs/LICENSE-AUDIT.md). The guess is geometric: when a hand is curled around a bottle or a cup, the four
+// fingers stack ALONG the object's long axis, which is the line from the index knuckle (point 5) to the little-finger knuckle
+// (point 17). So the visible area is stretched along that line, centred just in front of the palm. It is a guess: a thin object, an
+// object held differently, or a bigger one are not covered, and the shape also shows whatever else is in that area of the live picture.
+
+export const GRIP_RATIO = 1.9;       // wrist-to-fingertip over wrist-to-knuckle: about 3 for an open hand, about 1 to 1.8 for a curled one
+const GRIP_RADIUS = 0.27;            // of the face width: a bottle is about half a face wide
+const GRIP_HALF = 0.9;               // of the face width, at extent 1: the shape reaches this far each way along the knuckle line
+const GRIP_MAX_PER_HAND = 14;
+
+/** True when the hand is curled around something. `hand` is 21 points ({x, y} normalised); `aspect` makes x and y the same unit. */
+export function isGripping(hand, aspect = 1) {
+  if (!hand || hand.length < 21 || !(aspect > 0)) return false;
+  const d = (a, b) => Math.hypot((hand[a].x - hand[b].x) * aspect, hand[a].y - hand[b].y);
+  const knuckle = d(0, 9), tip = d(0, 12);
+  if (!Number.isFinite(knuckle) || !Number.isFinite(tip) || !(knuckle > 1e-6)) return false;
+  return tip < knuckle * GRIP_RATIO;
+}
+
+/**
+ * Circles that stretch the visible area along the knuckle line of each curled hand, as { x, y, r } in the same units as handShapes.
+ * `extent` scales how far they reach (1 = about a face width each way); 0 or less gives none.
+ */
+export function gripShapes(hands, aspect, faceWidth, extent = 1) {
+  if (!Array.isArray(hands) || !(aspect > 0) || !(faceWidth > 0) || !(extent > 0)) return [];
+  const out = [];
+  for (const hand of hands) {
+    if (!isGripping(hand, aspect)) continue;
+    const p = (i) => [hand[i].x * aspect, hand[i].y];
+    const [ax, ay] = p(5), [bx, by] = p(17);
+    const len = Math.hypot(ax - bx, ay - by);
+    if (!(len > 1e-9)) continue;
+    const ux = (ax - bx) / len, uy = (ay - by) / len;
+    const palm = [0, 5, 9, 13, 17].map(p);
+    const px = palm.reduce((s, q) => s + q[0], 0) / 5, py = palm.reduce((s, q) => s + q[1], 0) / 5;
+    const [mx, my] = p(9);
+    const cx = (px + mx) / 2, cy = (py + my) / 2;                       // just in front of the palm, where the object sits
+    const half = Math.min(3, extent) * GRIP_HALF * faceWidth, r = GRIP_RADIUS * faceWidth, step = r * 0.8;
+    const steps = Math.min(GRIP_MAX_PER_HAND, Math.max(1, Math.round((2 * half) / step) + 1));
+    for (let k = 0; k < steps; k++) {
+      const t = steps === 1 ? 0 : -half + (2 * half * k) / (steps - 1);
+      const x = cx + ux * t, y = cy + uy * t;
+      if (Number.isFinite(x) && Number.isFinite(y)) out.push({ x, y, r });
+    }
+  }
+  return out;
+}
