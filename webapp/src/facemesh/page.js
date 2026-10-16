@@ -5,15 +5,16 @@
 // Privacy rule, same as the tracker: the camera picture is shown by a <video> and handed to MediaPipe. It is never
 // drawn to a canvas, read back, recorded, stored or sent; only numbers (landmarks) are drawn on top.
 // facemesh.test.mjs checks this file for the calls that would break that.
-import { FaceLandmarker, FilesetResolver, HandLandmarker, ImageSegmenter } from "@mediapipe/tasks-vision";
+import { FaceLandmarker, FilesetResolver, HandLandmarker, ImageSegmenter, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { MeshCompositor } from "./compositor.js";
 import { RollingStats, buildMesh, checkPhotoFaces, faceBox, fillSegments } from "./mesh.js";
 import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
 import { ConsentClient, sha256Hex } from "./consent.js";
 import { labelProblem, readLabel } from "./guard.js";
 import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
-import { HAIR_CLASSES, headMask, maskUsable } from "./head.js";
+import { BODY_CLASSES, HAIR_CLASSES, headMask, maskUsable } from "./head.js";
 import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
+import { buildBodyPuppet, jointsFromPose, smoothJoints } from "./puppet.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -61,6 +62,7 @@ function applyLook() {
 let segmenter = null, headOn = false;
 const masks = new WeakMap();        // gallery item -> its head mask, or false when the photo could not be cut
 const hairMasks = new WeakMap();    // gallery item -> its hair-only mask (S9), or false
+const bodyMasks = new WeakMap();    // gallery item -> its body-and-clothes mask (S10), or false
 Object.assign(probe, { head: "off", headCutMs: 0, headDrawn: false });
 
 async function openSegmenter() {
@@ -96,6 +98,8 @@ async function cutHead(item) {
     if (maskUsable(found)) mask = found;
     const hairFound = classes ? headMask(classes, cat.width, cat.height, 2, 512, HAIR_CLASSES) : null;   // the same cut, hair only (S9)
     hairMasks.set(item, maskUsable(hairFound, 0.004, 0.9) ? hairFound : false);
+    const bodyFound = classes ? headMask(classes, cat.width, cat.height, 2, 512, BODY_CLASSES) : null;   // and body skin + clothes (S10)
+    bodyMasks.set(item, maskUsable(bodyFound, 0.03, 0.95) ? bodyFound : false);
   } finally { try { result.close(); } catch (e) { /* nothing to free */ } }
   probe.headCutMs = performance.now() - t0;
   masks.set(item, mask);
@@ -193,6 +197,88 @@ function stepHair(now, shown) {
   compositor.setHairPositions(sheet.pos, aspect);
   probe.hairMs = probe.hairMs ? 0.9 * probe.hairMs + 0.1 * (performance.now() - t0) : performance.now() - t0;
   probe.hairHands = hands.length;
+}
+
+// Step S10, body and dress (option, off by default): the photo's shirt and arms become a puppet (puppet.js) that follows the live
+// shoulders, elbows and wrists. The photo is cut once (shared with Whole head and Hair) and run through the pose model once; the live
+// pose comes from the pose model on the video every POSE_EVERY_MS. Nothing here reads back, stores or sends the camera picture.
+const POSE_EVERY_MS = 70;
+let bodyOn = false, puppet = null, bodyItem = null, poseLandmarker = null, poseLast = -Infinity, poseTs = 0, poseSmooth = null, poseJoints = null;
+Object.assign(probe, { body: "off", bodyPoints: 0, bodyBones: 0, poseMs: 0, bodyDrawn: 0 });
+
+async function openPoseLandmarker(mode) {
+  const fileset = await FilesetResolver.forVisionTasks("/mp/wasm");
+  let lastErr;
+  for (const d of ["GPU", "CPU"]) {
+    try {
+      return await PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: "/mp/models/pose_landmarker_lite.task", delegate: d }, runningMode: mode, numPoses: 1,
+        minPoseDetectionConfidence: 0.4, minPosePresenceConfidence: 0.4, minTrackingConfidence: 0.4,
+      });
+    } catch (err) { lastErr = err; }
+  }
+  throw lastErr;
+}
+
+function closePose() {
+  if (poseLandmarker) { try { poseLandmarker.close(); } catch (e) { /* already closed */ } }
+  poseLandmarker = null; poseLast = -Infinity; poseSmooth = null; poseJoints = null;
+}
+
+function forgetBody() {
+  puppet = null; bodyItem = null;
+  if (compositor) compositor.clearBody();
+  probe.bodyPoints = 0; probe.bodyBones = 0;
+}
+
+async function applyBody() {
+  const item = gallery.active;
+  if (!compositor) return;
+  forgetBody();
+  if (!bodyOn) { probe.body = "off"; return; }
+  if (!item) { probe.body = "on"; return; }                    // nothing to cut yet: done when a photo goes on screen
+  probe.body = "loading";
+  setStatus("Cutting the body and clothes out of your photo and finding its shoulders (once)...");
+  try {
+    await cutHead(item);
+    if (!bodyOn || gallery.active !== item) return;            // the user moved on while the model worked
+    const mask = bodyMasks.get(item);
+    if (!mask) { probe.body = "nomask"; setStatus("Body and clothes are not available for this photo: the body could not be told from the background."); return; }
+    const w = item.image.naturalWidth || item.image.width, h = item.image.naturalHeight || item.image.height;
+    const still = await openPoseLandmarker("IMAGE");           // the PHOTO's pose, once; the model is closed straight after
+    let photoPose = null;
+    try { photoPose = (still.detect(item.image).landmarks || [])[0] || null; } finally { try { still.close(); } catch (e) { /* already closed */ } }
+    if (!bodyOn || gallery.active !== item) return;
+    const geometry = buildBodyPuppet(mask, photoPose, w / h);
+    if (!geometry) { probe.body = "nopose"; setStatus("No shoulders were found in this photo, so the body and clothes cannot follow you. Use a photo that shows the shoulders."); return; }
+    if (!poseLandmarker) poseLandmarker = await openPoseLandmarker("VIDEO");
+    if (!bodyOn || gallery.active !== item) return;
+    puppet = geometry; bodyItem = item;
+    compositor.setBody(geometry, mask);
+    Object.assign(probe, { body: "on", bodyPoints: geometry.stats.points, bodyBones: geometry.stats.bones });
+    setStatus("Body and clothes on: the shirt and sleeves of your photo follow your shoulders and arms. Look at the frames per second.");
+  } catch (err) {
+    forgetBody(); probe.body = "error";
+    setStatus(`Body and clothes could not start: ${err && err.message ? err.message : err}`);
+  }
+}
+
+// One frame of the body: the live pose (looked at every POSE_EVERY_MS, smoothed in between), then the puppet moves to it.
+function stepBody(now, shown) {
+  if (!puppet || bodyItem !== gallery.active || !compositor.bodyReady || !shown || !poseLandmarker) { compositor.setBodyPositions(null); return; }
+  const aspect = faceCanvas.width / Math.max(1, faceCanvas.height);
+  if (now - poseLast >= POSE_EVERY_MS) {
+    poseLast = now; poseTs = Math.max(poseTs + 1, now);
+    const t0 = performance.now();
+    let landmarks = null;
+    try { landmarks = (poseLandmarker.detectForVideo(video, poseTs).landmarks || [])[0] || null; } catch (err) { landmarks = null; }
+    const took = performance.now() - t0;
+    probe.poseMs = probe.poseMs ? 0.8 * probe.poseMs + 0.2 * took : took;
+    const s = smoothJoints(poseSmooth, jointsFromPose(landmarks, aspect), 0.6);
+    poseSmooth = s.state; poseJoints = s.joints;
+  }
+  if (!poseJoints || !puppet.update(poseJoints)) { compositor.setBodyPositions(null); return; }
+  compositor.setBodyPositions(puppet.pos, aspect);
 }
 
 function setStatus(text) { $("status").textContent = text; }
@@ -325,6 +411,7 @@ function makeActive(item) {
   syncGallery();
   if (headOn) applyHead();                          // a new photo has no head mask until it has been cut
   if (hairOn) applyHair();                          // and no moving hair until its sheet is built
+  if (bodyOn) applyBody();                          // and no body layer until its puppet is built
 }
 
 // What the gallery looks like to the page and to a test.
@@ -605,11 +692,13 @@ function frame() {
       else if (!verdict.ok) endPhoto(verdict.reason);
       else if (gate.label) { compositor.clear(); probe.drawn = 0; }
       else {
+        if (bodyOn) stepBody(now, shown);          // the body and dress for this frame (drawn first, behind the hair and the face)
         if (hairOn) stepHair(now, shown);          // the hair sheet for this frame (drawn behind the face by the compositor)
         // the video goes to the graphics card for colour matching only: see compositor.js
         probe.drawn = compositor.draw(shown ? shown.landmarks : null, video, shown ? shown.opacity : 0);
         probe.headDrawn = compositor.headActive;
         probe.hairDrawn = compositor.hairDrawn;
+        probe.bodyDrawn = compositor.bodyDrawn;
       }
     }
     tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
@@ -713,7 +802,7 @@ function wireControls() {
     if (headOn) {
       headOn = false; button.setAttribute("aria-pressed", "false");
       if (compositor) compositor.setHead(false);
-      if (!hairOn) closeSegmenter(); probe.head = "off";
+      if (!hairOn && !bodyOn) closeSegmenter(); probe.head = "off";
       setStatus("Whole head off: only the face is drawn.");
       return;
     }
@@ -724,13 +813,29 @@ function wireControls() {
       else setStatus("Whole head is on: it applies to the next photo you choose.");
     } finally { button.disabled = false; }
   });
+  $("bodyBtn").addEventListener("click", async (e) => {
+    const button = e.currentTarget;
+    if (bodyOn) {
+      bodyOn = false; button.setAttribute("aria-pressed", "false");
+      forgetBody(); closePose(); probe.body = "off"; probe.poseMs = 0;
+      if (!headOn && !hairOn) closeSegmenter();                // keep the segmenter if Whole head or the hair still uses it
+      setStatus("Body and clothes off.");
+      return;
+    }
+    button.disabled = true;
+    try {
+      bodyOn = true; button.setAttribute("aria-pressed", "true"); probe.body = "on";
+      if (gallery.active) await applyBody();
+      else setStatus("Body and clothes are on: they apply to the next photo you choose.");
+    } finally { button.disabled = false; }
+  });
   $("hairBtn").addEventListener("click", async (e) => {
     const button = e.currentTarget;
     if (hairOn) {
       hairOn = false; button.setAttribute("aria-pressed", "false");
       forgetHair(); probe.hair = "off";
       if (!look.hideHands) closeHands();                       // keep the hand model if the cover option still uses it
-      if (!headOn) closeSegmenter();                           // and the segmenter if Whole head still uses it
+      if (!headOn && !bodyOn) closeSegmenter();                // and the segmenter if Whole head or the body still uses it
       setStatus("Moving hair off.");
       return;
     }
@@ -782,7 +887,7 @@ async function main() {
   window.addEventListener("pagehide", () => {
     stopped = true;
     try { landmarker.close(); } catch (e) { /* already closed */ }
-    closeHands(); closeSegmenter();
+    closeHands(); closePose(); closeSegmenter();
     for (const item of gallery.list()) item.client.revoke();   // best effort: the page is going away, so its consents should not outlive it
     stream.getTracks().forEach((t) => t.stop());
   });

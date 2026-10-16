@@ -169,3 +169,25 @@ export function buildBodyPuppet(mask, photoPose, aspect, options = {}) {
     stats: { points: n, cells, bones: BONES.filter((b) => seg.bones[b]).length },
   });
 }
+
+/**
+ * Steadies the live joints: each is blended toward its new place by `alpha` (1 = no smoothing). A joint that is not seen now keeps its
+ * last place for `hold` calls and then goes missing; a joint that was missing and is seen jumps straight to it.
+ * `state` is the object returned last time (or null at the start); returns { joints, state }.
+ */
+export function smoothJoints(state, joints, alpha = 0.5, hold = 4) {
+  const out = {}, next = { last: {}, missed: {} };
+  const prev = state || { last: {}, missed: {} };
+  for (const name of Object.keys(POSE)) {
+    const now = joints ? joints[name] : null, before = prev.last[name] || null;
+    if (now) {
+      out[name] = before ? [before[0] + alpha * (now[0] - before[0]), before[1] + alpha * (now[1] - before[1])] : now;
+      next.last[name] = out[name]; next.missed[name] = 0;
+    } else {
+      const missed = (prev.missed[name] || 0) + 1;
+      out[name] = before && missed <= hold ? before : null;
+      next.last[name] = out[name]; next.missed[name] = missed;
+    }
+  }
+  return { joints: out, state: next };
+}

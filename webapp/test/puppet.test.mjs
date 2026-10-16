@@ -1,7 +1,7 @@
 // The body and dress puppet (src/facemesh/puppet.js) on a synthetic photo: a torso and two arms in a mask, with a known pose.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BONES, BodyPuppet, boneSegments, boneTransform, buildBodyPuppet, jointsFromPose } from "../src/facemesh/puppet.js";
+import { BONES, BodyPuppet, boneSegments, boneTransform, buildBodyPuppet, jointsFromPose, smoothJoints } from "../src/facemesh/puppet.js";
 
 const W = 400, H = 500, ASPECT = W / H;
 
@@ -137,4 +137,20 @@ test("a puppet that is handed non-finite numbers falls back to the rest pose ins
   assert.equal(p.update(j), false);
   assert.ok(p.pos.every(Number.isFinite));
   assert.ok(p instanceof BodyPuppet);
+});
+
+test("smoothing blends joints toward their new place, holds a missing joint for a few frames, then lets it go", () => {
+  const a = jointsFromPose(pose(), ASPECT);
+  let r = smoothJoints(null, a, 0.5);
+  assert.deepEqual(r.joints.lSh, a.lSh, "the first sight of a joint is taken as it is");
+  const b = jointsFromPose(pose({ 11: { x: 0.78 } }), ASPECT);
+  r = smoothJoints(r.state, b, 0.5);
+  assert.ok(Math.abs(r.joints.lSh[0] - (a.lSh[0] + b.lSh[0]) / 2) < 1e-9, "half way there");
+  const gone = jointsFromPose(pose({ 11: null }), ASPECT);
+  for (let i = 0; i < 4; i++) { r = smoothJoints(r.state, gone, 0.5); assert.ok(r.joints.lSh, `held on missed frame ${i + 1}`); }
+  r = smoothJoints(r.state, gone, 0.5);
+  assert.equal(r.joints.lSh, null, "after the hold it is gone");
+  r = smoothJoints(r.state, b, 0.5);
+  assert.deepEqual(r.joints.lSh, b.lSh, "and a joint that comes back is taken as it is");
+  assert.equal(smoothJoints(null, null).joints.lSh, null);
 });

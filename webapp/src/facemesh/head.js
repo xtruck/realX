@@ -25,6 +25,7 @@ export const REACH = { top: 0.55, side: 0.3, bottom: 0.5 };
 // The classes of MediaPipe's multiclass selfie segmenter: 0 background, 1 hair, 2 body skin, 3 face skin, 4 clothes, 5 others
 // (hats, glasses, earrings...). The head is hair, both skins and the accessories; the background and the clothes are not.
 export const HEAD_CLASSES = [1, 2, 3, 5];
+export const BODY_CLASSES = [2, 4];   // body skin and clothes: what the body and dress puppet of step S10 is cut from
 export const HAIR_CLASSES = [1];   // hair only: what the moving hair of step S9 is cut from
 
 /**
