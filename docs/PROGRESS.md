@@ -6,7 +6,9 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
-- [x] Mission phase 0 (2026-10-16): `docs/MISSION.md` plan and acceptance table; `scripts/bench_facemesh.py` page benchmark on the real UHD 620 (BENCHMARKS.md section 9); hand model idle back-off; licence rows for GHOST / RVM / DeepFaceLive
+- [x] S10h hand skin-tone matching (2026-10-16): option "Match my hands' skin to the photo" (off by default). In the hands-on-top shader, skin-coloured live pixels move towards the photo's cheek colour; both reference colours are sampled on the graphics card (no read-back); non-skin (bottle, sleeve) untouched. Shader tested on synthetic textures (tests/test_facemesh_skin.py); never tried with a real hand
+
+- [x] Mission phase 0 (2026-10-16): `docs/MISSION.md` plan and acceptance table; `scripts/bench_facemesh.py` page benchmark on the real UHD 620 (three runs, noisy, BENCHMARKS.md section 9); hand model idle back-off (250 ms) with poll counter; licence rows for GHOST / RVM / DeepFaceLive
 
 - [x] M0 foundation: docs, pipeline core, consent gate, watermark
 - [x] ECC review 1 (architect, security, python): findings fixed
@@ -140,6 +142,16 @@ tested and what is not, the owner's decisions, and the commands to rerun everyth
 - Voice changing is DSP pitch shifting, not neural voice conversion.
 - Watermarks are baseline LSB marks: they do not survive lossy compression.
 - Speed: about 9-14 fps at 640x480 on the dev laptop's CPU.
+
+- GPU edition (this private repo): plan written in `docs/GPU-EDITION.md` (routes A/B/C for commercial-safe models, milestones G0-G5). No code changed yet; no swap model is cleared for commercial use.
+
+- `realx gpu-check` and `scripts/windows/gpu-check.ps1`: tell whether a computer can run the GPU edition (NVIDIA card, driver, GPU build of ONNX Runtime) and write a small JSON report. Reads only; no model is run, so GPU speed is still unmeasured.
+
+- Licensing: `realx license request|status|install`, `src/realx/licensing/` (computer id, Ed25519-signed licence file, activation request code), seller tool `tools/vendor/realx_vendor.py` (keygen, issue, ledger). Deterrent against casual sharing, not unbreakable; see `docs/LICENSING.md`. Not yet wired into a commercial feature, because no commercial pipeline exists yet.
+
+- Photo and video swap pipeline: `realx swap`, `realx swap-consent`, `src/realx/media.py`, `src/realx/stages/swap.py` (engine registry + stage), provenance file per output. Licence-gated. No production engine: only the test stand-in `synthetic_blend` (not a swap). See `docs/SWAP-PIPELINE.md`.
+
+- Mira, a second bundled character (`--avatar mira`): long hair as 11 simulated strands, collider spheres on the head, body and every finger so a tracked hand pushes the hair, nose, eyelashes, ears. Physics checked with the real three-vrm solver in `webapp/test/hair.test.mjs`; a guard (`webapp/src/hair.js`) resets the hair if the solver ever returns NaN. This is the avatar fallback. The main goal is hair from a consented PHOTO that moves and reacts to the hand: not built yet.
 
 - S9/S10: Hair that moves, Body and clothes, and Show my hands on top, all off by default, on the face-mesh page. Body: the photo shirt and sleeves follow the live shoulders and arms (puppet.js). Hands on top draws the live picture around the tracked hands (a second documented use of the one camera upload, awaiting the owner confirmation: docs/FACEMESH.md). Tested: Node suite, and browser smoke tests on a software renderer with the photo and camera being the same picture. Not shown: how it looks on a real webcam, real speed, hiding the live clothes underneath, the live hand recoloured to the photo skin tone, stains and eating.
 

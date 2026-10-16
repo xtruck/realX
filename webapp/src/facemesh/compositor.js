@@ -83,9 +83,29 @@ void main() {
 // card only through uploadCamera(), is only sampled by this shader, and goes to the screen and nowhere else. Never read back.
 const LIVE_VERT = `attribute vec2 a_pos; attribute float a_alpha; varying vec2 v_scr; varying float v_alpha;
 void main() { v_scr = a_pos; v_alpha = a_alpha; gl_Position = vec4(a_pos.x * 2.0 - 1.0, 1.0 - a_pos.y * 2.0, 0.0, 1.0); }`;
+// Step S10h, skin-tone matching for the hands: u_skin (0 = off) moves the SKIN-coloured pixels of the live hand towards the photo
+// person's skin. The two reference colours are both taken on the graphics card: the live one from the camera texture beside the live
+// cheek (u_livePos), the photo one from the photo beside its cheek (u_photoPos). A pixel counts as skin when its chroma is near the live
+// reference, so a bottle, a sleeve or a ring is left alone. No read-back: the colours never reach the CPU.
 const LIVE_FRAG = `precision mediump float;
-varying vec2 v_scr; varying float v_alpha; uniform sampler2D u_cam; uniform float u_opacity;
-void main() { float a = v_alpha * u_opacity; gl_FragColor = vec4(texture2D(u_cam, v_scr).rgb * a, a); }`;
+varying vec2 v_scr; varying float v_alpha; uniform sampler2D u_cam; uniform sampler2D u_photo; uniform float u_opacity;
+uniform float u_skin; uniform vec2 u_livePos; uniform vec2 u_photoPos; uniform vec2 u_liveR; uniform vec2 u_photoR;
+vec3 toYcc(vec3 c) { return vec3(dot(c, vec3(0.299, 0.587, 0.114)), (c.b - dot(c, vec3(0.299, 0.587, 0.114))) * 0.564, (c.r - dot(c, vec3(0.299, 0.587, 0.114))) * 0.713); }
+vec3 fromYcc(vec3 y) { float r = y.x + y.z / 0.713; float b = y.x + y.y / 0.564; return vec3(r, (y.x - 0.299 * r - 0.114 * b) / 0.587, b); }
+vec3 around(sampler2D t, vec2 c, vec2 r) {
+  return (texture2D(t, c).rgb + texture2D(t, c + vec2(r.x, 0.0)).rgb + texture2D(t, c - vec2(r.x, 0.0)).rgb + texture2D(t, c + vec2(0.0, r.y)).rgb + texture2D(t, c - vec2(0.0, r.y)).rgb) / 5.0;
+}
+void main() {
+  vec3 cam = texture2D(u_cam, v_scr).rgb;
+  if (u_skin > 0.0) {
+    vec3 s = toYcc(around(u_cam, u_livePos, u_liveR)), t = toYcc(around(u_photo, u_photoPos, u_photoR)), p = toYcc(cam);
+    float w = (1.0 - smoothstep(0.04, 0.10, distance(p.yz, s.yz))) * u_skin;
+    p.yz += w * (t.yz - s.yz);
+    p.x += w * 0.5 * (t.x - s.x);
+    cam = clamp(fromYcc(p), 0.0, 1.0);
+  }
+  float a = v_alpha * u_opacity; gl_FragColor = vec4(cam * a, a);
+}`;
 
 // Step S10g, spills and stains: coloured soft circles drawn over the shirt (stains.js). Nothing from the camera is used.
 const STAIN_VERT = `attribute vec2 a_pos; attribute float a_alpha; attribute vec3 a_color; varying float v_alpha; varying vec3 v_color;
@@ -103,7 +123,8 @@ export class MeshCompositor {
     this.positions = new Float32Array(HEAD_VERTEX_COUNT * 2);   // 468 face points, then the head ring
     this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
-    this.look = { match: 1, keep: 1 };
+    this.look = { match: 1, keep: 1, skin: 0 };
+    this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
     this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
     this.program = link(gl, VERT, FRAG);
     gl.useProgram(this.program);
@@ -135,7 +156,7 @@ export class MeshCompositor {
     this.body = null; this.bodyDrawn = 0;      // S10: the body and dress layer
     this.liveProgram = link(gl, LIVE_VERT, LIVE_FRAG);                  // S10c: your hands on top
     this.liveLoc = { pos: gl.getAttribLocation(this.liveProgram, "a_pos"), alpha: gl.getAttribLocation(this.liveProgram, "a_alpha") };
-    this.liveUni = Object.fromEntries(["u_cam", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.liveProgram, n)]));
+    this.liveUni = Object.fromEntries(["u_cam", "u_photo", "u_opacity", "u_skin", "u_livePos", "u_photoPos", "u_liveR", "u_photoR"].map((n) => [n, gl.getUniformLocation(this.liveProgram, n)]));
     this.live = { posBuffer: gl.createBuffer(), alphaBuffer: gl.createBuffer(), indexBuffer: gl.createBuffer(), indexCount: 0, on: false };
     this.liveDrawn = 0;
     this.stainProgram = link(gl, STAIN_VERT, STAIN_FRAG);                // S10g: spills and stains
@@ -180,6 +201,12 @@ export class MeshCompositor {
 
   get liveHandsReady() { return this.live.on; }
 
+  /** Where the live cheeks are on the screen (middle of mesh points 50 and 280), for the skin reference of S10h. */
+  liveCheek() {
+    const p = this.positions;
+    return [(p[50 * 2] + p[280 * 2]) / 2, (p[50 * 2 + 1] + p[280 * 2 + 1]) / 2];
+  }
+
   _drawLive(opacity) {
     const gl = this.gl, l = this.live;
     gl.useProgram(this.liveProgram);
@@ -187,8 +214,18 @@ export class MeshCompositor {
     this.point(l.alphaBuffer, this.liveLoc.alpha, 1);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, l.indexBuffer);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.camera);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photo);
     gl.uniform1i(this.liveUni.u_cam, 1);
+    gl.uniform1i(this.liveUni.u_photo, 0);
     gl.uniform1f(this.liveUni.u_opacity, Math.min(1, opacity));
+    gl.uniform1f(this.liveUni.u_skin, this.look.skin);
+    if (this.look.skin > 0) {
+      const c = this.liveCheek();
+      gl.uniform2f(this.liveUni.u_livePos, c[0], c[1]);
+      gl.uniform2f(this.liveUni.u_photoPos, this.photoCheek[0], this.photoCheek[1]);
+      gl.uniform2f(this.liveUni.u_liveR, this.cheekR[0], this.cheekR[1]);
+      gl.uniform2f(this.liveUni.u_photoR, this.photoRadius[0] * 0.5, this.photoRadius[1] * 0.5);
+    }
     gl.drawElements(gl.TRIANGLES, l.indexCount, gl.UNSIGNED_SHORT, 0);
     return l.indexCount / 3;
   }
@@ -315,8 +352,8 @@ export class MeshCompositor {
   setHead(on) { this.head = !!on; }
 
   /** How the photo is drawn: `match` 0..1 (how much of the live face's colour and light it takes), `keep` (live eyes and mouth show through). */
-  setLook({ match = this.look.match, keep = this.look.keep } = {}) {
-    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), keep: keep ? 1 : 0 };
+  setLook({ match = this.look.match, keep = this.look.keep, skin = this.look.skin } = {}) {
+    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), keep: keep ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)) };
   }
 
   /**
@@ -343,6 +380,7 @@ export class MeshCompositor {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);   // the photo
     setSampling(gl);
     this.photoRing = ring;
+    this.photoCheek = [(flat[50 * 2] + flat[280 * 2]) / 2, (flat[50 * 2 + 1] + flat[280 * 2 + 1]) / 2];
     this.setHeadMask(null);                         // a new photo has no mask until it has been cut
     this.clearHair();                               // and no moving hair
     this.clearBody();                               // and no body layer
@@ -380,6 +418,7 @@ export class MeshCompositor {
     const liveNow = this.live.on && camera !== null;                    // your hands on top
     if (useCamera || liveNow) this.uploadCamera(camera);
     const aspect = this.canvas.width / Math.max(1, this.canvas.height);
+    this.cheekR = [0.5 * BLUR * box.w, 0.5 * BLUR * box.w * aspect];
     let head = this.headActive;
     if (head) {                                     // the ring around the live face; if the face is degenerate, the face alone
       const live = ringPoints(liveLandmarks, aspect);
