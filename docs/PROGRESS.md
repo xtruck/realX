@@ -6,6 +6,8 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
+- [x] Mission phase 0 (2026-10-16): `docs/MISSION.md` plan and acceptance table; `scripts/bench_facemesh.py` page benchmark on the real UHD 620 (BENCHMARKS.md section 9); hand model idle back-off; licence rows for GHOST / RVM / DeepFaceLive
+
 - [x] M0 foundation: docs, pipeline core, consent gate, watermark
 - [x] ECC review 1 (architect, security, python): findings fixed
 - [x] YuNet detector (MIT, CPU), model manifest with pinned hashes, blocked list

@@ -91,6 +91,15 @@ portrait from scikit-image, only in tests and the demo scene.
 | MediaPipe Object Detector, EfficientDet-Lite0 (`efficientdet_lite0.tflite`) | the MediaPipe docs page states no licence for the weights (only for the page and the code samples); only a third-party package claims Apache-2.0; no model card found; trained on COCO | unverified | **not adopted** (2026-10-16): checked the docs page, the Kaggle listing (did not render) and MediaPipe's model list; needs a primary-source licence statement first |
 | OpenCV Zoo NanoDet-Plus and YOLOX (`object_detection_nanodet`, `object_detection_yolox`) | the directory README says "All files in this directory are licensed under Apache 2.0 License" (LICENSE file present); both trained on COCO | yes, on the licence | **not adopted**: they are ONNX models, and running them in the page needs the camera pixels in JavaScript, which the page's no-read-back rule forbids (docs/FACEMESH.md) |
 
+### Identity and matting models named in the CPU research report (checked 2026-10-16)
+
+| Model | License evidence | Commercial use | Status |
+|---|---|---|---|
+| GHOST 1.x (`ai-forever/ghost`, one-shot face swap) | GitHub reports Apache-2.0 for the repo. A maintainer wrote in issue #88 (2024-01-15): "The model license is Apache 2.0. Commercial use is permitted". The same thread then asks two things that **have no maintainer answer**: the repo contains **CC BY-NC-SA 4.0** code, and whether the **ArcFace** identity model (from InsightFace, non-commercial) can be used commercially. The README trains on VGGFace2 (that dataset's terms were not checked) | unverified | **not adopted**: one comment is not a licence audit, and the open questions are exactly the commercial ones |
+| GHOST 2.0 (`ai-forever/ghost-2.0`, whole-head swap) | GitHub reports Apache-2.0 for the repo; the weight files were not inspected | unverified | **not adopted** until each weight file and its encoder dependencies are checked |
+| Robust Video Matting | GPL-3.0 code; weight terms not stated in the report | no, for this repo's policy | **not adopted** (PP-HumanSeg is the licence-clean matting model already in use) |
+| DeepFaceLive / DeepFaceLab | GPL-3.0 (archived 2024-11) | ideas only | per-identity training can be re-implemented from the idea; no code copied |
+
 ## Repo hygiene
 
 - This repo is **public** by the owner's choice. Never commit models, keys or media.

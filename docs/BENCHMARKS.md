@@ -299,3 +299,44 @@ Rounds 2 and 3 are the least contended; no round was on an idle machine (other s
 **Not measured:** other resolutions or batch sizes, power/thermal behaviour under sustained load, a GPU other than the UHD 620, and an idle machine. A different Windows GPU (the owner's other machine mentioned in AUDIT_REPORT) could behave differently; the same `ortbench.py` approach would answer that in a few minutes.
 
 **Recommendation:** stop here. No opt-in provider flag is proposed for `runtime.py`; on this hardware it would add a 30 s start-up and slow detection for no gain. Revisit only if (a) a stage is actually moved onto `SessionCache`, and (b) measurements on a discrete or newer GPU show a win. The biggest speed lever found is not the provider but `bg_replace` (about 130 ms of a 170 ms frame in the contended run).
+
+## 9. The face-mesh page pipeline on the real GPU (2026-10-16)
+
+Question (the mission's acceptance item 5, `docs/MISSION.md`): how fast does the face-mesh page run with its features turned on one at a time,
+on this laptop, with the real GPU renderer?
+
+**Tool.** `scripts/bench_facemesh.py --headed --seconds 12 --settle 6` (a visible Chrome window; fake camera playing the astronaut portrait at
+640x480; the photo is the same portrait cropped to show the shoulders; the page's own numbers are sampled once a second). It also records the
+other Chrome processes already running, the WebGL renderer, whether the "Virtual face" label was visible while drawing, and how often the hand
+model really ran.
+
+**Machine.** Intel Core i5-8365U, Intel UHD Graphics 620, 8 GB RAM (about 2.5 GB free), Windows 11. Renderer, as reported by the page:
+`ANGLE (Intel, Intel(R) UHD Graphics 620, Direct3D11)`: the real GPU, not a software renderer.
+
+**Conditions: not clean, and this is the main finding about the measurement itself.** Every run had other Chrome windows open (18, 18 and 28
+processes), plus other programs. No run is "representative", and the tool says so. The fake camera has no hand, so the hand model ran and found
+none: costs with a real hand are **not** included. Three runs, same code except run 1 (before the hand idle back-off and its counter).
+
+| Step | fps, runs 1 / 2 / 3 | face model ms | pose model ms | hand model ms | hair sheet ms |
+|---|---|---|---|---|---|
+| face only | 21.6 / 27.8 / 14.5 | 44.9 / 18.9 / 52.5 | - | - | - |
+| + body and clothes | 19.8 / 12.3 / 23.1 | 27.0 / 42.5 / 24.0 | 26.2 / 33.6 / 22.5 | - | - |
+| + hair that moves | 17.3 / 10.0 / 15.2 | 22.7 / 41.4 / 31.0 | 23.0 / 36.0 / 27.5 | 28.8 / 47.0 / 37.1 | 0.30 / 0.52 / 0.41 |
+| + hands on top | 13.1 / 7.7 / 18.9 | 24.0 / 47.1 / 23.8 | 22.8 / 43.1 / 23.4 | 26.4 / 54.5 / 29.8 | 0.32 / 0.62 / 0.33 |
+| + a spill on the shirt | 16.9 / 11.5 / 18.9 | 21.8 / 39.0 / 22.5 | 22.0 / 32.8 / 22.7 | 25.2 / 38.7 / 29.3 | 0.25 / 0.49 / 0.28 |
+
+The label was visible in every sample where the page drew (all steps, all runs).
+
+What this supports, and no more:
+
+* **The step-to-step fps differences are noise.** The same step varied by up to 2.5x between runs (face only: 14.5 to 27.8 fps; hands on top:
+  7.7 to 18.9 fps), and in run 3 adding the body made the page *faster* than face-only. Do not read the fps column as "each feature costs X".
+  The first step is also measured while the page is still warming up (models loading, shaders compiling); the tool now discards a warm-up period.
+* **The per-model costs are the stable part:** pose about 22 to 43 ms and hand about 25 to 54 ms per call on this GPU, in line with section 4
+  (26 to 41 ms per model). The hair sheet and stains cost under 1 ms. The two MediaPipe models are what the body and hand features pay for.
+* **Hand model back-off works as designed:** with no hand in view it ran 3.3 to 3.7 times a second (the 250 ms idle interval) instead of the
+  nominal 10 to 20. Whether this raised the frame rate is **not shown**: run 2 (back-off) was worse than run 1 and run 3 was better, all within
+  the noise above.
+* **Against the 20 fps gate:** with everything on, the page spent most samples between 8 and 19 fps on this loaded laptop; face only or face plus
+  body reached 20 in some runs. A reliable answer needs runs on an idle machine (close every other browser) and several repeats.
+* **Not covered:** a real hand (so the hands-on-top and wiping costs), a real webcam, thermal drift over minutes, battery or power-saver mode.

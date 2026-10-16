@@ -41,6 +41,7 @@ let handLandmarker = null, hands = [], handLast = -Infinity, handTs = 0, handMs 
 Object.assign(probe, { smooth: true, shown: false, opacity: 0, cover: 0, jitterRaw: 0, jitterSmooth: 0, hands: "off", handMs: 0 });
 const HAND_EVERY_MS_TOP = 50;   // while "Show my hands on top" is on (S10c)
 const HAND_EVERY_MS = 100;   // the hand model costs about as much as the face model, so it looks only every few frames
+const HAND_IDLE_MS = 250;    // ...and when no hand has been seen it looks even less often (cadence gating): measured at about 26-29 ms a call on the UHD 620
 
 // Step S5: the photo is drawn only under a signed consent for that exact photo, re-checked with the server about every 2 s,
 // and only while the "Virtual face" label is really on screen. If either fails the photo stops (consent) or pauses (label).
@@ -405,8 +406,11 @@ async function openHandLandmarker() {
 
 // How much of the face a hand covers, from the hand model run every HAND_EVERY_MS (the last result is reused in between).
 function coverNow(now, rawLandmarks) {
-  if (now - handLast >= (liveHandsOn ? HAND_EVERY_MS_TOP : HAND_EVERY_MS)) {   // faster while the hands are drawn, so the shape keeps up
-    handLast = now; handTs = Math.max(handTs + 1, now);
+  // Fast while a hand is in view (faster still while the hands are drawn, so the shape keeps up). With no hand in view it backs off to
+  // HAND_IDLE_MS, unless the cover option needs a quick answer: a hand can then enter the picture up to HAND_IDLE_MS before it is noticed.
+  const every = hands.length > 0 ? (liveHandsOn ? HAND_EVERY_MS_TOP : HAND_EVERY_MS) : (look.hideHands ? HAND_EVERY_MS : HAND_IDLE_MS);
+  if (now - handLast >= every) {
+    handLast = now; handTs = Math.max(handTs + 1, now); probe.handPolls = (probe.handPolls || 0) + 1;
     const t0 = performance.now();
     try { hands = handLandmarker.detectForVideo(video, handTs).landmarks || []; } catch (err) { hands = []; }
     const took = performance.now() - t0;
