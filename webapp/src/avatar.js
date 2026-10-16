@@ -10,6 +10,7 @@ import { idleQuats } from "./idle.js";
 import { BONES, EXPRESSIONS } from "./skeleton.js";
 import { applyExpressions } from "./express.js";
 import { startMic } from "./mic.js";
+import { collectHairTips, healHair, tipPositions } from "./hair.js";
 import { GestureController } from "./utils/gestureRecognizer.js";
 import { FaceConfidence, withAmplitudeFloor } from "./utils/audioLipSync.js";
 import { DynamicLighting, makeCanvasSampler } from "./utils/dynamicLighting.js";
@@ -39,6 +40,9 @@ const OUTFITS = { // [outfit, accent]; the character's skin and face never chang
   berry: ["#b5446e", "#3a1c40"], forest: ["#3f8f5a", "#1f3d2b"],
 };
 const OUTFIT = OUTFITS[params.get("outfit")] ? params.get("outfit") : "coral";
+const HEX = /^[0-9a-fA-F]{6}$/;   // ?hair=5b3a29 and ?skin=eeb89a recolour a character that has materials named "hair" / "skin" (Mira)
+const HAIR_COLOR = HEX.test(params.get("hair") || "") ? `#${params.get("hair")}` : null;
+const SKIN_COLOR = HEX.test(params.get("skin") || "") ? `#${params.get("skin")}` : null;
 const clip = (v, n) => (v || "").replace(/[\u0000-\u001f]/g, "").slice(0, n);
 const SHOP = clip(params.get("name"), 40), TAGLINE = clip(params.get("tagline"), 80);
 
@@ -188,6 +192,7 @@ loader.load(
     vrm = gltf.userData.vrm;
     if (!vrm) { probe.error = "file is not a VRM model"; return; }
     dress(vrm);
+    hairTips.push(...collectHairTips(vrm.scene));   // Mira's strands: measured by tests, and watched for a broken simulation
     scene.add(vrm.scene);
     probe.modelLoaded = true;
     if (TRACK) {
@@ -206,7 +211,7 @@ function dress(model) {
   model.scene.traverse((o) => {
     if (!o.isMesh) return;
     for (const m of [].concat(o.material)) {
-      const hex = m.name === "outfit" ? outfit : m.name === "accent" ? accent : null;
+      const hex = m.name === "outfit" ? outfit : m.name === "accent" ? accent : m.name === "hair" ? HAIR_COLOR : m.name === "skin" ? SKIN_COLOR : null;
       if (!hex || !m.color) continue;
       m.color.set(hex);
       if (m.shadeColorFactor) m.shadeColorFactor.set(hex).multiplyScalar(0.72);
@@ -457,6 +462,7 @@ function releaseBody() {
 }
 
 // --- loop ---
+const hairTips = [], tipPos = new THREE.Vector3();   // numbers only, like the rest of the test hook
 let prev = performance.now() / 1000;
 function frame() {
   requestAnimationFrame(frame);
@@ -466,6 +472,11 @@ function frame() {
   if (vrm) {
     pose(t, dt);
     vrm.update(dt);
+    if (hairTips.length) {
+      const tipsNow = tipPositions(hairTips, tipPos);
+      if (healHair(vrm, tipsNow)) probe.hairResets = (probe.hairResets || 0) + 1;   // a NaN never heals by itself
+      else probe.hair = tipsNow;
+    }
   }
   if (lighting) lighting.update(performance.now(), dt);
   renderer.render(scene, camera);

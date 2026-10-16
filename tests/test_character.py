@@ -197,3 +197,81 @@ def test_emote_button_reaches_the_character_page_and_outfit_recolours_only_the_o
             browser.close()
     finally:
         srv.stop()
+
+
+# --- Mira: the long-hair character (hair physics, human face parts) ---------------------------------------------------
+def _generator():
+    spec = importlib.util.spec_from_file_location("make_character", ROOT / "scripts/make_character.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def mira():
+    return load_glb(_generator().build("mira"))
+
+
+def test_mira_is_a_valid_vrm1_humanoid(mira):
+    gltf, blen = mira
+    vrm = gltf["extensions"]["VRMC_vrm"]
+    bones = vrm["humanoid"]["humanBones"]
+    assert vrm["specVersion"] == "1.0" and REQUIRED_BONES <= set(bones)
+    assert all(0 <= b["node"] < len(gltf["nodes"]) for b in bones.values())
+    assert gltf["buffers"][0]["byteLength"] == blen
+
+
+def test_mira_hair_is_made_of_real_spring_chains(mira):
+    gltf, _ = mira
+    sb = gltf["extensions"]["VRMC_springBone"]
+    hair = [s for s in sb["springs"] if s["name"].startswith("hair_")]
+    assert len(hair) >= 11, "a full head of strands"
+    for spring in hair:
+        joints = [j["node"] for j in spring["joints"]]
+        assert len(joints) >= 6
+        for parent, child in zip(joints, joints[1:]):
+            assert child in gltf["nodes"][parent].get("children", []), "each joint is the child of the one before: a real chain"
+        assert "mesh" not in gltf["nodes"][joints[-1]], "the last node is only the tip the chain swings toward"
+        assert spring["colliderGroups"] == [0, 1], "every strand collides with the body and with the hands"
+
+
+def test_mira_colliders_cover_the_body_and_every_finger(mira):
+    gltf, _ = mira
+    sb = gltf["extensions"]["VRMC_springBone"]
+    colliders, groups = sb["colliders"], sb["colliderGroups"]
+    assert [g["name"] for g in groups] == ["body", "hands"]
+    for group in groups:
+        assert all(0 <= i < len(colliders) for i in group["colliders"])
+    for c in colliders:
+        assert 0 <= c["node"] < len(gltf["nodes"]) and c["shape"]["sphere"]["radius"] > 0
+    assert len(groups[1]["colliders"]) >= 2 * (1 + 4 * 2 + 1), "palm, 8 finger spheres and a thumb tip on each hand"
+    names = {gltf["nodes"][colliders[i]["node"]]["name"] for i in groups[0]["colliders"]}
+    assert {"head", "neck", "chest"} <= names
+
+
+def test_mira_has_the_face_parts(mira):
+    gltf, _ = mira
+    names = {n["name"] for n in gltf["nodes"]}
+    assert {"nose", "ear_left", "ear_right", "lash_left", "lash_right", "mouth", "hair_cap"} <= names
+    presets = gltf["extensions"]["VRMC_vrm"]["expressions"]["preset"]
+    lash = {n["name"]: i for i, n in enumerate(gltf["nodes"])}["lash_left"]
+    assert any(b["node"] == lash for b in presets["blink"]["morphTargetBinds"]), "the lashes close with the eye"
+    mats = {m["name"] for m in gltf["materials"]}
+    assert {"hair", "skin", "lip"} <= mats, "the renderer can recolour the hair and skin by material name"
+
+
+def test_mira_is_original_and_has_no_photographic_data(mira):
+    gltf, _ = mira
+    meta = gltf["extensions"]["VRMC_vrm"]["meta"]
+    assert meta["name"] == "Mira" and "CC0" in meta["copyrightInformation"]
+    assert not gltf.get("images") and not gltf.get("textures")
+
+
+def test_pip_has_no_hair_chains_and_no_colliders(pip):
+    gltf, _ = pip
+    sb = gltf["extensions"]["VRMC_springBone"]
+    assert not any(s["name"].startswith("hair_") for s in sb["springs"]) and "colliders" not in sb
+
+
+def test_mira_generator_output_matches_the_committed_file():
+    assert _generator().build("mira") == (ROOT / "src/realx/web/avatars/mira.vrm").read_bytes()

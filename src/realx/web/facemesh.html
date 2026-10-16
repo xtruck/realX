@@ -67,6 +67,7 @@
     <button id="smooth" type="button" aria-pressed="true">Smoothing</button>
     <button id="hideHands" type="button" aria-pressed="false">Hide photo when a hand covers my face</button>
     <button id="headBtn" type="button" aria-pressed="false" aria-describedby="headNote">Whole head (hair, ears, neck)</button>
+    <button id="hairBtn" type="button" aria-pressed="false" aria-describedby="hairNote">Hair that moves</button>
     <button id="keepFace" type="button" aria-pressed="true">Keep my eyes and mouth</button>
     <label>Colour match <input id="match" type="range" min="0" max="100" value="100" step="5"> <span id="matchValue">100%</span></label>
     <button id="wire" type="button" aria-pressed="true">Mesh lines</button>
@@ -77,6 +78,9 @@
   </div>
   <p class="note" id="headNote">Whole head (off by default): hair, ears, the top of the forehead and the neck also come from your photo, softly blended.
     It loads a 16 MB model that cuts your <em>photo</em> (not the camera) into hair, skin and background once, and may cost some speed: watch the frames per second.</p>
+  <p class="note" id="hairNote">Hair that moves (off by default): the hair of your photo hangs from the head, swings when you move, and your hands can push it.
+    It cuts the hair out of your <em>photo</em> (not the camera) once and loads the hand model, so watch the frames per second. It works best with a clear, front-facing photo of someone with long hair.
+    It moves like a soft sheet of hair, not single strands, and only the hair that shows in the photo.</p>
   <div id="gallery" hidden role="group" aria-label="Your photos"></div>
   <div id="hud" role="status">
     <div>frames per second<b id="fps">-</b></div>

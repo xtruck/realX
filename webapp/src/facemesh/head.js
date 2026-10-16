@@ -25,6 +25,7 @@ export const REACH = { top: 0.55, side: 0.3, bottom: 0.5 };
 // The classes of MediaPipe's multiclass selfie segmenter: 0 background, 1 hair, 2 body skin, 3 face skin, 4 clothes, 5 others
 // (hats, glasses, earrings...). The head is hair, both skins and the accessories; the background and the clothes are not.
 export const HEAD_CLASSES = [1, 2, 3, 5];
+export const HAIR_CLASSES = [1];   // hair only: what the moving hair of step S9 is cut from
 
 /**
  * Positions of the ring points around a face. `landmarks` are normalised points; `aspect` is the picture's width / height,
@@ -94,9 +95,9 @@ export function ringFlag() {
  * (width x height); a mask bigger than `maxSide` is thinned first. Returns { width, height, data } with one byte per pixel (of the
  * thinned size); null when the sizes do not agree.
  */
-export function headMask(classes, width, height, soften = 2, maxSide = 512) {
+export function headMask(classes, width, height, soften = 2, maxSide = 512, keepClasses = HEAD_CLASSES) {
   if (!classes || !(width > 0) || !(height > 0) || classes.length !== width * height) return null;
-  const keep = new Set(HEAD_CLASSES);
+  const keep = new Set(keepClasses);
   const step = Math.max(1, Math.ceil(Math.max(width, height) / maxSide));   // a big photo's mask is thinned to about maxSide pixels
   const w = Math.ceil(width / step), h = Math.ceil(height / step);
   const hard = new Uint8Array(w * h);

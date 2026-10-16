@@ -12,7 +12,8 @@ import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
 import { ConsentClient, sha256Hex } from "./consent.js";
 import { labelProblem, readLabel } from "./guard.js";
 import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
-import { headMask, maskUsable } from "./head.js";
+import { HAIR_CLASSES, headMask, maskUsable } from "./head.js";
+import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -59,6 +60,7 @@ function applyLook() {
 // frame only adds a ring of extra points around the face (see head.js). Nothing here touches the live frame.
 let segmenter = null, headOn = false;
 const masks = new WeakMap();        // gallery item -> its head mask, or false when the photo could not be cut
+const hairMasks = new WeakMap();    // gallery item -> its hair-only mask (S9), or false
 Object.assign(probe, { head: "off", headCutMs: 0, headDrawn: false });
 
 async function openSegmenter() {
@@ -89,8 +91,11 @@ async function cutHead(item) {
   const result = segmenter.segment(item.image);
   try {
     const cat = result.categoryMask;
-    const found = cat ? headMask(cat.getAsUint8Array(), cat.width, cat.height) : null;
+    const classes = cat ? cat.getAsUint8Array() : null;
+    const found = classes ? headMask(classes, cat.width, cat.height) : null;
     if (maskUsable(found)) mask = found;
+    const hairFound = classes ? headMask(classes, cat.width, cat.height, 2, 512, HAIR_CLASSES) : null;   // the same cut, hair only (S9)
+    hairMasks.set(item, maskUsable(hairFound, 0.004, 0.9) ? hairFound : false);
   } finally { try { result.close(); } catch (e) { /* nothing to free */ } }
   probe.headCutMs = performance.now() - t0;
   masks.set(item, mask);
@@ -119,6 +124,75 @@ async function applyHead() {
     compositor.setHead(false); probe.head = "error";
     setStatus(`The head model could not run: ${err && err.message ? err.message : err}`);
   }
+}
+
+// Step S9, hair that moves (option, off by default): the hair of the PHOTO becomes a sheet that follows the head, swings, and is
+// pushed by the tracked hands (hairsim.js). It needs the photo cut once (shared with Whole head) and the hand model. Nothing here
+// touches the camera picture; the hands are the same landmarks the hand option already reads.
+const HAIR_ANCHORS = [10, 152, 234, 454, 33, 263, 1];   // points on the rigid part of the head: they say how the head moved
+let hairOn = false, hairSheet = null, hairItem = null, hairAspect = 1, hairNeedsReset = true, hairLast = 0;
+Object.assign(probe, { hair: "off", hairPoints: 0, hairFree: 0, hairResets: 0, hairMs: 0, hairHands: 0 });
+
+function forgetHair() {
+  hairSheet = null; hairItem = null; hairNeedsReset = true;
+  if (compositor) compositor.clearHair();
+  probe.hairPoints = 0; probe.hairFree = 0;
+}
+
+async function applyHair() {
+  const item = gallery.active;
+  if (!compositor) return;
+  forgetHair();
+  if (!hairOn) { probe.hair = "off"; return; }
+  if (!item) { probe.hair = "on"; return; }                    // nothing to cut yet: done when a photo goes on screen
+  probe.hair = "loading";
+  setStatus("Cutting the hair out of your photo (once)...");
+  try {
+    await cutHead(item);
+    if (!hairOn || gallery.active !== item) return;            // the user moved on while the model worked
+    const hairMask = hairMasks.get(item);
+    probe.hairShare = hairMask ? hairMask.data.reduce((n, v) => n + (v > 127 ? 1 : 0), 0) / hairMask.data.length : 0;   // how much of the photo is hair
+    if (!hairMask) { probe.hair = "nomask"; setStatus("Moving hair is not available for this photo: the hair could not be told from the background."); return; }
+    const w = item.image.naturalWidth || item.image.width, h = item.image.naturalHeight || item.image.height;
+    const geometry = buildHairSheet(hairMask, item.landmarks, w / h);
+    if (!geometry) { probe.hair = "nohair"; setStatus("No hair that can swing was found in this photo (short hair, or hair only on top of the head)."); return; }
+    if (!handLandmarker) handLandmarker = await openHandLandmarker();   // the hands are what touch the hair
+    if (!hairOn || gallery.active !== item) return;
+    hairSheet = new HairSheet(geometry); hairItem = item; hairAspect = w / h; hairNeedsReset = true;
+    compositor.setHair(geometry, hairMask);
+    Object.assign(probe, { hair: "on", hairPoints: geometry.stats.points, hairFree: geometry.stats.free });
+    setStatus("Moving hair is on: the hair of your photo swings with your head and your hands can push it. Look at the frames per second.");
+  } catch (err) {
+    forgetHair(); probe.hair = "error";
+    setStatus(`Moving hair could not start: ${err && err.message ? err.message : err}`);
+  }
+}
+
+// One frame of the hair: how the head moved, where the hands are, one physics step, and the result to the compositor.
+function stepHair(now, shown) {
+  const sheet = hairSheet;
+  if (!sheet || hairItem !== gallery.active || !compositor.hairReady || !shown) {
+    if (!shown) hairNeedsReset = true;                         // the face was lost: the hair starts again from the head when it is back
+    compositor.setHairPositions(null);
+    return;
+  }
+  const t0 = performance.now();
+  const aspect = faceCanvas.width / Math.max(1, faceCanvas.height);
+  const live = shown.landmarks, photo = hairItem.landmarks;
+  const from = new Float32Array(HAIR_ANCHORS.length * 2), to = new Float32Array(HAIR_ANCHORS.length * 2);
+  HAIR_ANCHORS.forEach((i, k) => { from[2 * k] = photo[i].x * hairAspect; from[2 * k + 1] = photo[i].y; to[2 * k] = live[i].x * aspect; to[2 * k + 1] = live[i].y; });
+  const head = similarity(from, to);
+  if (!head) { compositor.setHairPositions(null); return; }
+  if (hairNeedsReset) { sheet.reset(head); hairNeedsReset = false; hairLast = now; }
+  const dt = Math.min(0.05, Math.max(0.001, (now - hairLast) / 1000)); hairLast = now;
+  const faceWidth = Math.hypot((live[454].x - live[234].x) * aspect, live[454].y - live[234].y);
+  const colliders = [];
+  for (const hand of hands) colliders.push(...handColliders(hand.map((p) => ({ x: p.x * aspect, y: p.y })), faceWidth));
+  sheet.step(dt, head, colliders);
+  probe.hairResets = sheet.heals;
+  compositor.setHairPositions(sheet.pos, aspect);
+  probe.hairMs = probe.hairMs ? 0.9 * probe.hairMs + 0.1 * (performance.now() - t0) : performance.now() - t0;
+  probe.hairHands = hands.length;
 }
 
 function setStatus(text) { $("status").textContent = text; }
@@ -250,6 +324,7 @@ function makeActive(item) {
   view.wire = false; $("wire").setAttribute("aria-pressed", "false");
   syncGallery();
   if (headOn) applyHead();                          // a new photo has no head mask until it has been cut
+  if (hairOn) applyHair();                          // and no moving hair until its sheet is built
 }
 
 // What the gallery looks like to the page and to a test.
@@ -511,7 +586,9 @@ function frame() {
     if (landmarks) probe.box = faceBox(landmarks);   // where the face is, as fractions of the frame: four numbers
     if (measure) { measure.ms.push(took); measure.found += landmarks ? 1 : 0; measure.times.push(now); }
     // What is drawn is the steadied face (smoothed, held for a moment when lost, faded when covered), not the raw detection.
-    const cover = look.hideHands && handLandmarker ? coverNow(now, landmarks) : 0;
+    const handsWanted = handLandmarker && (look.hideHands || hairOn);   // the hair option reads the same hand model as the cover option
+    const handCoverNow = handsWanted ? coverNow(now, landmarks) : 0;
+    const cover = look.hideHands ? handCoverNow : 0;
     const shown = presence.update(landmarks, now, cover);
     jitter.mark(landmarks, shown && shown.landmarks);
     Object.assign(probe, { shown: shown !== null, opacity: shown ? shown.opacity : 0, cover, jitterRaw: jitter.raw, jitterSmooth: jitter.smooth });
@@ -528,9 +605,11 @@ function frame() {
       else if (!verdict.ok) endPhoto(verdict.reason);
       else if (gate.label) { compositor.clear(); probe.drawn = 0; }
       else {
+        if (hairOn) stepHair(now, shown);          // the hair sheet for this frame (drawn behind the face by the compositor)
         // the video goes to the graphics card for colour matching only: see compositor.js
         probe.drawn = compositor.draw(shown ? shown.landmarks : null, video, shown ? shown.opacity : 0);
         probe.headDrawn = compositor.headActive;
+        probe.hairDrawn = compositor.hairDrawn;
       }
     }
     tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
@@ -634,7 +713,7 @@ function wireControls() {
     if (headOn) {
       headOn = false; button.setAttribute("aria-pressed", "false");
       if (compositor) compositor.setHead(false);
-      closeSegmenter(); probe.head = "off";
+      if (!hairOn) closeSegmenter(); probe.head = "off";
       setStatus("Whole head off: only the face is drawn.");
       return;
     }
@@ -645,16 +724,33 @@ function wireControls() {
       else setStatus("Whole head is on: it applies to the next photo you choose.");
     } finally { button.disabled = false; }
   });
+  $("hairBtn").addEventListener("click", async (e) => {
+    const button = e.currentTarget;
+    if (hairOn) {
+      hairOn = false; button.setAttribute("aria-pressed", "false");
+      forgetHair(); probe.hair = "off";
+      if (!look.hideHands) closeHands();                       // keep the hand model if the cover option still uses it
+      if (!headOn) closeSegmenter();                           // and the segmenter if Whole head still uses it
+      setStatus("Moving hair off.");
+      return;
+    }
+    button.disabled = true;
+    try {
+      hairOn = true; button.setAttribute("aria-pressed", "true"); probe.hair = "on";
+      if (gallery.active) await applyHair();
+      else setStatus("Moving hair is on: it applies to the next photo you choose.");
+    } finally { button.disabled = false; }
+  });
   $("hideHands").addEventListener("click", async (e) => {
     const button = e.currentTarget;
     if (look.hideHands) {
-      look.hideHands = false; closeHands(); probe.hands = "off"; probe.handMs = 0; button.setAttribute("aria-pressed", "false");
+      look.hideHands = false; if (!hairOn) closeHands(); probe.hands = "off"; probe.handMs = 0; button.setAttribute("aria-pressed", "false");
       return;
     }
     button.disabled = true;
     setStatus("Loading the hand model...");
     try {
-      handLandmarker = await openHandLandmarker();
+      handLandmarker = handLandmarker || await openHandLandmarker();   // the hair option may have opened it already
       look.hideHands = true; probe.hands = "on"; button.setAttribute("aria-pressed", "true");
       setStatus("The photo fades out when a hand covers your face. This costs speed: look at the frames per second.");
     } catch (err) {

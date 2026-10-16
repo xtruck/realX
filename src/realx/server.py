@@ -121,10 +121,15 @@ def avatar_csp(port: int) -> str:
     )
 
 
+BUNDLED_AVATARS = ("pip", "mira")
+
+
 def load_avatar(path: str | None) -> bytes:
-    """The character model: the bundled original, or a VRM file the user chose."""
+    """The character model: a bundled original ("pip" by default, or "mira" with long hair), or a VRM file the user chose."""
     if path is None:
         return _asset("avatars/pip.vrm")
+    if path in BUNDLED_AVATARS:
+        return _asset(f"avatars/{path}.vrm")
     with open(path, "rb") as fh:
         data = fh.read(MAX_AVATAR_BYTES + 1)
     if len(data) > MAX_AVATAR_BYTES:

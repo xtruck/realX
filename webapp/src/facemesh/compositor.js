@@ -61,6 +61,22 @@ void main() {
   gl_FragColor = vec4(colour * alpha, alpha);
 }`;
 
+// Step S9, moving hair: the photo's pixels on the hair sheet of hairsim.js, drawn BEHIND the face. Only the PHOTO is sampled
+// here (its colour and its hair mask); the camera is not touched.
+const HAIR_VERT = `attribute vec2 a_pos; attribute vec2 a_uv; varying vec2 v_uv;
+void main() { v_uv = a_uv; gl_Position = vec4(a_pos.x * 2.0 - 1.0, 1.0 - a_pos.y * 2.0, 0.0, 1.0); }`;
+const HAIR_FRAG = `#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec2 v_uv; uniform sampler2D u_photo; uniform sampler2D u_hair; uniform float u_opacity;
+void main() {
+  float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
+  float a = smoothstep(0.35, 0.65, texture2D(u_hair, v_uv).r) * inside * u_opacity;
+  gl_FragColor = vec4(texture2D(u_photo, v_uv).rgb * a, a);
+}`;
+
 export class MeshCompositor {
   /** canvas: the WebGL canvas; mesh: buildMesh()'s result. Throws when WebGL is not available. */
   constructor(canvas, mesh) {
@@ -93,6 +109,76 @@ export class MeshCompositor {
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, faceAndRing, gl.STATIC_DRAW);
     this.camera = emptyTexture(gl);   // a single transparent pixel until a frame is uploaded
     gl.clearColor(0, 0, 0, 0);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);   // premultiplied layers: the hair first, the face over it
+    this.hair = null;               // S9: { count, triangles, uvBuffer, posBuffer, indexBuffer, maskTex, positions, on }
+    this.hairProgram = link(gl, HAIR_VERT, HAIR_FRAG);
+    this.hairLoc = { pos: gl.getAttribLocation(this.hairProgram, "a_pos"), uv: gl.getAttribLocation(this.hairProgram, "a_uv") };
+    this.hairUni = Object.fromEntries(["u_photo", "u_hair", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.hairProgram, n)]));
+    this.hairDrawn = 0;
+  }
+
+  /**
+   * Moving hair (step S9). `geometry` is hairsim.js buildHairSheet()'s result (texture coordinates and triangles), `mask` the
+   * photo's hair mask ({ width, height, data }). Both come from the PHOTO. Pass null to forget the hair.
+   */
+  setHair(geometry, mask) {
+    const gl = this.gl;
+    this.clearHair();
+    if (!geometry || !mask) return;
+    const count = geometry.uv.length / 2;
+    const maskTex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_2D, maskTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, mask.width, mask.height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, mask.data);   // the photo's hair mask
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    setSampling(gl);
+    const posBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, count * 8, gl.DYNAMIC_DRAW);
+    const indexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geometry.triangles, gl.STATIC_DRAW);
+    this.hair = { count, triangles: geometry.triangles.length / 3, uvBuffer: filled(gl, geometry.uv), posBuffer, indexBuffer, maskTex, positions: new Float32Array(count * 2), on: false };
+  }
+
+  clearHair() {
+    const gl = this.gl;
+    if (!this.hair) return;
+    gl.deleteTexture(this.hair.maskTex);
+    for (const b of [this.hair.uvBuffer, this.hair.posBuffer, this.hair.indexBuffer]) gl.deleteBuffer(b);
+    this.hair = null; this.hairDrawn = 0;
+  }
+
+  get hairReady() { return this.hair !== null; }
+
+  /**
+   * Where the hair points are this frame, in hairsim's units (image heights, x already multiplied by the video's aspect) and the
+   * aspect to turn them into 0..1 screen coordinates. Pass null for `units` to stop drawing the hair.
+   */
+  setHairPositions(units, aspect) {
+    if (!this.hair) return;
+    if (!units || !(aspect > 0)) { this.hair.on = false; return; }
+    const out = this.hair.positions;
+    for (let i = 0; i < this.hair.count; i++) { out[2 * i] = units[2 * i] / aspect; out[2 * i + 1] = units[2 * i + 1]; }
+    this.hair.on = true;
+  }
+
+  _drawHair(opacity) {
+    const gl = this.gl, h = this.hair;
+    gl.useProgram(this.hairProgram);
+    gl.bindBuffer(gl.ARRAY_BUFFER, h.posBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, h.positions);
+    this.point(h.posBuffer, this.hairLoc.pos, 2);
+    this.point(h.uvBuffer, this.hairLoc.uv, 2);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, h.indexBuffer);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photo);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, h.maskTex);
+    gl.uniform1i(this.hairUni.u_photo, 0);
+    gl.uniform1i(this.hairUni.u_hair, 3);
+    gl.uniform1f(this.hairUni.u_opacity, Math.min(1, opacity));
+    gl.drawElements(gl.TRIANGLES, h.triangles * 3, gl.UNSIGNED_SHORT, 0);
+    this.hairDrawn = h.triangles;
   }
 
   get hasPhoto() { return this.photo !== null; }
@@ -150,6 +236,7 @@ export class MeshCompositor {
     setSampling(gl);
     this.photoRing = ring;
     this.setHeadMask(null);                         // a new photo has no mask until it has been cut
+    this.clearHair();                               // and no moving hair
     this.photoRadius = [BLUR * box.w, BLUR * box.w * (w / h)];
     gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
@@ -160,6 +247,7 @@ export class MeshCompositor {
     if (this.photo) this.gl.deleteTexture(this.photo);
     this.photo = null; this.photoRing = null;
     this.setHeadMask(null);
+    this.clearHair();
     this.clear();
   }
 
@@ -187,6 +275,8 @@ export class MeshCompositor {
       const live = ringPoints(liveLandmarks, aspect);
       if (live) this.positions.set(live, VERTEX_COUNT * 2); else head = false;
     }
+    this.hairDrawn = 0;
+    if (this.hair && this.hair.on) this._drawHair(opacity);   // the hair goes down first, behind the face
     gl.useProgram(this.program);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.positions);
@@ -233,6 +323,8 @@ export class MeshCompositor {
 
   dispose() {
     const gl = this.gl;
+    this.clearHair();
+    gl.deleteProgram(this.hairProgram);
     for (const t of [this.photo, this.camera, this.maskTex]) if (t) gl.deleteTexture(t);
     for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.headFadeBuffer, this.ringBuffer, this.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.program);

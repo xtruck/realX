@@ -181,7 +181,7 @@ test("the compositor names the video only inside uploadCamera, which makes exact
   assert.ok(method, "uploadCamera(video) is the one place the video is handled");
   assert.equal((method[0].match(/texImage2D/g) || []).length, 1);
   assert.ok(!/video/i.test(src.replace(method[0], "")), "the video is named nowhere else in compositor.js");
-  assert.equal((src.match(/texImage2D/g) || []).length, 4, "photo, live frame, the empty placeholder, and the photo's head mask (S8): nothing else uploads");
+  assert.equal((src.match(/texImage2D/g) || []).length, 5, "photo, live frame, the empty placeholder, the photo's head mask (S8) and the photo's hair mask (S9): nothing else uploads");
   for (const call of FORBIDDEN) assert.ok(!src.includes(call), `compositor.js must not use ${call}`);
 });
 
