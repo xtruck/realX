@@ -181,12 +181,12 @@ test("the compositor names the video only inside uploadCamera, which makes exact
   assert.ok(method, "uploadCamera(video) is the one place the video is handled");
   assert.equal((method[0].match(/texImage2D/g) || []).length, 1);
   assert.ok(!/video/i.test(src.replace(method[0], "")), "the video is named nowhere else in compositor.js");
-  assert.equal((src.match(/texImage2D/g) || []).length, 3, "photo, live frame, and the empty placeholder: nothing else uploads");
+  assert.equal((src.match(/texImage2D/g) || []).length, 4, "photo, live frame, the empty placeholder, and the photo's head mask (S8): nothing else uploads");
   for (const call of FORBIDDEN) assert.ok(!src.includes(call), `compositor.js must not use ${call}`);
 });
 
 test("nothing else in the face-mesh page may read back, keep or send the camera picture", () => {
-  for (const file of ["page.js", "mesh.js"]) {
+  for (const file of ["page.js", "mesh.js", "stabilize.js", "head.js"]) {
     const src = code(file);
     for (const call of [...FORBIDDEN.filter((c) => c !== "getUserMedia"), "texImage2D"]) assert.ok(!src.includes(call), `${file} must not use ${call}`);   // the page itself opens the camera
   }
@@ -239,4 +239,22 @@ test("the live frame goes to the graphics card only while colour matching is on 
   assert.equal(c.look.match, 1, "match is limited to 0..1");
   c.draw(face(0.3, 0.3), { readyState: 0 });
   assert.equal(uploadsOf(live), 2);
+});
+
+// --- step S4: the photo fades with the face ---------------------------------------------------------------------------
+
+test("the compositor fades the whole photo with an opacity, and draws nothing at 0", () => {
+  const gl = fakeGl();
+  const c = new MeshCompositor(canvasWith(gl), mesh);
+  c.setPhoto(photo(720, 1280), face(0.2, 0.2));
+  const opacities = () => gl.calls.filter((k) => k[0] === "uniform1f" && k[1] && k[1].id !== undefined).map((k) => k[2]);
+  assert.equal(c.draw(face(0.3, 0.3), null, 0), 0, "opacity 0: nothing drawn");
+  assert.equal(c.draw(face(0.3, 0.3), null, 0.001), 0, "an opacity too small to see is not drawn either");
+  const before = gl.calls.filter((k) => k[0] === "drawElements").length;
+  assert.equal(c.draw(face(0.3, 0.3), null, 0.4), TRIANGLE_COUNT);
+  assert.equal(gl.calls.filter((k) => k[0] === "drawElements").length, before + 1);
+  assert.ok(opacities().includes(0.4), "the opacity reaches the shader");
+  c.draw(face(0.3, 0.3), null, 7);
+  assert.ok(opacities().includes(1) && !opacities().includes(7), "the opacity is limited to 1");
+  assert.equal(c.draw(face(0.3, 0.3)), TRIANGLE_COUNT, "left out: fully drawn, as before");
 });

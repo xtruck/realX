@@ -5,9 +5,14 @@
 // Privacy rule, same as the tracker: the camera picture is shown by a <video> and handed to MediaPipe. It is never
 // drawn to a canvas, read back, recorded, stored or sent; only numbers (landmarks) are drawn on top.
 // facemesh.test.mjs checks this file for the calls that would break that.
-import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
+import { FaceLandmarker, FilesetResolver, HandLandmarker, ImageSegmenter } from "@mediapipe/tasks-vision";
 import { MeshCompositor } from "./compositor.js";
 import { RollingStats, buildMesh, checkPhotoFaces, faceBox, fillSegments } from "./mesh.js";
+import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
+import { ConsentClient, sha256Hex } from "./consent.js";
+import { labelProblem, readLabel } from "./guard.js";
+import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
+import { headMask, maskUsable } from "./head.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -23,11 +28,97 @@ let detectMs = 0, lastTs = 0, lastVideoTime = -1, measure = null;
 // Numbers only, for the browser test and for anyone reading the page's state: no picture, no landmark.
 const probe = window.__facemesh = { state: "starting", frames: 0, found: 0, fps: 0, foundPct: 0, detectMs: 0, delegate: "", measured: null, photo: "none", drawn: 0, box: null };
 let compositor = null;   // made when the first photo is chosen; draws the photo on the live face
-const look = { match: 100, keep: true };   // colour match in percent; keep the live eyes and mouth
+const look = { match: 100, keep: true, hideHands: false };   // colour match in percent; keep the live eyes and mouth; fade out when a hand covers the face
 probe.match = look.match; probe.keep = look.keep;
+// Step S4: smoothing, losing and regaining the face, a hand over the face (the hand model runs only when that option is on).
+const presence = new FacePresence();
+const jitter = new JitterMeter();
+let handLandmarker = null, hands = [], handLast = -Infinity, handTs = 0, handMs = 0;
+Object.assign(probe, { smooth: true, shown: false, opacity: 0, cover: 0, jitterRaw: 0, jitterSmooth: 0, hands: "off", handMs: 0 });
+const HAND_EVERY_MS = 100;   // the hand model costs about as much as the face model, so it looks only every few frames
+
+// Step S5: the photo is drawn only under a signed consent for that exact photo, re-checked with the server about every 2 s,
+// and only while the "Virtual face" label is really on screen. If either fails the photo stops (consent) or pauses (label).
+let consent = new ConsentClient();   // the ACTIVE photo's consent client (every photo in the gallery has its own); an idle one when none is active
+const gate = { label: "", timers: [] };
+Object.assign(probe, { consent: "none", consentLeft: 0, label: "", endedReason: "", record: null });
+const CHECK_EVERY_MS = 2000, LABEL_EVERY_MS = 250;
+
+// Step S6a: a gallery of the user's own photos (kept in memory, each with its own consent), a one-click switch, a LIVE timer,
+// a toast, full screen and Stop. The pure parts are in gallery.js.
+const gallery = new Gallery(), liveTimer = new LiveTimer(), toast = new Toast();
+Object.assign(probe, { avatars: 0, avatar: "", session: "idle", liveSeconds: 0, toast: "", fullscreen: false });
+let switching = false, cancelAsk = null, liveText = "";
 function applyLook() {
   probe.match = look.match; probe.keep = look.keep;
   if (compositor) compositor.setLook({ match: look.match / 100, keep: look.keep });
+}
+
+// Step S8, whole head (option, off by default): hair, ears, top of the forehead and neck come from the same photo. The photo
+// (never the camera) is cut into classes ONCE by MediaPipe's multiclass selfie segmenter when the photo goes on screen; each
+// frame only adds a ring of extra points around the face (see head.js). Nothing here touches the live frame.
+let segmenter = null, headOn = false;
+const masks = new WeakMap();        // gallery item -> its head mask, or false when the photo could not be cut
+Object.assign(probe, { head: "off", headCutMs: 0, headDrawn: false });
+
+async function openSegmenter() {
+  const fileset = await FilesetResolver.forVisionTasks("/mp/wasm");
+  let lastErr;
+  for (const d of ["GPU", "CPU"]) {
+    try {
+      return await ImageSegmenter.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: "/mp/models/selfie_multiclass_256x256.tflite", delegate: d },
+        runningMode: "IMAGE", outputCategoryMask: true, outputConfidenceMasks: false,
+      });
+    } catch (err) { lastErr = err; }
+  }
+  throw lastErr;
+}
+
+function closeSegmenter() {
+  if (segmenter) { try { segmenter.close(); } catch (e) { /* already closed */ } }
+  segmenter = null;
+}
+
+// Cuts the PHOTO of this gallery item (a picture the user chose, not a camera frame) once, and remembers the result.
+async function cutHead(item) {
+  if (masks.has(item)) return masks.get(item);
+  if (!segmenter) segmenter = await openSegmenter();
+  const t0 = performance.now();
+  let mask = false;
+  const result = segmenter.segment(item.image);
+  try {
+    const cat = result.categoryMask;
+    const found = cat ? headMask(cat.getAsUint8Array(), cat.width, cat.height) : null;
+    if (maskUsable(found)) mask = found;
+  } finally { try { result.close(); } catch (e) { /* nothing to free */ } }
+  probe.headCutMs = performance.now() - t0;
+  masks.set(item, mask);
+  return mask;
+}
+
+// Brings the compositor in line with the option and the photo on screen. Safe to call at any time.
+async function applyHead() {
+  const item = gallery.active;
+  if (!compositor) return;
+  if (!headOn) { compositor.setHead(false); probe.head = "off"; return; }
+  if (!item) { probe.head = "on"; return; }                    // nothing to cut yet: done when a photo goes on screen
+  probe.head = "loading";
+  setStatus("Cutting your photo into hair, skin and background (once)...");
+  try {
+    const mask = await cutHead(item);
+    if (!headOn || gallery.active !== item) return;            // the user moved on while the model worked
+    if (!mask) {
+      compositor.setHead(false); probe.head = "nomask";
+      setStatus("Whole head is not available for this photo: the hair and head could not be told from the background. The face alone is drawn.");
+      return;
+    }
+    compositor.setHeadMask(mask); compositor.setHead(true); probe.head = "on";
+    setStatus("Whole head on: hair, ears and neck come from your photo. Look at the frames per second.");
+  } catch (err) {
+    compositor.setHead(false); probe.head = "error";
+    setStatus(`The head model could not run: ${err && err.message ? err.message : err}`);
+  }
 }
 
 function setStatus(text) { $("status").textContent = text; }
@@ -66,13 +157,45 @@ async function openLandmarker(runningMode = "VIDEO", numFaces = 1) {
   throw lastErr;
 }
 
+async function openHandLandmarker() {
+  const fileset = await FilesetResolver.forVisionTasks("/mp/wasm");
+  let lastErr;
+  for (const d of ["GPU", "CPU"]) {
+    try {
+      return await HandLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: "/mp/models/hand_landmarker.task", delegate: d }, runningMode: "VIDEO", numHands: 2,
+        minHandDetectionConfidence: 0.4, minHandPresenceConfidence: 0.4,
+      });
+    } catch (err) { lastErr = err; }
+  }
+  throw lastErr;
+}
+
+// How much of the face a hand covers, from the hand model run every HAND_EVERY_MS (the last result is reused in between).
+function coverNow(now, rawLandmarks) {
+  if (now - handLast >= HAND_EVERY_MS) {
+    handLast = now; handTs = Math.max(handTs + 1, now);
+    const t0 = performance.now();
+    try { hands = handLandmarker.detectForVideo(video, handTs).landmarks || []; } catch (err) { hands = []; }
+    const took = performance.now() - t0;
+    handMs = handMs ? 0.8 * handMs + 0.2 * took : took;
+    probe.handMs = handMs;
+  }
+  return handCover(rawLandmarks ? faceBox(rawLandmarks) : presence.lastBox, hands);
+}
+
+function closeHands() {
+  if (handLandmarker) { try { handLandmarker.close(); } catch (e) { /* already closed */ } }
+  handLandmarker = null; hands = []; handLast = -Infinity;
+}
+
 // The photo: chosen by the user, shown only in this page (never uploaded, never stored), read by a second, short-lived
 // face model that tells where the face is in it. The photo must be of the person using this page.
 async function usePhoto(file) {
-  probe.photo = "loading";
-  $("badge").hidden = true;
+  const another = gallery.active !== null;          // a photo is already on screen: a refused or failed new one must not stop it
+  if (!another) { probe.photo = "loading"; $("badge").hidden = true; }
   const url = URL.createObjectURL(file);
-  let finder = null;
+  let finder = null, client = null, kept = false;
   try {
     setStatus("Reading the photo...");
     const image = new Image();
@@ -82,29 +205,273 @@ async function usePhoto(file) {
     const faces = finder.detect(image).faceLandmarks || [];
     const verdict = checkPhotoFaces(faces);
     if (!verdict.ok) throw new Error(verdict.reason);
+    // consent first: a signed record for this exact photo (its hash; the photo itself stays here), or the photo is not used
+    const sha = await sha256Hex(file);
+    client = new ConsentClient();                   // every photo has its own consent
+    if (!(await askConsent(sha, client))) { setStatus("The photo is not used: no consent was given."); settleFlow(); return; }
     if (!compositor) compositor = new MeshCompositor(faceCanvas, mesh);
-    compositor.setPhoto(image, faces[0]);
-    applyLook();
-    probe.photo = "ready";
-    view.wire = false; $("wire").setAttribute("aria-pressed", "false");
-    $("badge").hidden = false;
-    setStatus("Photo ready: it is drawn on your live face.");
+    compositor.setPhoto(image, faces[0]);           // throws (and changes nothing) if the photo is too large for this graphics card
+    const item = gallery.add({ name: file.name, sha, client, image, landmarks: faces[0], url });
+    kept = true;
+    makeActive(item);
+    setStatus("Photo ready: it is drawn on your live face while the consent lasts and the label stays on screen.");
   } catch (err) {
-    probe.photo = "error";
-    if (compositor) compositor.clearPhoto();
+    if (client && client.record && !kept) client.revoke();   // no photo, so no consent left lying around
+    $("consent").hidden = true;
     setStatus(`This photo cannot be used: ${err && err.message ? err.message : err}`);
+    if (another) settleFlow();
+    else {
+      probe.photo = "error"; probe.consent = "none"; probe.record = null;
+      if (compositor) compositor.clearPhoto();
+      stopGate();
+      $("badge").hidden = true;
+    }
   } finally {
     if (finder) { try { finder.close(); } catch (e) { /* already closed */ } }
-    URL.revokeObjectURL(url);
+    if (!kept) URL.revokeObjectURL(url);            // a kept photo's address stays: its thumbnail uses it
   }
 }
 
-function dropPhoto() {
+// After a refused or failed new photo: back to what the flow was before (a photo still on screen, or nothing).
+function settleFlow() {
+  const item = gallery.active;
+  probe.photo = item ? "ready" : "none"; probe.consent = item ? "active" : "none"; probe.record = item ? item.client.record : null;
+}
+
+// Makes this gallery item the one drawn: its consent becomes the one checked, the label is checked before anything is drawn.
+// (The compositor already holds its texture: the caller set it.)
+function makeActive(item) {
+  consent = item.client;
+  applyLook();
+  $("badge").hidden = false;
+  checkLabel();                                     // the label must already be fine before the first picture is drawn
+  startGate();
+  Object.assign(probe, { photo: "ready", consent: "active", endedReason: "", record: consent.record });
+  view.wire = false; $("wire").setAttribute("aria-pressed", "false");
+  syncGallery();
+  if (headOn) applyHead();                          // a new photo has no head mask until it has been cut
+}
+
+// What the gallery looks like to the page and to a test.
+function syncGallery() {
+  Object.assign(probe, { avatars: gallery.size, avatar: gallery.activeId, session: gallery.session, dropped: gallery.dropped.slice() });
+  renderGallery();
+}
+
+function renderGallery() {
+  const box = $("gallery");
+  box.replaceChildren();
+  for (const item of gallery.list()) {
+    const cell = document.createElement("div");
+    cell.className = "thumb-cell";
+    const pick = document.createElement("button");
+    pick.type = "button"; pick.className = "thumb"; pick.dataset.id = item.id; pick.title = item.name;
+    pick.setAttribute("aria-label", item.name); pick.setAttribute("aria-pressed", String(item.id === gallery.activeId));
+    const img = document.createElement("img");
+    img.alt = ""; img.src = item.url;
+    pick.append(img);
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "thumb-remove"; del.dataset.id = item.id;
+    del.setAttribute("aria-label", `Remove ${item.name}`); del.textContent = "×";
+    cell.append(pick, del);
+    box.append(cell);
+  }
+  box.hidden = gallery.size === 0;
+}
+
+// An item leaves the gallery for good: its consent is ended and its thumbnail address released.
+function releaseItem(item) {
+  item.client.revoke();
+  if (item.url) URL.revokeObjectURL(item.url);
+}
+
+function showToast(text) {
+  toast.show(text, performance.now());
+  probe.toast = text; $("toast").textContent = text; $("toast").hidden = false;
+}
+
+function tickToast(now) {
+  const text = toast.current(now);
+  if (text !== probe.toast) { probe.toast = text; $("toast").textContent = text; $("toast").hidden = text === ""; }
+}
+
+// The LIVE badge shows while a photo is really being drawn, and the timer counts that time only.
+function tickLive(now, drawing) {
+  liveTimer.tick(now, drawing);
+  probe.liveSeconds = liveTimer.seconds;
+  const live = $("live");
+  if (live.hidden === drawing) live.hidden = !drawing;
+  if (drawing) { const text = `LIVE ${formatClock(liveTimer.seconds)}`; if (text !== liveText) { liveText = text; live.textContent = text; } }
+}
+
+// Switching to another photo of the gallery: its consent is checked with the server first.
+async function switchTo(id) {
+  const item = gallery.get(id);
+  if (!item || item.id === gallery.activeId || switching) return;
+  switching = true;
+  try {
+    setStatus(`Checking the consent for ${item.name}...`);
+    await item.client.check();
+    const verdict = item.client.valid();
+    if (!verdict.ok) {
+      gallery.drop(id, verdict.reason); releaseItem(item); syncGallery();
+      setStatus(`${item.name} was removed: ${verdict.reason}.`);
+      showToast(`${item.name} was removed: ${verdict.reason}`);
+      return;
+    }
+    compositor.setPhoto(item.image, item.landmarks);
+    gallery.activate(id);
+    makeActive(item);
+    showToast(`Avatar changed to ${item.name}`);
+    setStatus(`Now drawing ${item.name}.`);
+  } catch (err) {
+    setStatus(`Could not switch: ${err && err.message ? err.message : err}`);
+  } finally { switching = false; }
+}
+
+// Photos that are not on screen are not polled, but one whose time is up (or that the server ended) leaves the gallery.
+function pruneInactive() {
+  let changed = false;
+  for (const item of gallery.list()) {
+    if (item.id === gallery.activeId) continue;
+    if (item.client.secondsLeft() <= 0 || item.client.endedReason) {
+      gallery.drop(item.id, item.client.endedReason || "consent expired"); releaseItem(item); changed = true;
+      setStatus(`${item.name} was removed: its consent is over.`);
+    }
+  }
+  if (changed) syncGallery();
+}
+
+// Shows the statement and waits for the user to confirm it (or not). Resolves true once the server has signed the consent.
+async function askConsent(sha, client) {
+  const terms = await client.terms();
+  const attest = $("consentAttest"), ok = $("consentOk"), no = $("consentNo"), panel = $("consent");
+  $("consentTerms").textContent = terms.attestation;
+  attest.checked = false; ok.disabled = true; panel.hidden = false;
+  probe.photo = "asking"; probe.consent = "asked";
+  setStatus("Read the statement and confirm it to use this photo.");
+  return new Promise((resolve) => {
+    const finish = (value) => { cancelAsk = null; panel.hidden = true; attest.onchange = ok.onclick = no.onclick = null; resolve(value); };
+    cancelAsk = () => finish(false);                // Stop closes the question
+    attest.onchange = () => { ok.disabled = !attest.checked; };
+    no.onclick = () => finish(false);
+    ok.onclick = async () => {
+      ok.disabled = true;
+      try { await client.issue(sha, Number($("consentHours").value), attest.checked); finish(true); }
+      catch (err) { setStatus(`Consent was refused: ${err && err.message ? err.message : err}`); finish(false); }
+    };
+  });
+}
+
+// The label check and the consent check run while a photo is on screen. Both fail closed.
+function checkLabel() {
+  const view = { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight };
+  gate.label = $("badge").hidden && !(compositor && compositor.hasPhoto) ? "" : labelProblem(readLabel(document, window, $("badge")), view);
+  if (gate.label !== probe.label) setStatus(gate.label ? `The photo is paused: ${gate.label}.` : "The photo is drawn again: the label is back.");
+  probe.label = gate.label;
+}
+
+function startGate() {
+  stopGate();
+  gate.timers.push(setInterval(checkLabel, LABEL_EVERY_MS));
+  gate.timers.push(setInterval(async () => {
+    pruneInactive();
+    const client = consent;                        // the active photo's; it can change while the answer is awaited
+    if (!client.record) return;
+    await client.check();
+    if (client !== consent) return;
+    const v = client.valid();
+    probe.consentLeft = client.secondsLeft();
+    if (!v.ok) endPhoto(v.reason);
+  }, CHECK_EVERY_MS));
+}
+
+let rechecking = false;
+async function recheckConsent() {
+  if (rechecking || !consent.record) return;
+  rechecking = true;
+  const client = consent;
+  try { await client.check(); } finally { rechecking = false; }
+}
+
+function stopGate() { for (const t of gate.timers) clearInterval(t); gate.timers = []; gate.label = ""; probe.label = ""; }
+
+// The photo stops for good (consent over): it is forgotten, and so is the record. A new photo needs a new consent.
+function endPhoto(reason) {
+  const item = gallery.active;
+  const successor = item ? gallery.neighbourOf(item.id) : "";
+  if (item) { gallery.drop(item.id, reason); releaseItem(item); }   // it leaves the gallery; the others stay, none is active
   if (compositor) compositor.clearPhoto();
-  probe.photo = "none"; probe.drawn = 0;
+  consent = new ConsentClient();
+  stopGate();
+  probe.photo = "none"; probe.drawn = 0; probe.consent = "ended"; probe.endedReason = reason; probe.record = null;
   $("badge").hidden = true;
   $("photoFile").value = "";
-  setStatus("Photo removed.");
+  syncGallery();
+  setStatus(`The photo was stopped: ${reason}.`);
+  if (gallery.size > 0) takeOver(successor, reason);
+  else setStatus(`The photo was stopped: ${reason}. No photo is left: choose one to start again.`);
+}
+
+// The photo on screen ended but others remain: the neighbour takes over once the server confirms its consent. A photo whose own
+// consent is over is dropped on the way (switchTo does that) and the next one is tried; nothing is drawn without a valid consent.
+async function takeOver(preferredId, reason) {
+  for (let tries = gallery.size; tries > 0 && gallery.size > 0 && !gallery.active; tries--) {
+    const id = gallery.get(preferredId) ? preferredId : gallery.list()[0].id;
+    await switchTo(id);
+    if (!gallery.active && gallery.get(id)) return;           // busy or the server did not answer: the user picks one
+    preferredId = "";
+  }
+  const now = gallery.active;
+  if (now) {
+    probe.endedReason = reason;
+    showToast(`Photo ended (${reason}); now showing ${now.name}`);
+  } else if (gallery.size === 0) setStatus(`The photo was stopped: ${reason}. No photo is left: choose one to start again.`);
+}
+
+// The user takes a photo out of the gallery: its consent ends. If it was the one on screen, the screen goes back to the plain camera.
+function removeItem(id) {
+  const { item, wasActive } = gallery.remove(id);
+  if (!item) return;
+  releaseItem(item);
+  if (wasActive) {
+    if (compositor) compositor.clearPhoto();
+    consent = new ConsentClient();
+    stopGate();
+    probe.photo = "none"; probe.drawn = 0; probe.consent = "none"; probe.record = null;
+    $("badge").hidden = true;
+  }
+  $("photoFile").value = "";
+  syncGallery();
+  setStatus("Photo removed, and its consent ended.");
+}
+
+// "Remove photo": the one on screen.
+function dropPhoto() {
+  if (gallery.active) return removeItem(gallery.active.id);
+  if (compositor) compositor.clearPhoto();
+  stopGate();
+  probe.photo = "none"; probe.drawn = 0; probe.consent = "none"; probe.record = null;
+  $("badge").hidden = true;
+  $("consent").hidden = true;
+  $("photoFile").value = "";
+  setStatus("Photo removed, and its consent ended.");
+}
+
+// "Stop": the session is over. Every consent ends, every photo is forgotten, the screen goes back to the plain camera.
+function stopSession() {
+  if (cancelAsk) cancelAsk();
+  for (const item of gallery.stop()) releaseItem(item);
+  if (compositor) compositor.clearPhoto();
+  consent = new ConsentClient();
+  stopGate();
+  Object.assign(probe, { photo: "none", drawn: 0, consent: "none", record: null, endedReason: "" });
+  $("badge").hidden = true; $("consent").hidden = true; $("photoFile").value = "";
+  liveTimer.reset(); probe.liveSeconds = 0; liveText = "";
+  syncGallery();
+  tickLive(performance.now(), false);
+  showToast("Session stopped");
+  setStatus("Session stopped: every consent is ended and every photo is forgotten.");
 }
 
 function draw(landmarks) {
@@ -143,13 +510,30 @@ function frame() {
     probe.frames++; probe.found += landmarks ? 1 : 0; probe.detectMs = detectMs;
     if (landmarks) probe.box = faceBox(landmarks);   // where the face is, as fractions of the frame: four numbers
     if (measure) { measure.ms.push(took); measure.found += landmarks ? 1 : 0; measure.times.push(now); }
-    draw(landmarks);
+    // What is drawn is the steadied face (smoothed, held for a moment when lost, faded when covered), not the raw detection.
+    const cover = look.hideHands && handLandmarker ? coverNow(now, landmarks) : 0;
+    const shown = presence.update(landmarks, now, cover);
+    jitter.mark(landmarks, shown && shown.landmarks);
+    Object.assign(probe, { shown: shown !== null, opacity: shown ? shown.opacity : 0, cover, jitterRaw: jitter.raw, jitterSmooth: jitter.smooth });
+    draw(shown ? shown.landmarks : null);
     if (compositor && compositor.hasPhoto) {
       if (faceCanvas.width !== video.videoWidth || faceCanvas.height !== video.videoHeight) {
         faceCanvas.width = video.videoWidth; faceCanvas.height = video.videoHeight;
       }
-      probe.drawn = compositor.draw(landmarks, video);   // the video goes to the graphics card for colour matching only: see compositor.js
+      // consent and label are checked every frame (cheap: numbers); a failure draws nothing.
+      // Only "stale" is not final here: a page stalled for seconds (loading a model for another photo) could not ask the
+      // server, so nothing is drawn and the server is asked now. If it does not answer, the timed check ends the photo.
+      const verdict = consent.valid();
+      if (!verdict.ok && verdict.stale) { compositor.clear(); probe.drawn = 0; recheckConsent(); }
+      else if (!verdict.ok) endPhoto(verdict.reason);
+      else if (gate.label) { compositor.clear(); probe.drawn = 0; }
+      else {
+        // the video goes to the graphics card for colour matching only: see compositor.js
+        probe.drawn = compositor.draw(shown ? shown.landmarks : null, video, shown ? shown.opacity : 0);
+        probe.headDrawn = compositor.headActive;
+      }
     }
+    tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
   }
   schedule();
 }
@@ -194,10 +578,14 @@ function updateHud() {
   $("found").textContent = r.fps ? `${r.foundPct.toFixed(0)}%` : "-";
   $("ms").textContent = detectMs ? `${detectMs.toFixed(0)} ms` : "-";
   $("delegate").textContent = delegate || "-";
-  const gate = $("gate");
-  if (!r.fps) { gate.textContent = "measuring"; gate.className = ""; }
-  else if (r.fps >= GATE_FPS) { gate.textContent = `${GATE_FPS} fps gate: OK`; gate.className = "ok"; }
-  else { gate.textContent = `${GATE_FPS} fps gate: not met`; gate.className = "bad"; }
+  tickToast(performance.now());
+  const left = consent.record ? consent.secondsLeft() : 0;
+  probe.consentLeft = left;
+  $("consentState").textContent = consent.record ? `${Math.floor(left / 3600)} h ${String(Math.floor((left % 3600) / 60)).padStart(2, "0")} min left` : (probe.consent === "ended" ? "ended" : "none");
+  const fpsGate = $("gate");
+  if (!r.fps) { fpsGate.textContent = "measuring"; fpsGate.className = ""; }
+  else if (r.fps >= GATE_FPS) { fpsGate.textContent = `${GATE_FPS} fps gate: OK`; fpsGate.className = "ok"; }
+  else { fpsGate.textContent = `${GATE_FPS} fps gate: not met`; fpsGate.className = "bad"; }
 }
 
 function wireControls() {
@@ -210,11 +598,69 @@ function wireControls() {
   });
   $("go").addEventListener("click", startMeasure);
   $("photoBtn").addEventListener("click", () => $("photoFile").click());
-  $("photoFile").addEventListener("change", (e) => { const f = e.target.files && e.target.files[0]; if (f) usePhoto(f); });
+  $("photoFile").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";                            // the same file can be chosen again later
+    if (f) usePhoto(f);
+  });
   $("photoClear").addEventListener("click", dropPhoto);
+  $("gallery").addEventListener("click", (e) => {
+    const del = e.target.closest(".thumb-remove");
+    if (del) return removeItem(del.dataset.id);
+    const pick = e.target.closest(".thumb");
+    if (pick) switchTo(pick.dataset.id);
+  });
+  $("stop").addEventListener("click", stopSession);
+  $("full").addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await $("wrap").requestFullscreen();     // the picture and the label go full screen together
+    } catch (err) { setStatus(`Full screen is not available: ${err && err.message ? err.message : err}`); }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    probe.fullscreen = document.fullscreenElement !== null;
+    setStatus(probe.fullscreen ? "Full screen: press Esc to leave." : "Left full screen.");
+  });
   $("match").addEventListener("input", (e) => { look.match = Number(e.target.value); $("matchValue").textContent = `${look.match}%`; applyLook(); });
   $("keepFace").addEventListener("click", (e) => {
     look.keep = !look.keep; e.currentTarget.setAttribute("aria-pressed", String(look.keep)); applyLook();
+  });
+  $("smooth").addEventListener("click", (e) => {
+    presence.smoothing = !presence.smoothing; presence.smoother.reset(); probe.smooth = presence.smoothing;
+    e.currentTarget.setAttribute("aria-pressed", String(presence.smoothing));
+  });
+  $("headBtn").addEventListener("click", async (e) => {
+    const button = e.currentTarget;
+    if (headOn) {
+      headOn = false; button.setAttribute("aria-pressed", "false");
+      if (compositor) compositor.setHead(false);
+      closeSegmenter(); probe.head = "off";
+      setStatus("Whole head off: only the face is drawn.");
+      return;
+    }
+    button.disabled = true;
+    try {
+      headOn = true; button.setAttribute("aria-pressed", "true"); probe.head = "on";
+      if (gallery.active) await applyHead();
+      else setStatus("Whole head is on: it applies to the next photo you choose.");
+    } finally { button.disabled = false; }
+  });
+  $("hideHands").addEventListener("click", async (e) => {
+    const button = e.currentTarget;
+    if (look.hideHands) {
+      look.hideHands = false; closeHands(); probe.hands = "off"; probe.handMs = 0; button.setAttribute("aria-pressed", "false");
+      return;
+    }
+    button.disabled = true;
+    setStatus("Loading the hand model...");
+    try {
+      handLandmarker = await openHandLandmarker();
+      look.hideHands = true; probe.hands = "on"; button.setAttribute("aria-pressed", "true");
+      setStatus("The photo fades out when a hand covers your face. This costs speed: look at the frames per second.");
+    } catch (err) {
+      probe.hands = "error";
+      setStatus(`The hand model could not start: ${err && err.message ? err.message : err}`);
+    } finally { button.disabled = false; }
   });
 }
 
@@ -240,6 +686,8 @@ async function main() {
   window.addEventListener("pagehide", () => {
     stopped = true;
     try { landmarker.close(); } catch (e) { /* already closed */ }
+    closeHands(); closeSegmenter();
+    for (const item of gallery.list()) item.client.revoke();   // best effort: the page is going away, so its consents should not outlive it
     stream.getTracks().forEach((t) => t.stop());
   });
   schedule();

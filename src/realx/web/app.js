@@ -11,7 +11,7 @@ const api = async (path, opts = {}) => {
 };
 
 // --- live view and measurements -------------------------------------------------
-const view = $("view"), character = $("character"), tracker = $("tracker");
+const view = $("view"), character = $("character"), tracker = $("tracker"), photoFrame = $("facemeshFrame");
 let lastFrames = -1, stalled = 0, mode = null;
 view.addEventListener("load", () => { $("notice").hidden = true; applyMode(mode); }, { once: true });
 
@@ -62,10 +62,21 @@ function releaseTracker() {
   try { tracker.contentWindow.location.replace("about:blank"); } catch (e) { /* already gone */ }
   tracker.removeAttribute("src");
 }
+function releasePhotoFace() {
+  if (!photoFrame.getAttribute("src")) return;
+  try { photoFrame.contentWindow.location.replace("about:blank"); } catch (e) { /* already gone */ }
+  photoFrame.removeAttribute("src");   // the camera stops with the page
+}
 function applyMode(next) {
   mode = next;
-  const isCharacter = mode === "character", isBody = mode === "body";
-  const noPicture = isCharacter || isBody;   // neither draws the server's MJPEG picture
+  const isCharacter = mode === "character", isBody = mode === "body", isPhoto = mode === "photoface";
+  const noPicture = isCharacter || isBody || isPhoto;   // none of them draws the server's MJPEG picture
+  if (isPhoto) {
+    if (!photoFrame.getAttribute("src")) photoFrame.setAttribute("src", "/facemesh");
+  } else {
+    releasePhotoFace();
+  }
+  photoFrame.hidden = !isPhoto;
   if (isCharacter && !character.getAttribute("src")) character.src = "/avatar";
   if (isBody) {
     if (!tracker.getAttribute("src")) {
@@ -83,8 +94,8 @@ function applyMode(next) {
   character.hidden = !isCharacter;
   tracker.hidden = !isBody;
   view.hidden = noPicture || lastFrames < 1;
-  if (isBody) $("notice").hidden = true;
-  $("obs").hidden = !noPicture;
+  if (isBody || isPhoto) $("notice").hidden = true;
+  $("obs").hidden = !(isCharacter || isBody);   // Photo face is not an OBS source yet
   $("obsBodyNote").hidden = !isBody;
   $("bodyPanel").hidden = !isBody;
   $("obsUrl").value = location.origin + "/avatar";
@@ -279,19 +290,24 @@ async function poll() {
     drawRibbon(s.ribbon);
     stalled = s.frames === lastFrames ? stalled + 1 : 0;
     lastFrames = s.frames;
-    const inBody = s.config.mode === "body";
+    const inBody = s.config.mode === "body", inPhoto = s.config.mode === "photoface";
     lastBody = inBody && s.body && typeof s.body === "object" ? s.body : null;
     renderStudio();
     // in Full body mode the server has no picture of its own: "live" means a tracker page is publishing
     const live = inBody ? !!(s.body && s.body.publishing) : s.frames > 0 && stalled < 3 && !s.error;
     $("tally").classList.toggle("live", live);
+    // right after the user picks a mode, an answer that was already in flight still carries the old one: do not let it
+    // swing the page back (that would reload the photo-face frame and restart its camera)
+    const settling = Date.now() - editing < 1500;
     if (inBody) {
-      applyMode("body");
+      if (!settling) applyMode("body");
       $("bodyStatus").textContent = bodyStatusText(s);
-    } else if (live) { $("notice").hidden = true; applyMode(s.config.mode); }
-    $("state").textContent = inBody ? (live ? "Live" : "Waiting for the camera")
+    } else if (inPhoto) {
+      if (!settling) applyMode("photoface");   // the page in the frame owns the camera, so there is nothing for the server to count
+    } else if (live) { $("notice").hidden = true; if (!settling) applyMode(s.config.mode); }
+    $("state").textContent = inPhoto ? "Photo face (camera in the frame)" : inBody ? (live ? "Live" : "Waiting for the camera")
       : s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
-    if (s.error && !inBody) {
+    if (s.error && !inBody && !inPhoto) {
       $("notice").hidden = false;
       $("notice").textContent = s.error + " Choose a demo source or check your camera.";
     }

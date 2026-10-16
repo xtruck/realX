@@ -9,14 +9,16 @@
 //    copy) and give them to the photo's detail, so the photo does not look like a sticker. That one method is the only
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
 import { TRIANGLE_COUNT, VERTEX_COUNT, edgeDepth, faceBox, flatten, keepMask } from "./mesh.js";
+import { HEAD_VERTEX_COUNT, RING_TRIANGLES, headFade, ringFlag, ringPoints, ringTriangles } from "./head.js";
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
+const RING_MATCH = 0.35;   // how much of the live colour the head ring takes (the face takes the Colour match setting in full)
 const BLUR = 0.12;      // colour is matched at the scale of this fraction of the face width
 
-const VERT = `attribute vec2 a_pos; attribute vec2 a_uv; attribute float a_fade; attribute float a_keep;
-varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_keep;
+const VERT = `attribute vec2 a_pos; attribute vec2 a_uv; attribute float a_fade; attribute float a_keep; attribute float a_ring;
+varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_keep; varying float v_ring;
 void main() {
-  v_uv = a_uv; v_scr = a_pos; v_fade = a_fade; v_keep = a_keep;
+  v_uv = a_uv; v_scr = a_pos; v_fade = a_fade; v_keep = a_keep; v_ring = a_ring;
   gl_Position = vec4(a_pos.x * 2.0 - 1.0, 1.0 - a_pos.y * 2.0, 0.0, 1.0);
 }`;
 
@@ -25,9 +27,10 @@ precision highp float;
 #else
 precision mediump float;
 #endif
-varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_keep;
-uniform sampler2D u_photo; uniform sampler2D u_cam;
-uniform float u_match; uniform float u_keep; uniform vec2 u_rl; uniform vec2 u_rp;
+varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_keep; varying float v_ring;
+uniform sampler2D u_photo; uniform sampler2D u_cam; uniform sampler2D u_mask;
+uniform float u_head; uniform float u_ringMatch;
+uniform float u_match; uniform float u_keep; uniform float u_opacity; uniform vec2 u_rl; uniform vec2 u_rp;
 
 // 13 taps: the centre and two hexagon rings. A cheap blur whose size follows the face.
 vec3 soften(sampler2D t, vec2 c, vec2 r) {
@@ -49,8 +52,12 @@ void main() {
     vec3 detail = clamp(photo - soften(u_photo, v_uv, u_rp), -0.16, 0.16);
     matched = clamp(soften(u_cam, v_scr, u_rl) + detail, 0.0, 1.0);
   }
-  vec3 colour = mix(photo, matched, u_match);
-  float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - u_keep * v_keep);
+  // whole head: the ring around the face keeps most of the photo's own colour (the live picture there is hair or room, not skin)
+  // and is drawn only where the photo itself is head (hair, skin, accessories), never its background or clothes
+  vec3 colour = mix(photo, matched, u_match * (1.0 - v_ring * (1.0 - u_ringMatch)));
+  float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
+  float head = mix(1.0, smoothstep(0.35, 0.65, texture2D(u_mask, v_uv).r) * inside, v_ring * u_head);
+  float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - u_keep * v_keep) * u_opacity * head;
   gl_FragColor = vec4(colour * alpha, alpha);
 }`;
 
@@ -60,29 +67,58 @@ export class MeshCompositor {
     const gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false });
     if (!gl) throw new Error("WebGL is not available in this browser");
     this.gl = gl; this.canvas = canvas; this.mesh = mesh;
-    this.positions = new Float32Array(VERTEX_COUNT * 2);
-    this.photo = null; this.camera = null;
+    this.positions = new Float32Array(HEAD_VERTEX_COUNT * 2);   // 468 face points, then the head ring
+    this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
     this.look = { match: 1, keep: 1 };
+    this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
     this.program = link(gl, VERT, FRAG);
     gl.useProgram(this.program);
     const attr = (name) => gl.getAttribLocation(this.program, name);
-    this.loc = { pos: attr("a_pos"), uv: attr("a_uv"), fade: attr("a_fade"), keep: attr("a_keep") };
-    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_match", "u_keep", "u_rl", "u_rp"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
+    this.loc = { pos: attr("a_pos"), uv: attr("a_uv"), fade: attr("a_fade"), keep: attr("a_keep"), ring: attr("a_ring") };
+    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_opacity", "u_rl", "u_rp"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
     this.posBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.positions.byteLength, gl.DYNAMIC_DRAW);
     this.uvBuffer = gl.createBuffer();
     this.fadeBuffer = filled(gl, Float32Array.from(edgeDepth(mesh.triangles), (d) => Math.min(Math.max(d, 0) / FADE_STEPS, 1)));
-    this.keepBuffer = filled(gl, keepMask());
+    this.headFadeBuffer = filled(gl, headFade());
+    const keep = keepMask();
+    this.keepBuffer = filled(gl, Float32Array.from({ length: HEAD_VERTEX_COUNT }, (_, i) => (i < VERTEX_COUNT ? keep[i] : 0)));
+    this.ringBuffer = filled(gl, ringFlag());
     this.indexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.triangles, gl.STATIC_DRAW);
+    const faceAndRing = new Uint16Array(mesh.triangles.length + RING_TRIANGLES * 3);   // the face's triangles, then the ring's
+    faceAndRing.set(mesh.triangles); faceAndRing.set(ringTriangles(), mesh.triangles.length);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, faceAndRing, gl.STATIC_DRAW);
     this.camera = emptyTexture(gl);   // a single transparent pixel until a frame is uploaded
     gl.clearColor(0, 0, 0, 0);
   }
 
   get hasPhoto() { return this.photo !== null; }
+
+  /** True when the whole head is switched on AND this photo has a head mask: then the ring around the face is drawn too. */
+  get headActive() { return this.head && this.maskTex !== null && this.photoRing !== null; }
+
+  /**
+   * The photo's head mask ({ width, height, data } of one byte per pixel, from head.js headMask) or null to forget it.
+   * It is the PHOTO that was cut into classes, once; no camera frame is involved.
+   */
+  setHeadMask(mask) {
+    const gl = this.gl;
+    if (this.maskTex) { gl.deleteTexture(this.maskTex); this.maskTex = null; }
+    if (!mask) return;
+    this.maskTex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, mask.width, mask.height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, mask.data);   // the photo's head mask
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    setSampling(gl);
+  }
+
+  /** Whole head on or off (it only shows once a head mask is set). */
+  setHead(on) { this.head = !!on; }
 
   /** How the photo is drawn: `match` 0..1 (how much of the live face's colour and light it takes), `keep` (live eyes and mouth show through). */
   setLook({ match = this.look.match, keep = this.look.keep } = {}) {
@@ -95,10 +131,14 @@ export class MeshCompositor {
    */
   setPhoto(image, photoLandmarks) {
     const gl = this.gl;
-    const uv = flatten(photoLandmarks);
+    const flat = flatten(photoLandmarks);
     const box = faceBox(photoLandmarks);
-    if (!uv || !box) throw new Error("the photo has no complete face");
+    if (!flat || !box) throw new Error("the photo has no complete face");
     const w = image.naturalWidth || image.width, h = image.naturalHeight || image.height;
+    // texture coordinates: the face's 468 points, then the same ring around the PHOTO's face that is built around the live one
+    const ring = (w > 0 && h > 0) ? ringPoints(photoLandmarks, w / h) : null;
+    const uv = new Float32Array(HEAD_VERTEX_COUNT * 2);
+    uv.set(flat); if (ring) uv.set(ring, VERTEX_COUNT * 2);
     const max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
     if (!(w > 0 && h > 0) || w > max || h > max) throw new Error("this photo is too large for this graphics card: use a smaller one");
     if (this.photo) gl.deleteTexture(this.photo);
@@ -108,6 +148,8 @@ export class MeshCompositor {
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);   // the photo
     setSampling(gl);
+    this.photoRing = ring;
+    this.setHeadMask(null);                         // a new photo has no mask until it has been cut
     this.photoRadius = [BLUR * box.w, BLUR * box.w * (w / h)];
     gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
@@ -116,7 +158,8 @@ export class MeshCompositor {
   /** Forget the photo (the picture and its texture coordinates). */
   clearPhoto() {
     if (this.photo) this.gl.deleteTexture(this.photo);
-    this.photo = null;
+    this.photo = null; this.photoRing = null;
+    this.setHeadMask(null);
     this.clear();
   }
 
@@ -128,34 +171,47 @@ export class MeshCompositor {
   /**
    * Draws the photo on the live face. `camera` is the live picture's element, used only to match colours (see the top of
    * this file); leave it out, or set match to 0, and the picture is not touched at all.
-   * Returns the number of triangles drawn: 0 when there is no photo or no face.
+   * `opacity` (0..1) fades the whole photo, for a face that is being lost or covered; at 0 nothing is drawn.
+   * Returns the number of triangles drawn: 0 when there is no photo, no face or no opacity.
    */
-  draw(liveLandmarks, camera = null) {
+  draw(liveLandmarks, camera = null, opacity = 1) {
     const gl = this.gl;
     this.clear();
-    if (!this.photo || !flatten(liveLandmarks, this.positions)) return 0;
+    if (!this.photo || !(opacity > 0.002) || !flatten(liveLandmarks, this.positions)) return 0;
     const box = faceBox(liveLandmarks);
     const useCamera = this.look.match > 0 && camera !== null;
     if (useCamera) this.uploadCamera(camera);
+    const aspect = this.canvas.width / Math.max(1, this.canvas.height);
+    let head = this.headActive;
+    if (head) {                                     // the ring around the live face; if the face is degenerate, the face alone
+      const live = ringPoints(liveLandmarks, aspect);
+      if (live) this.positions.set(live, VERTEX_COUNT * 2); else head = false;
+    }
     gl.useProgram(this.program);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.positions);
     this.point(this.posBuffer, this.loc.pos, 2);
     this.point(this.uvBuffer, this.loc.uv, 2);
-    this.point(this.fadeBuffer, this.loc.fade, 1);
+    this.point(head ? this.headFadeBuffer : this.fadeBuffer, this.loc.fade, 1);
     this.point(this.keepBuffer, this.loc.keep, 1);
+    this.point(this.ringBuffer, this.loc.ring, 1);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photo);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.camera);
-    const aspect = this.canvas.width / Math.max(1, this.canvas.height);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, head ? this.maskTex : this.photo);   // any texture while the head is off
     gl.uniform1i(this.uni.u_photo, 0);
     gl.uniform1i(this.uni.u_cam, 1);
+    gl.uniform1i(this.uni.u_mask, 2);
+    gl.uniform1f(this.uni.u_head, head ? 1 : 0);
+    gl.uniform1f(this.uni.u_ringMatch, RING_MATCH);
     gl.uniform1f(this.uni.u_match, useCamera ? this.look.match : 0);
     gl.uniform1f(this.uni.u_keep, this.look.keep);
+    gl.uniform1f(this.uni.u_opacity, Math.min(1, opacity));
     gl.uniform2f(this.uni.u_rl, BLUR * box.w, BLUR * box.w * aspect);
     gl.uniform2f(this.uni.u_rp, this.photoRadius[0], this.photoRadius[1]);
-    gl.drawElements(gl.TRIANGLES, TRIANGLE_COUNT * 3, gl.UNSIGNED_SHORT, 0);
-    return TRIANGLE_COUNT;
+    const triangles = TRIANGLE_COUNT + (head ? RING_TRIANGLES : 0);
+    gl.drawElements(gl.TRIANGLES, triangles * 3, gl.UNSIGNED_SHORT, 0);
+    return triangles;
   }
 
   point(buffer, location, size) {
@@ -177,10 +233,10 @@ export class MeshCompositor {
 
   dispose() {
     const gl = this.gl;
-    for (const t of [this.photo, this.camera]) if (t) gl.deleteTexture(t);
-    for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.indexBuffer]) gl.deleteBuffer(b);
+    for (const t of [this.photo, this.camera, this.maskTex]) if (t) gl.deleteTexture(t);
+    for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.headFadeBuffer, this.ringBuffer, this.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.program);
-    this.photo = null; this.camera = null;
+    this.photo = null; this.camera = null; this.maskTex = null;
   }
 }
 

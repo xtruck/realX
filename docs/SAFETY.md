@@ -87,3 +87,10 @@ and most jurisdictions now expect them.
 - No face-rendering model ships. `inswapper_128` and `buffalo_l` stay blocked, so today the
   co-host flow is the consent, label and revoke machinery plus a stub renderer. A real
   renderer needs a licensed or self-trained model first.
+
+## Face-mesh prototype: your own photo on your live face
+
+The `/facemesh` page can draw a photo of the user on their live face. It does so only under a signed consent bound to the
+photo's hash, and pauses when the "Virtual face" label is hidden. Those are checks in the page itself: they keep an honest page
+honest, not a lock against someone who edits it, and the label is not yet part of the pixels realX sends out (that is for the
+output stage before any virtual camera). Details and limits: `FACEMESH.md`.

@@ -38,6 +38,8 @@ from realx import ws
 from realx.pipeline import Pipeline
 from realx.studio import StudioController
 from realx.rig import EMOTES, MAX_BODY_BYTES, hello_message, parse_body_message, rig_message
+from realx.safety.consent import ConsentError
+from realx.safety.facemesh_consent import FaceMeshConsent
 from realx.sources import MOTIONS, SourceError, SyntheticScene, camera_frames
 from realx.stages.background import MAX_IMAGE_BYTES, BackgroundError, decode_background
 from realx.stages import create
@@ -46,8 +48,9 @@ from realx import log as rlog
 
 log = rlog.get_logger("server")
 
-# "body": the browser tracks the camera (full body) and publishes it; the Python side releases the camera
-MODES = ("avatar", "character", "boxes", "original", "body")
+# "body": the browser tracks the camera (full body) and publishes it; the Python side releases the camera.
+# "photoface": the /facemesh page runs in the control room and owns the camera; the Python side releases it too
+MODES = ("avatar", "character", "boxes", "original", "body", "photoface")
 BACKGROUNDS = ("off", "blur", "photo")
 BACKGROUND_THUMB_PATH = "/avatar/background.png"
 BACKGROUND_THUMB_SIDE = 32  # px on the long edge
@@ -82,7 +85,8 @@ def permissions_for(query: str) -> str:
     which the control room adds only after the user chooses a microphone; unchosen, nothing may use it."""
     return PERMISSIONS_WITH_MIC if (parse_qs(query).get("mic") or [""])[0] else PERMISSIONS
 ASSET_MAX_AGE = 3600  # seconds: MediaPipe runtime and models are pinned by hash, so they cannot change within a release
-MP_MODELS = ("mp_face", "mp_pose", "mp_hand")  # the only models /mp/models serves
+MP_MODELS = ("mp_face", "mp_pose", "mp_hand", "mp_segmenter")  # the only models /mp/models serves
+PREFETCH_MODELS = ("mp_face", "mp_pose", "mp_hand")  # the 16 MB segmenter is fetched only when the face-mesh page asks for it
 _WASM_NAME = re.compile(r"[a-z0-9_]+\.(js|wasm)")
 # onnxruntime-web's runtime, served from this origin because the CSP allows nothing else. Only the all-in-one "jsep" build
 # (it runs both the WebGPU and the WebAssembly backends), under its exact file names.
@@ -464,7 +468,7 @@ class Engine:
             while not self._stop.is_set():
                 try:
                     cfg, current = self._snapshot()
-                    if cfg["mode"] == "body":
+                    if cfg["mode"] in ("body", "photoface"):
                         # the browser owns the camera now: let go of ours so it can be opened there
                         if pipe:
                             pipe.close()
@@ -651,6 +655,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
     ort_files = {p.name: p for p in ort_root.iterdir() if _ORT_NAME.fullmatch(p.name)} if ort_root.is_dir() else {}
     hw_lock = threading.Lock()
     hw_cache: dict = {"t": 0.0, "doc": None}
+    facemesh_consent = FaceMeshConsent()  # consent for the face-mesh page's photo: this run's key, nothing on disk
 
     def hardware_doc() -> dict:
         """What this computer can do. Detection can take a couple of seconds, and free memory changes, so it is
@@ -688,7 +693,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             return
 
         def run() -> None:
-            for key in MP_MODELS:
+            for key in PREFETCH_MODELS:
                 try:
                     verified_model(key)
                 except Exception as exc:  # best effort: the page asks again, and says why if it still fails
@@ -811,6 +816,14 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             self.end_headers()
             self.wfile.write(body)
 
+        def _json_object(self) -> dict:
+            if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
+                raise ValueError("Content-Type must be application/json")
+            body = json.loads(self._body(MAX_JSON) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError("expected a JSON object")
+            return body
+
         def _body(self, limit: int) -> bytes:
             self._body_taken = True  # from here on the body is this method's business, not _drain's
             if self.headers.get("Transfer-Encoding"):
@@ -864,7 +877,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     (
                         ("Content-Security-Policy", avatar_csp(port_getter())),
                         ("Permissions-Policy", PERMISSIONS),
-                        ("X-Frame-Options", "DENY"),
+                        ("X-Frame-Options", "SAMEORIGIN"),  # the control room shows it in "Photo face" mode; avatar_csp has frame-ancestors 'self'
                     ),
                 )
             elif path == "/facemesh.bundle.js":
@@ -910,6 +923,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                 self._json(engine.stats())
             elif path == "/api/hardware":
                 self._json(hardware_doc())
+            elif path == "/api/facemesh/terms":
+                self._json(facemesh_consent.terms())
             elif path == "/api/voices":
                 self._json({"presets": presets.describe(), "note": presets.NOTE})
             elif path == "/api/safety":
@@ -1117,6 +1132,17 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     if not isinstance(changes, dict):
                         raise ValueError("expected a JSON object")
                     self._json(engine.set_dock(changes))
+                elif parsed.path == "/api/facemesh/consent":  # the photo's SHA-256 only: the photo itself never reaches the server
+                    body = self._json_object()
+                    record = facemesh_consent.issue(body.get("sha256"), body.get("attested"), body.get("hours", 2.0))
+                    self._json({"record": record, "seconds": record["expires_at"] - time.time()})
+                elif parsed.path == "/api/facemesh/consent/check":
+                    body = self._json_object()
+                    left = facemesh_consent.check(body.get("record"), body.get("sha256"))
+                    self._json({"ok": True, "seconds": left})
+                elif parsed.path == "/api/facemesh/consent/revoke":
+                    facemesh_consent.revoke(self._json_object().get("record"))
+                    self._json({"ok": True})
                 elif parsed.path == "/api/emote":
                     if (self.headers.get("Content-Type") or "").split(";")[0].strip() != "application/json":
                         raise ValueError("Content-Type must be application/json")
@@ -1149,6 +1175,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     self._deny(404, "not found")
             except (ValueError, BackgroundError, json.JSONDecodeError, RecursionError) as exc:
                 self._deny(400, str(exc)[:200])
+            except ConsentError as exc:
+                self._deny(403, str(exc)[:200])
             except OSError:
                 return
             except Exception:  # keep details out of the response, but not out of the log

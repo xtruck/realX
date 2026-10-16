@@ -40,14 +40,14 @@ def test_the_prototype_needs_the_access_token(srv, path):
     assert status == 401 and headers.get("www-authenticate") == "Bearer"
 
 
-def test_page_is_served_with_a_policy_that_allows_no_eval_no_framing_and_only_our_camera(srv):
+def test_page_is_served_with_a_policy_that_allows_no_eval_framing_only_by_us_and_only_our_camera(srv):
     status, h, body = get(srv, "/facemesh")
     assert status == 200 and h["content-type"].startswith("text/html")
     assert b"/facemesh.bundle.js" in body
     csp = h["content-security-policy"]
     assert "'unsafe-eval'" not in csp and "default-src 'none'" in csp and "frame-ancestors 'self'" in csp
     assert "script-src 'self' 'wasm-unsafe-eval'" in csp
-    assert h["x-frame-options"] == "DENY"
+    assert h["x-frame-options"] == "SAMEORIGIN"   # only the control room (same origin) may show it, in "Photo face" mode
     assert h["permissions-policy"] == "camera=(self), microphone=(), geolocation=()"
 
 

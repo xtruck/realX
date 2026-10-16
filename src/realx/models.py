@@ -95,6 +95,15 @@ MANIFEST: dict[str, ModelSpec] = {
         commercial_ok=True,
         purpose="21-point hands and every finger for the character",
     ),
+    "mp_segmenter": ModelSpec(
+        name="mp_segmenter",
+        filename="selfie_multiclass_256x256.tflite",
+        url="https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite",
+        sha256="c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0",
+        license="Apache-2.0",
+        commercial_ok=True,
+        purpose="hair / face-skin / body-skin / clothes classes of the user's own photo, once per photo (face mesh, whole head)",
+    ),
 }
 
 # Never loaded, listed so the audit trail is explicit. See docs/LICENSE-AUDIT.md.

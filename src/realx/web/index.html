@@ -130,6 +130,7 @@
         <div class="screen">
           <img id="view" alt="Live preview with tracked faces" hidden>
           <iframe id="character" title="3D character preview" hidden></iframe>
+          <iframe id="facemeshFrame" title="Photo face: your photo on your live face, camera stays in this frame" allow="camera" hidden></iframe>
           <iframe id="tracker" title="Full-body tracking: character with your camera preview" allow="camera" hidden></iframe>
           <div class="guides" id="guides"></div>
           <div class="notice" id="notice">Starting the video pipeline…</div>
@@ -207,6 +208,7 @@
             <label><input type="radio" name="mode" value="avatar" checked><span>Cartoon</span></label>
             <label><input type="radio" name="mode" value="character"><span>Character</span></label>
             <label><input type="radio" name="mode" value="body"><span>Full body</span></label>
+            <label><input type="radio" name="mode" value="photoface"><span>Photo face</span></label>
             <label><input type="radio" name="mode" value="boxes"><span>Tracking</span></label>
             <label><input type="radio" name="mode" value="original"><span>Original</span></label>
           </div>

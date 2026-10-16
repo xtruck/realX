@@ -79,6 +79,12 @@ def test_config_updates_apply_and_validate(server):
     call(server, "POST", "/api/config", json.dumps({"mode": "avatar", "smoothing": 0.35}).encode())
 
 
+def test_photoface_mode_is_accepted_and_hands_the_camera_to_the_browser(server):
+    ok = call(server, "POST", "/api/config", json.dumps({"mode": "photoface"}).encode())
+    assert ok[0] == 200 and json.loads(ok[2])["mode"] == "photoface"
+    call(server, "POST", "/api/config", json.dumps({"mode": "avatar"}).encode())
+
+
 def test_rebinding_and_cross_origin_requests_are_rejected(server):
     assert call(server, "GET", "/api/stats", host="evil.example")[0] == 403
     status, _, _ = call(

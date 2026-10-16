@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import secrets
 import time
 
@@ -62,6 +63,46 @@ def issue_portrait_consent(
     unsigned = ConsentRecord(subject_id, scope, started + ttl_seconds, record_id=secrets.token_hex(16), key_id=store.key_id)
     # ConsentStore.issue only knows the face-swap scopes, so the record is built here and signed by the same
     # store: verification is the store's own, unchanged.
+    return ConsentRecord(
+        unsigned.subject_id, unsigned.scope, unsigned.expires_at, unsigned.record_id, unsigned.key_id,
+        store._sign(unsigned),
+    )
+
+
+_HEX_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def scope_for_hash(sha256_hex: str) -> str:
+    """The scope string for an image whose SHA-256 is already known (the bytes never reach this process).
+
+    The hash is computed where the image is, for example in the browser that shows it, so the image itself is never
+    sent. realX cannot check that a hash belongs to a given picture: like the attestation, it is the user's statement.
+    """
+    if not isinstance(sha256_hex, str) or not _HEX_SHA256.fullmatch(sha256_hex):
+        raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
+    return SCOPE_PREFIX + sha256_hex
+
+
+def issue_portrait_consent_for_hash(
+    store: ConsentStore,
+    subject_id: str,
+    sha256_hex: str,
+    ttl_seconds: float,
+    attested_owner_or_authorized: bool,
+    now: float | None = None,
+) -> ConsentRecord:
+    """Like `issue_portrait_consent`, for an image known only by its SHA-256. Same refusals, same signature."""
+    if attested_owner_or_authorized is not True:
+        raise ConsentError(f"refusing to issue: confirm this is true. {ATTESTATION}")
+    if not isinstance(subject_id, str) or not subject_id.strip():
+        raise ValueError("subject_id must be a non-empty string")
+    if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, (int, float)):
+        raise ValueError("ttl_seconds must be a number")
+    if not math.isfinite(ttl_seconds) or not 0 < ttl_seconds <= MAX_TTL_SECONDS:
+        raise ValueError("ttl_seconds must be finite and between 0 and one year")
+    scope = scope_for_hash(sha256_hex)
+    started = time.time() if now is None else now
+    unsigned = ConsentRecord(subject_id, scope, started + ttl_seconds, record_id=secrets.token_hex(16), key_id=store.key_id)
     return ConsentRecord(
         unsigned.subject_id, unsigned.scope, unsigned.expires_at, unsigned.record_id, unsigned.key_id,
         store._sign(unsigned),
