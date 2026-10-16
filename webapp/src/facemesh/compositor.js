@@ -87,6 +87,13 @@ const LIVE_FRAG = `precision mediump float;
 varying vec2 v_scr; varying float v_alpha; uniform sampler2D u_cam; uniform float u_opacity;
 void main() { float a = v_alpha * u_opacity; gl_FragColor = vec4(texture2D(u_cam, v_scr).rgb * a, a); }`;
 
+// Step S10g, spills and stains: coloured soft circles drawn over the shirt (stains.js). Nothing from the camera is used.
+const STAIN_VERT = `attribute vec2 a_pos; attribute float a_alpha; attribute vec3 a_color; varying float v_alpha; varying vec3 v_color;
+void main() { v_alpha = a_alpha; v_color = a_color; gl_Position = vec4(a_pos.x * 2.0 - 1.0, 1.0 - a_pos.y * 2.0, 0.0, 1.0); }`;
+const STAIN_FRAG = `precision mediump float;
+varying float v_alpha; varying vec3 v_color; uniform float u_opacity;
+void main() { float a = v_alpha * u_opacity; gl_FragColor = vec4(v_color * a, a); }`;
+
 export class MeshCompositor {
   /** canvas: the WebGL canvas; mesh: buildMesh()'s result. Throws when WebGL is not available. */
   constructor(canvas, mesh) {
@@ -131,6 +138,34 @@ export class MeshCompositor {
     this.liveUni = Object.fromEntries(["u_cam", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.liveProgram, n)]));
     this.live = { posBuffer: gl.createBuffer(), alphaBuffer: gl.createBuffer(), indexBuffer: gl.createBuffer(), indexCount: 0, on: false };
     this.liveDrawn = 0;
+    this.stainProgram = link(gl, STAIN_VERT, STAIN_FRAG);                // S10g: spills and stains
+    this.stainLoc = { pos: gl.getAttribLocation(this.stainProgram, "a_pos"), alpha: gl.getAttribLocation(this.stainProgram, "a_alpha"), color: gl.getAttribLocation(this.stainProgram, "a_color") };
+    this.stainUni = { u_opacity: gl.getUniformLocation(this.stainProgram, "u_opacity") };
+    this.stains = { posBuffer: gl.createBuffer(), alphaBuffer: gl.createBuffer(), colorBuffer: gl.createBuffer(), indexBuffer: gl.createBuffer(), indexCount: 0, on: false };
+    this.stainsDrawn = 0;
+  }
+
+  /** The stain circles for this frame (stains.js stainFans()'s result), or null for none. */
+  setStains(fans) {
+    const gl = this.gl, l = this.stains;
+    if (!fans || fans.indices.length === 0) { l.on = false; l.indexCount = 0; return; }
+    gl.bindBuffer(gl.ARRAY_BUFFER, l.posBuffer); gl.bufferData(gl.ARRAY_BUFFER, fans.positions, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, l.alphaBuffer); gl.bufferData(gl.ARRAY_BUFFER, fans.alphas, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, l.colorBuffer); gl.bufferData(gl.ARRAY_BUFFER, fans.colors, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, l.indexBuffer); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, fans.indices, gl.DYNAMIC_DRAW);
+    l.indexCount = fans.indices.length; l.on = true;
+  }
+
+  _drawStains(opacity) {
+    const gl = this.gl, l = this.stains;
+    gl.useProgram(this.stainProgram);
+    this.point(l.posBuffer, this.stainLoc.pos, 2);
+    this.point(l.alphaBuffer, this.stainLoc.alpha, 1);
+    this.point(l.colorBuffer, this.stainLoc.color, 3);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, l.indexBuffer);
+    gl.uniform1f(this.stainUni.u_opacity, Math.min(1, opacity));
+    gl.drawElements(gl.TRIANGLES, l.indexCount, gl.UNSIGNED_SHORT, 0);
+    return l.indexCount / 3;
   }
 
   /** The shapes around the hands for this frame (handlayer.js handFans()'s result), or null to draw none. */
@@ -177,7 +212,7 @@ export class MeshCompositor {
     const indexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geometry.triangles, gl.STATIC_DRAW);
-    return { count, unit, triangles: geometry.triangles.length / 3, uvBuffer: filled(gl, geometry.uv), posBuffer, indexBuffer, maskTex, positions: new Float32Array(count * 2), on: false };
+    return { count, unit, triangles: geometry.triangles.length / 3, uvBuffer: filled(gl, geometry.uv), posBuffer, indexBuffer, maskTex, positions: new Float32Array(count * 2), on: false, halo: new Float32Array(count * 2), haloOn: false };
   }
 
   _freeLayer(layer) {
@@ -198,8 +233,6 @@ export class MeshCompositor {
   _drawLayer(layer, opacity) {
     const gl = this.gl;
     gl.useProgram(this.hairProgram);                // the same shader serves every photo layer: the photo's colour, cut by the layer's mask
-    gl.bindBuffer(gl.ARRAY_BUFFER, layer.posBuffer);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, layer.positions);
     this.point(layer.posBuffer, this.hairLoc.pos, 2);
     this.point(layer.uvBuffer, this.hairLoc.uv, 2);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, layer.indexBuffer);
@@ -208,8 +241,15 @@ export class MeshCompositor {
     gl.uniform1i(this.hairUni.u_photo, 0);
     gl.uniform1i(this.hairUni.u_hair, layer.unit);
     gl.uniform1f(this.hairUni.u_opacity, Math.min(1, opacity));
-    gl.drawElements(gl.TRIANGLES, layer.triangles * 3, gl.UNSIGNED_SHORT, 0);
-    return layer.triangles;
+    let drawn = 0;
+    for (const [positions, wanted] of [[layer.halo, layer.haloOn], [layer.positions, true]]) {   // the cover (S10e) first, then the layer itself
+      if (!wanted) continue;
+      gl.bindBuffer(gl.ARRAY_BUFFER, layer.posBuffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions);
+      gl.drawElements(gl.TRIANGLES, layer.triangles * 3, gl.UNSIGNED_SHORT, 0);
+      drawn = layer.triangles;
+    }
+    return drawn;
   }
 
   /**
@@ -239,6 +279,15 @@ export class MeshCompositor {
   get bodyReady() { return this.body !== null; }
 
   setBodyPositions(units, aspect) { this._placeLayer(this.body, units, aspect); }
+
+  /** A slightly bigger copy of the body drawn under it to hide the edges of the live person's own clothes (step S10e); null for none. */
+  setBodyHalo(units, aspect) {
+    const l = this.body;
+    if (!l) return;
+    if (!units || !(aspect > 0)) { l.haloOn = false; return; }
+    for (let i = 0; i < l.count; i++) { l.halo[2 * i] = units[2 * i] / aspect; l.halo[2 * i + 1] = units[2 * i + 1]; }
+    l.haloOn = true;
+  }
 
   get hasPhoto() { return this.photo !== null; }
 
@@ -307,7 +356,7 @@ export class MeshCompositor {
     if (this.photo) this.gl.deleteTexture(this.photo);
     this.photo = null; this.photoRing = null;
     this.setHeadMask(null);
-    this.clearHair(); this.clearBody(); this.setLiveHands(null);
+    this.clearHair(); this.clearBody(); this.setLiveHands(null); this.setStains(null);
     this.clear();
   }
 
@@ -339,6 +388,7 @@ export class MeshCompositor {
     this.hairDrawn = 0; this.bodyDrawn = 0;
     if (this.body && this.body.on) this.bodyDrawn = this._drawLayer(this.body, opacity);   // the body and dress go down first,
     if (this.hair && this.hair.on) this.hairDrawn = this._drawLayer(this.hair, opacity);   // then the hair over them, all behind the face
+    this.stainsDrawn = this.stains.on ? this._drawStains(opacity) : 0;                        // spills and stains on the shirt
     gl.useProgram(this.program);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.positions);
@@ -387,7 +437,8 @@ export class MeshCompositor {
   dispose() {
     const gl = this.gl;
     this.clearHair(); this.clearBody();
-    for (const b of [this.live.posBuffer, this.live.alphaBuffer, this.live.indexBuffer]) gl.deleteBuffer(b);
+    for (const b of [this.live.posBuffer, this.live.alphaBuffer, this.live.indexBuffer, this.stains.posBuffer, this.stains.alphaBuffer, this.stains.colorBuffer, this.stains.indexBuffer]) gl.deleteBuffer(b);
+    gl.deleteProgram(this.stainProgram);
     gl.deleteProgram(this.liveProgram); gl.deleteProgram(this.hairProgram);
     for (const t of [this.photo, this.camera, this.maskTex]) if (t) gl.deleteTexture(t);
     for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.headFadeBuffer, this.ringBuffer, this.indexBuffer]) gl.deleteBuffer(b);

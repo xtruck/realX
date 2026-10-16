@@ -16,6 +16,7 @@ import { BODY_CLASSES, HAIR_CLASSES, headMask, maskUsable } from "./head.js";
 import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
 import { buildBodyPuppet, jointsFromPose, smoothJoints } from "./puppet.js";
 import { gripShapes, handFans, handShapes } from "./handlayer.js";
+import { StainSet, bindToPuppet, stainFans } from "./stains.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -209,7 +210,7 @@ function stepHair(now, shown) {
 // shoulders, elbows and wrists. The photo is cut once (shared with Whole head and Hair) and run through the pose model once; the live
 // pose comes from the pose model on the video every POSE_EVERY_MS. Nothing here reads back, stores or sends the camera picture.
 const POSE_EVERY_MS = 70;
-let bodyOn = false, puppet = null, bodyItem = null, poseLandmarker = null, poseLast = -Infinity, poseTs = 0, poseSmooth = null, poseJoints = null;
+let coverGrow = 0.15, bodyOn = false, puppet = null, bodyItem = null, poseLandmarker = null, poseLast = -Infinity, poseTs = 0, poseSmooth = null, poseJoints = null;
 Object.assign(probe, { body: "off", bodyPoints: 0, bodyBones: 0, poseMs: 0, bodyDrawn: 0 });
 
 async function openPoseLandmarker(mode) {
@@ -283,8 +284,9 @@ function stepBody(now, shown) {
     const s = smoothJoints(poseSmooth, jointsFromPose(landmarks, aspect), 0.6);
     poseSmooth = s.state; poseJoints = s.joints;
   }
-  if (!poseJoints || !puppet.update(poseJoints)) { compositor.setBodyPositions(null); return; }
+  if (!poseJoints || !puppet.update(poseJoints)) { compositor.setBodyPositions(null); compositor.setBodyHalo(null); return; }
   compositor.setBodyPositions(puppet.pos, aspect);
+  compositor.setBodyHalo(coverGrow > 0 ? puppet.halo(coverGrow) : null, aspect);     // S10e: a slightly bigger copy underneath hides your own clothes' edges
 }
 
 // Step S10c, your hands on top (option, off by default): the photo's sleeves are drawn over your live body, which would cover your hands
@@ -302,6 +304,53 @@ function stepLiveHands(shown) {
   const grip = gripShapes(hands, aspect, faceWidth, gripReach);    // a guess about a curled hand's object: stretches along the knuckle line
   probe.handCircles = circles.length; probe.gripCircles = grip.length;
   compositor.setLiveHands(handFans(circles.concat(grip), aspect));
+}
+
+// Step S10g, spills, stains and eating (needs "Body and clothes", because the stains stick to the shirt): a button spills something on
+// the shirt, a hand wiped over a stain rubs it out, and "Messy eating" drops crumbs and a stain when the mouth opens with a hand near it.
+// These are effects on the picture: they do not know what you really pour or eat.
+const stains = new StainSet();
+let messyEating = false, mouthWasOpen = false, stainLast = 0;
+Object.assign(probe, { stains: 0, stainsDrawn: 0, messy: "off" });
+
+function spillNow(kind) {
+  if (!puppet || bodyItem !== gallery.active) { setStatus("Turn on Body and clothes first: spills stick to the shirt."); return false; }
+  const torso = puppet.restBones.torso;                       // a spot on the chest, a little off centre
+  const side = (Math.random() - 0.5) * 0.5 * puppet.shoulderWidth;
+  const across = [torso[1][1] - torso[0][1], -(torso[1][0] - torso[0][0])];
+  const len = Math.hypot(across[0], across[1]) || 1;
+  const x = torso[0][0] + 0.35 * (torso[1][0] - torso[0][0]) + (across[0] / len) * side;
+  const y = torso[0][1] + 0.35 * (torso[1][1] - torso[0][1]) + (across[1] / len) * side;
+  const ok = stains.spill(kind, bindToPuppet(puppet, x, y), { size: 0.8 + Math.random() * 0.6, drips: kind === "water" ? 1 : 2 });
+  if (ok) setStatus(`Spilled ${kind} on the shirt. Wipe it with your hand, or press Clean.`);
+  return ok;
+}
+
+// One frame of the effects: eating detection, the stains' own motion and wiping by your hands, then the circles to the compositor.
+function stepStains(now, shown) {
+  if (stains.count === 0 && !messyEating) { compositor.setStains(null); probe.stains = 0; return; }
+  const dt = stainLast ? Math.min(0.1, (now - stainLast) / 1000) : 0.016;
+  stainLast = now;
+  const aspect = faceCanvas.width / Math.max(1, faceCanvas.height);
+  const scale = puppet && puppet.liveWidth > 0 ? puppet.liveWidth : 0.25 * aspect;
+  const wipers = [];
+  if (shown && hands.length) {
+    const live = shown.landmarks, faceWidth = Math.hypot((live[454].x - live[234].x) * aspect, live[454].y - live[234].y);
+    wipers.push(...handShapes(hands, aspect, faceWidth, 1));
+    if (messyEating) {                                         // the mouth opens with a hand near it: a bite
+      const open = live[14].y - live[13].y > 0.012;
+      const mx = live[13].x * aspect, my = (live[13].y + live[14].y) / 2;
+      const near = hands.some((h) => h.some((p) => Math.hypot(p.x * aspect - mx, p.y - my) < faceWidth * 0.55));
+      if (open && near && !mouthWasOpen) {
+        for (let i = 0; i < 3; i++) stains.crumb("crumbs", mx + (Math.random() - 0.5) * faceWidth * 0.4, my + faceWidth * 0.25, { size: 0.7 + Math.random() * 0.6 });
+        if (puppet && Math.random() < 0.45) spillNow(Math.random() < 0.5 ? "sauce" : "juice");
+      }
+      mouthWasOpen = open && near;
+    }
+  }
+  stains.step(dt, puppet ? puppet.pos : null, scale, wipers);
+  probe.stains = stains.count;
+  compositor.setStains(stainFans(stains.circles(scale), aspect));
 }
 
 function setStatus(text) { $("status").textContent = text; }
@@ -696,7 +745,7 @@ function frame() {
     if (landmarks) probe.box = faceBox(landmarks);   // where the face is, as fractions of the frame: four numbers
     if (measure) { measure.ms.push(took); measure.found += landmarks ? 1 : 0; measure.times.push(now); }
     // What is drawn is the steadied face (smoothed, held for a moment when lost, faded when covered), not the raw detection.
-    const handsWanted = handLandmarker && (look.hideHands || hairOn || liveHandsOn);   // the hair and hands options read the same hand model as the cover option
+    const handsWanted = handLandmarker && (look.hideHands || hairOn || liveHandsOn || messyEating || stains.count > 0);   // the hair and hands options read the same hand model as the cover option
     const handCoverNow = handsWanted ? coverNow(now, landmarks) : 0;
     const cover = look.hideHands ? handCoverNow : 0;
     const shown = presence.update(landmarks, now, cover);
@@ -716,6 +765,7 @@ function frame() {
       else if (gate.label) { compositor.clear(); probe.drawn = 0; }
       else {
         stepLiveHands(shown);                      // your own hands, drawn over everything (S10c)
+        stepStains(now, shown);                    // spills and stains on the shirt (S10g)
         if (bodyOn) stepBody(now, shown);          // the body and dress for this frame (drawn first, behind the hair and the face)
         if (hairOn) stepHair(now, shown);          // the hair sheet for this frame (drawn behind the face by the compositor)
         // the video goes to the graphics card for colour matching only: see compositor.js
@@ -724,6 +774,7 @@ function frame() {
         probe.hairDrawn = compositor.hairDrawn;
         probe.bodyDrawn = compositor.bodyDrawn;
         probe.liveDrawn = compositor.liveDrawn;
+        probe.stainsDrawn = compositor.stainsDrawn;
       }
     }
     tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
@@ -862,6 +913,23 @@ function wireControls() {
   $("handReach").addEventListener("input", (e) => {
     handReach = Number(e.currentTarget.value) / 100;
     $("handReachValue").textContent = `${e.currentTarget.value}%`;
+  });
+  $("spillBtn").addEventListener("click", () => spillNow($("stainKind").value));
+  $("cleanBtn").addEventListener("click", () => { stains.clear(); setStatus("The shirt is clean."); });
+  $("messyBtn").addEventListener("click", async (e) => {
+    const button = e.currentTarget;
+    messyEating = !messyEating; mouthWasOpen = false;
+    button.setAttribute("aria-pressed", String(messyEating)); probe.messy = messyEating ? "on" : "off";
+    if (messyEating && !handLandmarker) {                      // it needs the hands, to know a hand is near the mouth
+      button.disabled = true;
+      try { handLandmarker = await openHandLandmarker(); setStatus("Messy eating on: open your mouth with a hand near it. Spills need Body and clothes."); }
+      catch (err) { messyEating = false; button.setAttribute("aria-pressed", "false"); probe.messy = "error"; probe.lastError = String((err && err.message) || err).slice(0, 160); setStatus("The hand model could not start, so messy eating is off."); }
+      finally { button.disabled = false; }
+    } else setStatus(messyEating ? "Messy eating on." : "Messy eating off.");
+  });
+  $("coverClothes").addEventListener("input", (e) => {
+    coverGrow = Number(e.currentTarget.value) / 100;
+    $("coverClothesValue").textContent = `${e.currentTarget.value}%`;
   });
   $("gripReach").addEventListener("input", (e) => {
     gripReach = Number(e.currentTarget.value) / 100;

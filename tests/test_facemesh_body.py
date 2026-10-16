@@ -92,3 +92,46 @@ def test_hands_on_top_with_the_body_starts_cleanly_and_never_reads_the_picture_b
         assert not errors, errors
     finally:
         browser.close()
+
+
+def test_spill_stays_on_the_shirt_drawn_and_can_be_cleaned_with_no_read_back(stack, tmp_path):  # noqa: F811
+    """S10e and S10g: with Body and clothes on, a spill is put on the shirt and drawn (stains drawn > 0), the cover slider and the clean
+    button work, and the camera is never read back. The fake camera shows no hand, so wiping with a hand is covered only by the Node tests."""
+    from conftest import token_cookie
+    from test_facemesh_browser import _READ_HOOK, _launch
+    from test_tracking_browser import FAKE_CAMERA
+
+    p, exe, clip, srv = stack
+    browser = _launch(p, exe, FAKE_CAMERA + [f"--use-file-for-fake-video-capture={clip}"])
+    try:
+        ctx = browser.new_context(viewport={"width": 800, "height": 1800}, permissions=["camera"])
+        ctx.add_init_script(_READ_HOOK)
+        ctx.add_cookies(token_cookie(srv.port))
+        page = ctx.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"http://127.0.0.1:{srv.port}/facemesh")
+        _wait(page, "window.__facemesh.state === 'running' && window.__facemesh.found >= 3", 150)
+        _use_photo(page, _shoulders_photo(tmp_path), SLOW)
+        _wait(page, "window.__facemesh.drawn > 0", SLOW)
+        page.click("#bodyBtn")
+        _wait(page, "['on', 'nopose', 'nomask', 'error'].includes(window.__facemesh.body) && window.__facemesh.body !== 'loading'", SLOW)
+        _wait(page, "window.__facemesh.drawn > 0", SLOW)
+        state = page.evaluate("window.__facemesh")
+        print("body:", state["body"], state.get("lastError"))
+        assert state["body"] in ("on", "nopose", "nomask"), state.get("lastError")
+        page.fill("#coverClothes", "25")                                        # the cover slider (S10e)
+        assert page.inner_text("#coverClothesValue") == "25%"
+        if state["body"] == "on":
+            page.select_option("#stainKind", "coffee")
+            page.click("#spillBtn")
+            _wait(page, "window.__facemesh.stains > 0", SLOW)
+            _wait(page, "window.__facemesh.stainsDrawn > 0", SLOW)               # the stain is really drawn by the compositor
+            page.click("#cleanBtn")
+            _wait(page, "window.__facemesh.stains === 0", SLOW)
+        _wait(page, "window.__facemesh.drawn > 0", SLOW)
+        reads = page.evaluate("window.__reads")
+        assert reads["ours"] == 0, f"the face-mesh code read the picture back: {reads}"
+        assert not errors, errors
+    finally:
+        browser.close()

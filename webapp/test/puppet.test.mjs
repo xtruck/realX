@@ -154,3 +154,32 @@ test("smoothing blends joints toward their new place, holds a missing joint for 
   assert.deepEqual(r.joints.lSh, b.lSh, "and a joint that comes back is taken as it is");
   assert.equal(smoothJoints(null, null).joints.lSh, null);
 });
+
+test("the cover (halo) grows the silhouette outward from the bones, and grow 0 is the normal pose", () => {
+  const p = puppet();
+  assert.equal(p.update(live({})), true);
+  const same = Float32Array.from(p.halo(0));
+  for (let i = 0; i < p.pos.length; i++) assert.ok(Math.abs(same[i] - p.pos[i]) < 1e-9);
+  const grown = p.halo(0.2);
+  const width = (a) => { let lo = Infinity, hi = -Infinity; for (let i = 0; i < a.length; i += 2) { lo = Math.min(lo, a[2 * (i / 2)]); hi = Math.max(hi, a[2 * (i / 2)]); } return hi - lo; };
+  assert.ok(width(grown) > width(p.pos) + 0.1 * p.liveWidth, "the cover is wider than the shirt");
+  const move = (i) => Math.hypot(grown[2 * i] - p.pos[2 * i], grown[2 * i + 1] - p.pos[2 * i + 1]);
+  let maxMove = 0;
+  for (let i = 0; i < p.count; i++) maxMove = Math.max(maxMove, move(i));
+  assert.ok(Math.abs(maxMove - 0.2 * p.liveWidth) < 1e-6, "no point moves more than the grow amount");
+  assert.ok(grown.every(Number.isFinite));
+});
+
+test("the cover follows the live shoulder width and is limited, so a bad number cannot blow it up", () => {
+  const p = puppet();
+  p.update(live({}));
+  const a = Float32Array.from(p.halo(0.1));
+  assert.ok(p.halo(5).every(Number.isFinite), "an extreme grow is capped");
+  p.update(live({ 11: { x: 0.80 } }));                              // the live shoulders move apart: a wider person
+  assert.ok(p.liveWidth > p.shoulderWidth * 1.2);
+  const b = p.halo(0.1);
+  let m = 0; for (let i = 0; i < p.count; i++) m = Math.max(m, Math.hypot(b[2 * i] - p.pos[2 * i], b[2 * i + 1] - p.pos[2 * i + 1]));
+  assert.ok(Math.abs(m - 0.1 * p.liveWidth) < 1e-6, "the push scales with the live width");
+  assert.ok(a.every(Number.isFinite));
+  assert.ok(p.halo(NaN).every(Number.isFinite) && p.halo(-1).every(Number.isFinite));
+});

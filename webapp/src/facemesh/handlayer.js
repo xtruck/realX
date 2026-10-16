@@ -15,6 +15,7 @@ const PALM = [0, 5, 9, 13, 17];
 const SEGMENTS = 14;                 // sides of each circle
 const CORE = 0.62;                   // the share of a circle's radius that is fully solid; the rest fades out
 export const MAX_CIRCLES = 80;
+export const FAN_VERTS = 1 + 2 * SEGMENTS;   // vertices per circle in handFans(), so other layers can add per-circle data
 
 /**
  * The circles to show for the hands, as { x, y, r } in image heights (x already times the aspect), like hairsim's units.

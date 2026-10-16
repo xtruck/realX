@@ -80,6 +80,9 @@ export class BodyPuppet {
   constructor(g) {
     Object.assign(this, g);
     this.pos = Float32Array.from(this.rest);
+    this.anchorLive = Float32Array.from(this.anchors);     // where each point's nearest spot on its main bone is now (for the cover)
+    this.haloPos = Float32Array.from(this.rest);
+    this.liveWidth = this.shoulderWidth;                    // the live shoulder width, in the same units
   }
 
   get count() { return this.rest.length / 2; }
@@ -96,20 +99,41 @@ export class BodyPuppet {
     // a bone that is not seen (in the photo or live) moves with the torso
     const tf = BONES.map((name) => (name === "torso" ? torso : boneTransform(this.restBones[name], live.bones[name]) || torso));
     const B = BONES.length, w = this.weights, rest = this.rest, out = this.pos;
+    const anchors = this.anchors, anchorLive = this.anchorLive;
     for (let i = 0; i < this.count; i++) {
-      const px = rest[2 * i], py = rest[2 * i + 1];
-      let x = 0, y = 0;
+      const px = rest[2 * i], py = rest[2 * i + 1], qx = anchors[2 * i], qy = anchors[2 * i + 1];
+      let x = 0, y = 0, ax = 0, ay = 0;
       for (let b = 0; b < B; b++) {
         const wb = w[i * B + b];
         if (wb === 0) continue;
-        const t = tf[b], dx = px - t.a0[0], dy = py - t.a0[1];
+        const t = tf[b], dx = px - t.a0[0], dy = py - t.a0[1], ex = qx - t.a0[0], ey = qy - t.a0[1];
         x += wb * (t.a1[0] + t.s * (t.cos * dx - t.sin * dy));
         y += wb * (t.a1[1] + t.s * (t.sin * dx + t.cos * dy));
+        ax += wb * (t.a1[0] + t.s * (t.cos * ex - t.sin * ey));
+        ay += wb * (t.a1[1] + t.s * (t.sin * ex + t.cos * ey));
       }
-      out[2 * i] = x; out[2 * i + 1] = y;
+      out[2 * i] = x; out[2 * i + 1] = y; anchorLive[2 * i] = ax; anchorLive[2 * i + 1] = ay;
     }
-    for (let i = 0; i < out.length; i++) if (!Number.isFinite(out[i])) { out.set(rest); return false; }   // never hand the renderer a NaN
+    for (let i = 0; i < out.length; i++) {
+      if (!Number.isFinite(out[i]) || !Number.isFinite(anchorLive[i])) { out.set(rest); anchorLive.set(anchors); return false; }   // never hand the renderer a NaN
+    }
+    this.liveWidth = live.width;
     return true;
+  }
+
+  /**
+   * The same mesh grown outward, for the cover drawn under the shirt (step S10e): each point moves away from its nearest spot on its main
+   * bone by `grow` live shoulder widths, so the silhouette gets bigger all round and hides the edges of the live person's own clothes.
+   * Returns the positions (reused between calls). `grow` 0 gives the normal pose.
+   */
+  halo(grow) {
+    const out = this.haloPos, pos = this.pos, q = this.anchorLive, push = Math.max(0, Math.min(1, Number(grow) || 0)) * this.liveWidth;
+    for (let i = 0; i < this.count; i++) {
+      const dx = pos[2 * i] - q[2 * i], dy = pos[2 * i + 1] - q[2 * i + 1], d = Math.hypot(dx, dy);
+      if (d > 1e-9 && push > 0) { out[2 * i] = pos[2 * i] + (dx / d) * push; out[2 * i + 1] = pos[2 * i + 1] + (dy / d) * push; }
+      else { out[2 * i] = pos[2 * i]; out[2 * i + 1] = pos[2 * i + 1]; }
+    }
+    return out;
   }
 }
 
@@ -162,10 +186,19 @@ export function buildBodyPuppet(mask, photoPose, aspect, options = {}) {
     if (!(sum > 1e-9)) { weights[i * B] = 1; sum = 1; }
     for (let b = 0; b < B; b++) weights[i * B + b] /= sum;
   }
+  const anchors = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) {                                           // the nearest spot on the bone that holds this point most
+    let best = 0;
+    for (let b = 1; b < B; b++) if (weights[i * B + b] > weights[i * B + best]) best = b;
+    const bone = seg.bones[BONES[best]] || seg.bones.torso;
+    const dx = bone[1][0] - bone[0][0], dy = bone[1][1] - bone[0][1], l2 = dx * dx + dy * dy;
+    const t = l2 > 1e-12 ? Math.max(0, Math.min(1, ((rest[2 * i] - bone[0][0]) * dx + (rest[2 * i + 1] - bone[0][1]) * dy) / l2)) : 0;
+    anchors[2 * i] = bone[0][0] + t * dx; anchors[2 * i + 1] = bone[0][1] + t * dy;
+  }
   const uv = new Float32Array(n * 2);
   for (let i = 0; i < n; i++) { uv[2 * i] = rest[2 * i] / aspect; uv[2 * i + 1] = rest[2 * i + 1]; }
   return new BodyPuppet({
-    rest: Float32Array.from(rest), uv, weights, triangles: Uint16Array.from(tris), restBones: seg.bones, shoulderWidth: seg.width,
+    rest: Float32Array.from(rest), uv, anchors, weights, triangles: Uint16Array.from(tris), restBones: seg.bones, shoulderWidth: seg.width,
     stats: { points: n, cells, bones: BONES.filter((b) => seg.bones[b]).length },
   });
 }
