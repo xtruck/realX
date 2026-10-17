@@ -361,3 +361,15 @@ and following slowly moving shoulders, asking it 4 times a second nearly doubles
 is the floor: it caps the page at about 21 fps on this laptop, whatever else is on. The idle hand model (about 46 ms, 3.6 times a second)
 is the next cost: its idle interval was then raised from 250 to 500 ms (not re-measured). Not covered: a real hand, a real webcam,
 thermal drift, an idle machine.
+
+Run 6 (same tool, after the frame-skip and the 500 ms idle hand polling). Caution: the face model itself measured 19 ms here against 43 ms in the earlier runs, so the laptop was far less loaded (the owner's other apps were closed); the gain is NOT all from the code change. Treat it as "the page now reaches 25 to 29 fps on this laptop when it is quiet", not as a like-for-like speedup.
+
+| Step | fps |
+|---|---|
+| face only | 28.8 |
+| + body and clothes | 25.7 |
+| + hair that moves | 25.1 |
+| + hands on top | 20.8 |
+| + a spill | 24.2 |
+
+All five steps are at 20 fps or more. Still not covered: a real hand, a real webcam, a hot laptop.
