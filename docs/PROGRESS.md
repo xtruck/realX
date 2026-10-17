@@ -6,6 +6,8 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
+- [x] S11e (2026-10-17): eyes and mouth are kept separately. Default: the PHOTO's eyes (much more natural than the live eyes retoned onto a different skin: those looked dark and purple), the live mouth interior still kept for talking. New button "Use my live eyes". Only the inside of the outlines stays live. Checked with a Pexels portrait on a live source made from the owner's selfie
+
 - [x] S11 realism pass 4 (2026-10-17): tested a glasses-free Pexels portrait (light skin, white t-shirt) on a live source built from the owner's own selfie (dark skin, webcam-like framing), the owner's real aim. Before: grey smeared mask (live skin sheen multiplied onto the pale photo). Now: lighting transfer halved (gain 0.9 to 1.12), glasses hiding is OFF by default (it smeared the brows of a photo without glasses). Result: clean light skin, sharp brows, photo hair. Still wrong: kept live lips look big and pink, kept live eyes look purple/dark, a hard patch edge at the cheeks, neck does not move, live hair shows when longer than the photo's
 
 - [x] S11 realism pass 3 (2026-10-17): whole head: the neck reaches further down (0.7 face widths) and the inner ring fades to 0.85 instead of 0.5, so the photo's neck and hair edges are no longer ghostly; the glasses smoothing now also cuts lens glare and nudges the tint to the cheek's (brows kept). Seen on the owner's photo on a different live face. NOT done: the live user's own hair still shows round a shorter photo hairstyle; the neck still ends at the live collar; no seam work with Body and clothes on (the body puppet looked wrong on the astronaut test clip); needs a glasses-free photo and a real webcam for the next check

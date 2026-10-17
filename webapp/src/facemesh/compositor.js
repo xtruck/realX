@@ -9,7 +9,7 @@
 //    while colour matching is on, and (S10c) while "Show my hands on top" is on. The shader reads it to take the live face's colour and lighting (a blurred
 //    copy) and give them to the photo's detail, so the photo does not look like a sticker. That one method is the only
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
-import { TRIANGLE_COUNT, VERTEX_COUNT, edgeDepth, faceBox, flatten, keepMask } from "./mesh.js";
+import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, edgeDepth, faceBox, flatten, keepMask } from "./mesh.js";
 import { HEAD_VERTEX_COUNT, RING_TRIANGLES, headFade, ringFlag, ringPoints, ringTriangles } from "./head.js";
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
@@ -32,7 +32,7 @@ precision mediump float;
 varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_keep; varying float v_ring;
 uniform sampler2D u_photo; uniform sampler2D u_cam; uniform sampler2D u_mask;
 uniform float u_head; uniform float u_ringMatch;
-uniform float u_match; uniform float u_keep; uniform float u_opacity; uniform vec2 u_rl; uniform vec2 u_rp;
+uniform float u_keepEyes; uniform float u_match; uniform float u_keep; uniform float u_opacity; uniform vec2 u_rl; uniform vec2 u_rp;
 uniform float u_relight; uniform vec2 u_lp[5]; uniform vec2 u_pp[5];   // S11: lighting-only match, see lightOf()
 uniform float u_glasses; uniform vec2 u_eyeA; uniform vec2 u_eyeB; uniform vec2 u_eyeAsp;   // S11: the photo's spectacles (see glassesBand)
 
@@ -114,7 +114,7 @@ void main() {
   vec3 colour = mix(photo, matched, u_match * (1.0 - v_ring * (1.0 - u_ringMatch)));
   float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
   float head = mix(1.0, smoothstep(0.35, 0.65, texture2D(u_mask, v_uv).r) * inside, v_ring * u_head);
-  float keepAmt = u_keep * v_keep;
+  float keepAmt = u_keep * smoothstep(0.6, 1.0, v_keep) + u_keepEyes * smoothstep(0.6, 1.0, -v_keep);   // S11e: the inside of the mouth (+1) and of the eyes (-1) stay live when asked
   if (u_relight > 0.0 && u_match > 0.0 && keepAmt > 0.0) {      // the kept live eyes and mouth are drawn by us, in the photo's skin tone
     colour = mix(colour, liveKept(texture2D(u_cam, v_scr).rgb), keepAmt);
     keepAmt = 0.0;
@@ -184,7 +184,7 @@ export class MeshCompositor {
     this.positions = new Float32Array(HEAD_VERTEX_COUNT * 2);   // 468 face points, then the head ring
     this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
-    this.look = { match: 1, keep: 1, skin: 0, glasses: 0, relight: 1 };
+    this.look = { match: 1, keep: 1, keepEyes: 0, skin: 0, glasses: 0, relight: 1 };
     this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
     this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
@@ -192,7 +192,7 @@ export class MeshCompositor {
     gl.useProgram(this.program);
     const attr = (name) => gl.getAttribLocation(this.program, name);
     this.loc = { pos: attr("a_pos"), uv: attr("a_uv"), fade: attr("a_fade"), keep: attr("a_keep"), ring: attr("a_ring") };
-    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
+    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_keepEyes", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
     this.posBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.positions.byteLength, gl.DYNAMIC_DRAW);
@@ -200,6 +200,7 @@ export class MeshCompositor {
     this.fadeBuffer = filled(gl, Float32Array.from(edgeDepth(mesh.triangles), (d) => Math.min(Math.max(d, 0) / FADE_STEPS, 1)));
     this.headFadeBuffer = filled(gl, headFade());
     const keep = keepMask();
+    for (const v of [...LEFT_EYE, ...RIGHT_EYE]) keep[v] = -1;   // S11e: the eyes are marked -1 and the mouth +1, so the two can be switched separately
     this.keepBuffer = filled(gl, Float32Array.from({ length: HEAD_VERTEX_COUNT }, (_, i) => (i < VERTEX_COUNT ? keep[i] : 0)));
     this.ringBuffer = filled(gl, ringFlag());
     this.indexBuffer = gl.createBuffer();
@@ -414,8 +415,8 @@ export class MeshCompositor {
   setHead(on) { this.head = !!on; }
 
   /** How the photo is drawn: `match` 0..1 (how much of the live face's colour and light it takes), `keep` (live eyes and mouth show through). */
-  setLook({ match = this.look.match, keep = this.look.keep, skin = this.look.skin, glasses = this.look.glasses, relight = this.look.relight } = {}) {
-    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), keep: keep ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)), glasses: glasses ? 1 : 0, relight: relight ? 1 : 0 };
+  setLook({ match = this.look.match, keep = this.look.keep, keepEyes = this.look.keepEyes, skin = this.look.skin, glasses = this.look.glasses, relight = this.look.relight } = {}) {
+    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), keep: keep ? 1 : 0, keepEyes: keepEyes ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)), glasses: glasses ? 1 : 0, relight: relight ? 1 : 0 };
   }
 
   /**
@@ -513,6 +514,7 @@ export class MeshCompositor {
     gl.uniform1f(this.uni.u_ringMatch, RING_MATCH);
     gl.uniform1f(this.uni.u_match, useCamera ? this.look.match : 0);
     gl.uniform1f(this.uni.u_keep, this.look.keep);
+    gl.uniform1f(this.uni.u_keepEyes, this.look.keepEyes);
     gl.uniform1f(this.uni.u_opacity, Math.min(1, opacity));
     gl.uniform2f(this.uni.u_rl, BLUR * box.w, BLUR * box.w * aspect);
     gl.uniform2f(this.uni.u_rp, this.photoRadius[0], this.photoRadius[1]);
