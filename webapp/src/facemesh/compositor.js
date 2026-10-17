@@ -538,7 +538,11 @@ export class MeshCompositor {
     gl.uniform1f(this.uni.u_head, head ? 1 : 0);
     gl.uniform1f(this.uni.u_ringMatch, this.look.relight ? 1 : RING_MATCH);   // S11f: with the lighting-only match the ring takes the same light as the face, or a step shows along the face outline
     gl.uniform1f(this.uni.u_match, useCamera ? this.look.match : 0);
-    gl.uniform1f(this.uni.u_keep, this.look.keep);
+    // S11m: the live mouth interior is only shown while the mouth is OPEN (the gap between the inner lips against the face height); closed, the
+    // photo's own lips are drawn, with no live patch and no seam round it
+    const gap = Math.abs(liveLandmarks[13].y - liveLandmarks[14].y) / Math.max(box.h, 1e-4);
+    const open = Math.min(1, Math.max(0, (gap - 0.02) / 0.04));
+    gl.uniform1f(this.uni.u_keep, this.look.keep * open * open * (3 - 2 * open));
     gl.uniform1f(this.uni.u_keepEyes, this.look.keepEyes);
     gl.uniform1f(this.uni.u_opacity, Math.min(1, opacity));
     gl.uniform2f(this.uni.u_rl, BLUR * box.w, BLUR * box.w * aspect);

@@ -6,6 +6,8 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
+- [x] S11m (2026-10-17): the live mouth interior is shown only while the mouth is open (gap between the inner lips over the face height, smooth from 0.02 to 0.06); closed, the photo's own lips are drawn, which removes the live patch and its outline. Both Pexels pairs checked
+
 - [x] S11k-l (2026-10-17): speed: the pose model is asked 4 times a second and the joints are eased every frame (body option 9.4 to 17.6 fps), idle hand polling 500 ms. Realism: the photo's own face shape (mesh blended toward the photo's proportions, fitted by scale/turn/shift on stable points, fades with head yaw, eyes/brows/lips stay live, slider default 70%). Both-way test with the two Pexels portraits. 295 Node tests
 
 - [x] S11j (2026-10-17): body and clothes: the shirt moves as ONE piece by default (puppet.torsoOnly; the five-bone skinning tore the shirt into jagged blocks on a cropped photo and a webcam), and the cover slider starts at 0 (at 15 to 40 percent it drew a second, larger shirt and giant neck-skin pieces). Seen with the black-man Pexels photo on the white-man live source. Added docs/GPU-PLAN.md (draft). 291 Node tests; browser tests green (one hands-on-top assertion can blink under load, passes alone)
