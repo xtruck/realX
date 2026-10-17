@@ -205,6 +205,19 @@ export function buildBodyPuppet(mask, photoPose, aspect, options = {}) {
 }
 
 /**
+ * S11k: moves `current` joints a fraction `alpha` of the way to `target` joints, for a smooth shirt between the (slow) pose model's
+ * results. A joint missing in the target goes missing; a joint missing in `current` jumps to the target. Returns a new joints object.
+ */
+export function easeJoints(current, target, alpha = 0.35) {
+  const out = {};
+  for (const name of Object.keys(POSE)) {
+    const t = target ? target[name] : null, c = current ? current[name] : null;
+    out[name] = !t ? null : !c ? t : [c[0] + alpha * (t[0] - c[0]), c[1] + alpha * (t[1] - c[1])];
+  }
+  return out;
+}
+
+/**
  * Steadies the live joints: each is blended toward its new place by `alpha` (1 = no smoothing). A joint that is not seen now keeps its
  * last place for `hold` calls and then goes missing; a joint that was missing and is seen jumps straight to it.
  * `state` is the object returned last time (or null at the start); returns { joints, state }.

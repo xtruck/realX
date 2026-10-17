@@ -14,7 +14,7 @@ import { labelProblem, readLabel } from "./guard.js";
 import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
 import { BODY_CLASSES, HAIR_CLASSES, glassesShare, headMask, maskUsable } from "./head.js";
 import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
-import { buildBodyPuppet, jointsFromPose, smoothJoints } from "./puppet.js";
+import { buildBodyPuppet, easeJoints, jointsFromPose, smoothJoints } from "./puppet.js";
 import { gripShapes, handFans, handShapes } from "./handlayer.js";
 import { StainSet, bindToPuppet, stainFans } from "./stains.js";
 
@@ -41,7 +41,7 @@ let handLandmarker = null, hands = [], handLast = -Infinity, handTs = 0, handMs 
 Object.assign(probe, { smooth: true, shown: false, opacity: 0, cover: 0, jitterRaw: 0, jitterSmooth: 0, hands: "off", handMs: 0 });
 const HAND_EVERY_MS_TOP = 50;   // while "Show my hands on top" is on (S10c)
 const HAND_EVERY_MS = 100;   // the hand model costs about as much as the face model, so it looks only every few frames
-const HAND_IDLE_MS = 250;    // ...and when no hand has been seen it looks even less often (cadence gating): measured at about 26-29 ms a call on the UHD 620
+const HAND_IDLE_MS = 500;    // ...and when no hand has been seen it looks even less often (cadence gating): measured at about 26-29 ms a call on the UHD 620
 
 // Step S5: the photo is drawn only under a signed consent for that exact photo, re-checked with the server about every 2 s,
 // and only while the "Virtual face" label is really on screen. If either fails the photo stops (consent) or pauses (label).
@@ -215,8 +215,8 @@ function stepHair(now, shown) {
 // Step S10, body and dress (option, off by default): the photo's shirt and arms become a puppet (puppet.js) that follows the live
 // shoulders, elbows and wrists. The photo is cut once (shared with Whole head and Hair) and run through the pose model once; the live
 // pose comes from the pose model on the video every POSE_EVERY_MS. Nothing here reads back, stores or sends the camera picture.
-const POSE_EVERY_MS = 70;
-let coverGrow = 0, bodyOn = false, puppet = null, bodyItem = null, poseLandmarker = null, poseLast = -Infinity, poseTs = 0, poseSmooth = null, poseJoints = null;
+const POSE_EVERY_MS = 250;   // S11k: the pose model costs about 45 ms a run on the dev laptop; the shirt follows the shoulders, which move slowly, so it is asked 4 times a second and the joints are eased in between
+let coverGrow = 0, bodyOn = false, puppet = null, bodyItem = null, poseLandmarker = null, poseLast = -Infinity, poseTs = 0, poseSmooth = null, poseJoints = null, poseTarget = null;
 Object.assign(probe, { body: "off", bodyPoints: 0, bodyBones: 0, poseMs: 0, bodyDrawn: 0 });
 
 async function openPoseLandmarker(mode) {
@@ -235,7 +235,7 @@ async function openPoseLandmarker(mode) {
 
 function closePose() {
   if (poseLandmarker) { try { poseLandmarker.close(); } catch (e) { /* already closed */ } }
-  poseLandmarker = null; poseLast = -Infinity; poseSmooth = null; poseJoints = null;
+  poseLandmarker = null; poseLast = -Infinity; poseSmooth = null; poseJoints = null; poseTarget = null;
 }
 
 function forgetBody() {
@@ -288,8 +288,9 @@ function stepBody(now, shown) {
     const took = performance.now() - t0;
     probe.poseMs = probe.poseMs ? 0.8 * probe.poseMs + 0.2 * took : took;
     const s = smoothJoints(poseSmooth, jointsFromPose(landmarks, aspect), 0.6);
-    poseSmooth = s.state; poseJoints = s.joints;
+    poseSmooth = s.state; poseTarget = s.joints;
   }
+  poseJoints = poseTarget ? easeJoints(poseJoints, poseTarget, 0.35) : null;   // every frame: a step toward the latest pose
   if (!poseJoints || !puppet.update(poseJoints)) { compositor.setBodyPositions(null); compositor.setBodyHalo(null); return; }
   compositor.setBodyPositions(puppet.pos, aspect);
   compositor.setBodyHalo(coverGrow > 0 ? puppet.halo(coverGrow) : null, aspect);     // S10e: a slightly bigger copy underneath hides your own clothes' edges

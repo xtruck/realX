@@ -340,3 +340,24 @@ What this supports, and no more:
 * **Against the 20 fps gate:** with everything on, the page spent most samples between 8 and 19 fps on this loaded laptop; face only or face plus
   body reached 20 in some runs. A reliable answer needs runs on an idle machine (close every other browser) and several repeats.
 * **Not covered:** a real hand (so the hands-on-top and wiping costs), a real webcam, thermal drift over minutes, battery or power-saver mode.
+
+
+## 10. The page pipeline after the pose cadence change (2026-10-17)
+
+Same tool as section 9 (`scripts/bench_facemesh.py --headed --warmup 15`), real GPU (ANGLE Intel UHD 620 D3D11), 12 other Chrome processes
+running (the owner's browser), so NOT representative; the fake camera has no hand. Two runs, before and after one change: the pose model is
+now asked 4 times a second (was about every 70 ms) and the joints are eased toward its latest answer every frame.
+
+| Step | fps before | fps after | pose ms | hand ms |
+|---|---|---|---|---|
+| face only | 20.7 | 21.4 | - | - |
+| + body and clothes | 9.4 | 17.6 | 44 / 38 | - |
+| + hair that moves | 7.8 | 13.8 | 45 / 36 | 54 / 46 |
+| + hands on top | 8.9 | 13.2 | 38 / 38 | 50 / 48 |
+| + a spill | 9.4 | 13.5 | 38 / 37 | 50 / 46 |
+
+What this shows: the pose model was the main cost of the body option (it ran nearly every frame). With the shirt moving as one piece
+and following slowly moving shoulders, asking it 4 times a second nearly doubles the frame rate. The face model (about 43 to 45 ms a frame)
+is the floor: it caps the page at about 21 fps on this laptop, whatever else is on. The idle hand model (about 46 ms, 3.6 times a second)
+is the next cost: its idle interval was then raised from 250 to 500 ms (not re-measured). Not covered: a real hand, a real webcam,
+thermal drift, an idle machine.

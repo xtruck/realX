@@ -1,7 +1,7 @@
 // The body and dress puppet (src/facemesh/puppet.js) on a synthetic photo: a torso and two arms in a mask, with a known pose.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BONES, BodyPuppet, boneSegments, boneTransform, buildBodyPuppet, jointsFromPose, smoothJoints } from "../src/facemesh/puppet.js";
+import { BONES, BodyPuppet, boneSegments, boneTransform, buildBodyPuppet, easeJoints, jointsFromPose, smoothJoints } from "../src/facemesh/puppet.js";
 
 const W = 400, H = 500, ASPECT = W / H;
 
@@ -192,4 +192,16 @@ test("torsoOnly: the shirt moves as one piece even when a forearm is raised (the
   const still = puppet(); still.update(live({}));
   assert.ok(Math.hypot(free.pos[2 * i] - still.pos[2 * i], free.pos[2 * i + 1] - still.pos[2 * i + 1]) > 1e-3, "with arm bones the sleeve moves");
   assert.ok(Math.hypot(one.pos[2 * i] - still.pos[2 * i], one.pos[2 * i + 1] - still.pos[2 * i + 1]) < 1e-6, "torsoOnly: the sleeve stays with the torso");
+});
+
+test("easeJoints moves a fraction of the way to the target, jumps in a joint that was missing, and drops one that went missing", () => {
+  const cur = { lSh: [0, 0], rSh: [1, 0], lEl: null };
+  const tgt = { lSh: [1, 1], rSh: null, lEl: [2, 2] };
+  const out = easeJoints(cur, tgt, 0.5);
+  assert.deepEqual(out.lSh, [0.5, 0.5]);
+  assert.equal(out.rSh, null, "gone in the target: gone");
+  assert.deepEqual(out.lEl, [2, 2], "new in the target: jumps");
+  assert.equal(easeJoints(null, tgt, 0.5).lSh[0], 1, "no current joints: the target");
+  let j = cur; for (let i = 0; i < 40; i++) j = easeJoints(j, { lSh: [1, 1] }, 0.35);
+  assert.ok(Math.abs(j.lSh[0] - 1) < 1e-6, "it arrives");
 });
