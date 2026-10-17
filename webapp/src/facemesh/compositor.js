@@ -60,7 +60,7 @@ vec3 fromYcc(vec3 q) { float r = q.x + q.z / 0.713, b = q.x + q.y / 0.564; retur
 // the kept parts do not sit on the face as lighter or darker patches. Not-skin pixels (the whites, the iris, the teeth) are left alone.
 float skinWeight(vec3 cam) {
   vec3 s = toYcc((texture2D(u_cam, u_lp[2]).rgb + texture2D(u_cam, u_lp[3]).rgb) * 0.5);
-  return (1.0 - smoothstep(0.045, 0.1, distance(toYcc(cam).yz, s.yz))) * u_relight;
+  return (1.0 - smoothstep(0.07, 0.15, distance(toYcc(cam).yz, s.yz))) * u_relight;
 }
 vec3 liveKept(vec3 cam) {
   vec3 s = toYcc((texture2D(u_cam, u_lp[2]).rgb + texture2D(u_cam, u_lp[3]).rgb) * 0.5);
@@ -133,7 +133,7 @@ void main() {
   float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - keepAmt) * u_opacity * head;
   // S11i, the neck: below the chin, the live person's own neck (and ear) is wider than the photo's and shows as pale streaks beside it.
   // Where the live pixel is SKIN (near the live cheek's chroma; walls and clothes are not) and the photo has no neck, it is drawn in the photo's skin tone.
-  float neckX = 1.0 - smoothstep(0.5, 0.7, abs(v_uv.x - (u_pp[2].x + u_pp[3].x) * 0.5) / max(abs(u_pp[3].x - u_pp[2].x), 0.02));   // only as wide as a neck, so a beige wall beside it is left alone
+  float neckX = 1.0 - smoothstep(0.6, 0.85, abs(v_uv.x - (u_pp[2].x + u_pp[3].x) * 0.5) / max(abs(u_pp[3].x - u_pp[2].x), 0.02));   // only as wide as a neck, so a beige wall beside it is left alone
   if (u_relight > 0.0 && u_head > 0.0 && v_ring > 0.0 && v_uv.y > u_pp[4].y - 0.02 && u_match > 0.0) {
     vec3 cam = texture2D(u_cam, v_scr).rgb;
     float w = skinWeight(cam) * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
