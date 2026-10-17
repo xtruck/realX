@@ -123,6 +123,28 @@ export function headMask(classes, width, height, soften = 2, maxSide = 512, keep
   return { width, height, data: pass(pass(hard, true), false) };
 }
 
+/**
+ * S11g: does the PHOTO's face wear spectacles? The share of "accessory" pixels (class 5) in a band along the eye line (temple to temple,
+ * 0.4 eye-distances either side of it) of the segmenter's class map. `landmarks` are the photo's face mesh (normalised), `aspect` the
+ * photo's width / height. 0 when the face is incomplete. Frames and lenses usually come out as accessories; a bare face gives about 0.
+ */
+export function glassesShare(classes, width, height, landmarks, aspect = 1) {
+  if (!classes || !(width > 0) || !(height > 0) || classes.length !== width * height || !landmarks || landmarks.length < VERTEX_COUNT) return 0;
+  const mid = (a, b) => [(landmarks[a].x + landmarks[b].x) / 2 * aspect, (landmarks[a].y + landmarks[b].y) / 2];
+  const A = mid(33, 133), B = mid(362, 263);
+  const ex = B[0] - A[0], ey = B[1] - A[1], d2 = ex * ex + ey * ey, d = Math.sqrt(d2);
+  if (!(d > 1e-6)) return 0;
+  let inside = 0, glass = 0;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const px = (x + 0.5) / width * aspect - A[0], py = (y + 0.5) / height - A[1];
+    const t = Math.min(1.3, Math.max(-0.3, (px * ex + py * ey) / d2));
+    if (Math.hypot(px - ex * t, py - ey * t) > 0.4 * d) continue;
+    inside++;
+    if (classes[y * width + x] === 5) glass++;
+  }
+  return inside > 0 ? glass / inside : 0;
+}
+
 /** Share of the pixels that are head: a mask with almost none (or almost all) is not believed (the segmenter found nothing useful). */
 export function maskUsable(mask, lo = 0.02, hi = 0.95) {
   if (!mask) return false;

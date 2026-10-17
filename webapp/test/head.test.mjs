@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { FACE_OVAL, HEAD_CLASSES, HEAD_VERTEX_COUNT, OVAL_COUNT, REACH, RINGS, RING_TRIANGLES, RING_VERTICES, headFade, INNER_FADE, headMask, maskUsable, ringFlag, ringPoints, ringTriangles } from "../src/facemesh/head.js";
+import { FACE_OVAL, HEAD_CLASSES, HEAD_VERTEX_COUNT, OVAL_COUNT, REACH, RINGS, RING_TRIANGLES, RING_VERTICES, glassesShare, headFade, INNER_FADE, headMask, maskUsable, ringFlag, ringPoints, ringTriangles } from "../src/facemesh/head.js";
 import { TRIANGLE_COUNT, VERTEX_COUNT, buildMesh } from "../src/facemesh/mesh.js";
 import { MeshCompositor } from "../src/facemesh/compositor.js";
 
@@ -198,4 +198,19 @@ test("the page has a clear control for the whole head, off by default", () => {
   const html = readFileSync(new URL("../src/facemesh/facemesh.html", import.meta.url), "utf8");
   assert.match(html, /<button id="headBtn"[^>]*aria-pressed="false"/);
   assert.match(html, /off by default/);
+});
+
+test("glassesShare is about 0 for a bare face and large when accessories sit along the eye line", () => {
+  const W = 64, H = 64, lm = Array.from({ length: 468 }, () => ({ x: 0.5, y: 0.5 }));
+  Object.assign(lm, { 33: { x: 0.3, y: 0.4 }, 133: { x: 0.4, y: 0.4 }, 362: { x: 0.6, y: 0.4 }, 263: { x: 0.7, y: 0.4 } });
+  const bare = new Uint8Array(W * H).fill(3);
+  assert.equal(glassesShare(bare, W, H, lm, 1), 0);
+  const worn = new Uint8Array(W * H).fill(3);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (Math.abs(y / H - 0.4) < 0.05) worn[y * W + x] = 5;   // a strip of accessories along the eye line
+  assert.ok(glassesShare(worn, W, H, lm, 1) > 0.15, "a frame strip along the eye line is found");
+  const away = new Uint8Array(W * H).fill(3);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (y / H > 0.8) away[y * W + x] = 5;   // accessories far from the eyes
+  assert.equal(glassesShare(away, W, H, lm, 1), 0);
+  assert.equal(glassesShare(null, W, H, lm, 1), 0);
+  assert.equal(glassesShare(bare, W, H, lm.slice(0, 10), 1), 0, "an incomplete face says 0");
 });

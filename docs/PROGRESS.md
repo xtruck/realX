@@ -6,6 +6,8 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
+- [x] S11g-i (2026-10-17): glasses in the photo are detected automatically (share of accessory pixels along the eye line, threshold 0.03; 0.096 with spectacles, 0 without); the head mask now acts across the whole inner ring band (it was only partly applied, which drew the photo's studio backdrop as a pale halo round the head), bright colourless pixels in the ring are not drawn, live skin below the chin and as wide as the neck is recolouredto the photo's tone. Tested both ways with two Pexels portraits (docs/CPU-STATUS.md). Recolouring the ears too was tried and repainted a beige wall: reverted. 290 Node + 17 browser tests green
+
 - [x] S11f (2026-10-17): whole head: the ring takes the same lighting as the face (it took 35%), which removes the step in brightness along the face outline at the sideburns. 289 Node + 16 browser tests green
 
 - [x] S11e (2026-10-17): eyes and mouth are kept separately. Default: the PHOTO's eyes (much more natural than the live eyes retoned onto a different skin: those looked dark and purple), the live mouth interior still kept for talking. New button "Use my live eyes". Only the inside of the outlines stays live. Checked with a Pexels portrait on a live source made from the owner's selfie

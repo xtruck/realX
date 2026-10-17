@@ -12,7 +12,7 @@ import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
 import { ConsentClient, sha256Hex } from "./consent.js";
 import { labelProblem, readLabel } from "./guard.js";
 import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
-import { BODY_CLASSES, HAIR_CLASSES, headMask, maskUsable } from "./head.js";
+import { BODY_CLASSES, HAIR_CLASSES, glassesShare, headMask, maskUsable } from "./head.js";
 import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
 import { buildBodyPuppet, jointsFromPose, smoothJoints } from "./puppet.js";
 import { gripShapes, handFans, handShapes } from "./handlayer.js";
@@ -63,7 +63,8 @@ function applyLook() {
 // Step S8, whole head (option, off by default): hair, ears, top of the forehead and neck come from the same photo. The photo
 // (never the camera) is cut into classes ONCE by MediaPipe's multiclass selfie segmenter when the photo goes on screen; each
 // frame only adds a ring of extra points around the face (see head.js). Nothing here touches the live frame.
-let segmenter = null, headOn = false;
+let segmenter = null, headOn = false, glassesTouched = false;
+const GLASSES_SHARE = 0.03;   // measured on two photos: 0.096 with spectacles, 0 without
 const masks = new WeakMap();        // gallery item -> its head mask, or false when the photo could not be cut
 const hairMasks = new WeakMap();    // gallery item -> its hair-only mask (S9), or false
 const bodyMasks = new WeakMap();    // gallery item -> its body-and-clothes mask (S10), or false
@@ -102,6 +103,7 @@ async function cutHead(item) {
     probe.readingPhotoMask = 1;
     let classes = null;
     try { classes = cat ? cat.getAsUint8Array() : null; } finally { probe.readingPhotoMask = 0; }
+    probe.glassesShare = classes ? glassesShare(classes, cat.width, cat.height, item.landmarks, (item.image.naturalWidth || item.image.width) / (item.image.naturalHeight || item.image.height)) : 0;
     const found = classes ? headMask(classes, cat.width, cat.height) : null;
     if (maskUsable(found)) mask = found;
     const hairFound = classes ? headMask(classes, cat.width, cat.height, 2, 512, HAIR_CLASSES) : null;   // the same cut, hair only (S9)
@@ -131,6 +133,9 @@ async function applyHead() {
       return;
     }
     compositor.setHeadMask(mask); compositor.setHead(true); probe.head = "on";
+    if (!glassesTouched) {                                      // S11g: spectacles in the photo are found from the same cut (about 0.1 with, 0 without): hide them unless the user chose
+      look.glasses = probe.glassesShare > GLASSES_SHARE; $("glassesBtn").setAttribute("aria-pressed", String(look.glasses)); applyLook();
+    }
     setStatus("Whole head on: hair, ears and neck come from your photo. Look at the frames per second.");
   } catch (err) {
     compositor.setHead(false); probe.head = "error";
@@ -919,7 +924,7 @@ function wireControls() {
     setStatus(look.keepEyes ? "Your own eyes show through the photo." : "The photo's eyes are used.");
   });
   $("glassesBtn").addEventListener("click", (e) => {   // S11: spectacles in the photo are not drawn on the live face
-    look.glasses = !look.glasses; e.currentTarget.setAttribute("aria-pressed", String(look.glasses)); applyLook();
+    glassesTouched = true; look.glasses = !look.glasses; e.currentTarget.setAttribute("aria-pressed", String(look.glasses)); applyLook();
     setStatus(look.glasses ? "The photo's glasses are hidden: your own face shows there." : "The photo's glasses are drawn as they are.");
   });
   $("skinBtn").addEventListener("click", (e) => {      // S10h: the live hand's skin colour moves towards the photo's, on the graphics card only

@@ -58,6 +58,10 @@ vec3 toYcc(vec3 c) { float y = lum(c); return vec3(y, (c.b - y) * 0.564, (c.r - 
 vec3 fromYcc(vec3 q) { float r = q.x + q.z / 0.713, b = q.x + q.y / 0.564; return vec3(r, (q.x - 0.299 * r - 0.114 * b) / 0.587, b); }
 // S11b, the live eyes and mouth that are kept: the live pixel, but its SKIN (the lids, the lips' surround) moves to the photo's skin tone so
 // the kept parts do not sit on the face as lighter or darker patches. Not-skin pixels (the whites, the iris, the teeth) are left alone.
+float skinWeight(vec3 cam) {
+  vec3 s = toYcc((texture2D(u_cam, u_lp[2]).rgb + texture2D(u_cam, u_lp[3]).rgb) * 0.5);
+  return (1.0 - smoothstep(0.045, 0.1, distance(toYcc(cam).yz, s.yz))) * u_relight;
+}
 vec3 liveKept(vec3 cam) {
   vec3 s = toYcc((texture2D(u_cam, u_lp[2]).rgb + texture2D(u_cam, u_lp[3]).rgb) * 0.5);
   vec3 t = toYcc((texture2D(u_photo, u_pp[2]).rgb + texture2D(u_photo, u_pp[3]).rgb) * 0.5);
@@ -113,13 +117,32 @@ void main() {
   // and is drawn only where the photo itself is head (hair, skin, accessories), never its background or clothes
   vec3 colour = mix(photo, matched, u_match * (1.0 - v_ring * (1.0 - u_ringMatch)));
   float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
-  float head = mix(1.0, smoothstep(0.35, 0.65, texture2D(u_mask, v_uv).r) * inside, v_ring * u_head);
+  float ringW = clamp(v_ring * 4.0, 0.0, 1.0);   // S11h: v_ring runs 0 to 1 across the inner band of the ring; the mask must act on all of it
+  float head = mix(1.0, smoothstep(0.62, 0.92, texture2D(u_mask, v_uv).r) * inside, ringW * u_head);   // S11h: the edge is taken from inside the head, or the photo's background shows as a light halo
   float keepAmt = u_keep * smoothstep(0.6, 1.0, v_keep) + u_keepEyes * smoothstep(0.6, 1.0, -v_keep);   // S11e: the inside of the mouth (+1) and of the eyes (-1) stay live when asked
   if (u_relight > 0.0 && u_match > 0.0 && keepAmt > 0.0) {      // the kept live eyes and mouth are drawn by us, in the photo's skin tone
     colour = mix(colour, liveKept(texture2D(u_cam, v_scr).rgb), keepAmt);
     keepAmt = 0.0;
   }
+  // S11h: a studio backdrop is sometimes called "head" by the segmenter next to the hair and skin. In the ring, a photo pixel that is both
+  // bright and nearly colourless is the backdrop (skin has colour, hair is dark): it is not drawn.
+  if (u_head > 0.0 && ringW > 0.0) {
+    float chroma = max(photo.r, max(photo.g, photo.b)) - min(photo.r, min(photo.g, photo.b));
+    head *= 1.0 - ringW * (1.0 - smoothstep(0.06, 0.14, chroma)) * smoothstep(0.38, 0.58, lum(photo));
+  }
   float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - keepAmt) * u_opacity * head;
+  // S11i, the neck: below the chin, the live person's own neck (and ear) is wider than the photo's and shows as pale streaks beside it.
+  // Where the live pixel is SKIN (near the live cheek's chroma; walls and clothes are not) and the photo has no neck, it is drawn in the photo's skin tone.
+  float neckX = 1.0 - smoothstep(0.5, 0.7, abs(v_uv.x - (u_pp[2].x + u_pp[3].x) * 0.5) / max(abs(u_pp[3].x - u_pp[2].x), 0.02));   // only as wide as a neck, so a beige wall beside it is left alone
+  if (u_relight > 0.0 && u_head > 0.0 && v_ring > 0.0 && v_uv.y > u_pp[4].y - 0.02 && u_match > 0.0) {
+    vec3 cam = texture2D(u_cam, v_scr).rgb;
+    float w = skinWeight(cam) * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
+    if (w > 0.0) {
+      float a = max(alpha, w);
+      colour = mix(liveKept(cam), colour, alpha / max(a, 1e-4));
+      alpha = a;
+    }
+  }
   gl_FragColor = vec4(colour * alpha, alpha);
 }`;
 
