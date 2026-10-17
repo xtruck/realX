@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { INNER_LIPS, LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, RollingStats, buildMesh, checkPhotoFaces, edgeDepth, faceBox, fillSegments, flatten, keepMask, uniqueEdges, blendShape, shapeWeights, similarityFit, STABLE_POINTS } from "../src/facemesh/mesh.js";
+import { INNER_LIPS, LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, RollingStats, buildMesh, checkPhotoFaces, edgeDepth, faceBox, fillSegments, flatten, keepMask, uniqueEdges, blendShape, extrapolateLandmarks, shapeWeights, similarityFit, STABLE_POINTS } from "../src/facemesh/mesh.js";
 import { MeshCompositor } from "../src/facemesh/compositor.js";
 
 const mesh = buildMesh();
@@ -307,4 +307,16 @@ test("blendShape fades out when the live head is turned away from the photo's po
   assert.deepEqual(Array.from(live), Array.from(copy));
   assert.equal(blendShape(live, photo, 1, 1, 0, w), 0);
   assert.ok(STABLE_POINTS.every((i) => i >= 0 && i < VERTEX_COUNT));
+});
+
+test("extrapolateLandmarks moves the last face on along its motion, no further than maxAhead, and refuses bad input", () => {
+  const a = [{ x: 0.40, y: 0.50, z: 0 }, { x: 0.50, y: 0.50, z: 0.1 }], b = [{ x: 0.42, y: 0.51, z: 0 }, { x: 0.52, y: 0.51, z: 0.1 }];
+  const half = extrapolateLandmarks(a, 0, b, 33, 49.5);   // half a step on
+  assert.ok(Math.abs(half[0].x - 0.43) < 1e-9 && Math.abs(half[0].y - 0.515) < 1e-9 && half[1].z === 0.1);
+  const far = extrapolateLandmarks(a, 0, b, 33, 1000);    // far in the future: capped at 1.5 steps
+  assert.ok(Math.abs(far[0].x - (0.42 + 0.02 * 1.5)) < 1e-9);
+  assert.ok(Math.abs(extrapolateLandmarks(a, 0, b, 33, 20)[0].x - 0.42) < 1e-9, "not before the last detection");
+  assert.equal(extrapolateLandmarks(a, 33, b, 33, 40), null, "no time between the detections");
+  assert.equal(extrapolateLandmarks(null, 0, b, 33, 40), null);
+  assert.equal(extrapolateLandmarks(a.slice(0, 1), 0, b, 33, 40), null);
 });

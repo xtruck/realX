@@ -7,7 +7,7 @@
 // facemesh.test.mjs checks this file for the calls that would break that.
 import { FaceLandmarker, FilesetResolver, HandLandmarker, ImageSegmenter, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { MeshCompositor } from "./compositor.js";
-import { RollingStats, buildMesh, checkPhotoFaces, faceBox, fillSegments } from "./mesh.js";
+import { RollingStats, buildMesh, checkPhotoFaces, extrapolateLandmarks, faceBox, fillSegments } from "./mesh.js";
 import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
 import { ConsentClient, sha256Hex } from "./consent.js";
 import { labelProblem, readLabel } from "./guard.js";
@@ -736,6 +736,8 @@ function draw(landmarks) {
   }
 }
 
+let lastDet = null, prevDet = null, skipNext = false;
+const SKIP_ABOVE_MS = 28;
 function frame() {
   if (stopped) return;
   if (video.readyState >= 2 && video.videoWidth > 0 && video.currentTime !== lastVideoTime) {
@@ -744,11 +746,18 @@ function frame() {
     lastTs = Math.max(lastTs + 1, now);            // MediaPipe wants strictly increasing timestamps
     const took0 = performance.now();
     let landmarks = null;
-    try {
-      const result = landmarker.detectForVideo(video, lastTs);
-      landmarks = result.faceLandmarks && result.faceLandmarks[0] ? result.faceLandmarks[0] : null;
-    } catch (err) { setStatus(`Tracking error: ${err.message}`); }
-    const took = performance.now() - took0;
+    // S11n: when one detection takes longer than SKIP_ABOVE_MS (slow laptop), every second camera frame reuses the face from its last two
+    // detections, moved on by their motion: about 30 frames a second instead of 20, at the price of one frame of guesswork.
+    const guess = skipNext && detectMs > SKIP_ABOVE_MS && lastDet && prevDet ? extrapolateLandmarks(prevDet.l, prevDet.t, lastDet.l, lastDet.t, now) : null;
+    if (guess) { landmarks = guess; skipNext = false; probe.skipped = (probe.skipped || 0) + 1; }
+    else {
+      try {
+        const result = landmarker.detectForVideo(video, lastTs);
+        landmarks = result.faceLandmarks && result.faceLandmarks[0] ? result.faceLandmarks[0] : null;
+      } catch (err) { setStatus(`Tracking error: ${err.message}`); }
+      if (landmarks) { prevDet = lastDet; lastDet = { l: landmarks, t: now }; skipNext = true; } else { prevDet = null; lastDet = null; skipNext = false; }
+    }
+    const took = guess ? detectMs : performance.now() - took0;   // a skipped frame did not run the model: it does not change the model's measured time
     detectMs = detectMs ? 0.8 * detectMs + 0.2 * took : took;
     stats.mark(now, landmarks !== null);
     probe.frames++; probe.found += landmarks ? 1 : 0; probe.detectMs = detectMs;

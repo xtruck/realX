@@ -147,6 +147,18 @@ export class RollingStats {
   }
 }
 
+/**
+ * S11n: where a face probably is now, from its two last detections: `b` seen at time `tb`, `a` seen at `ta` (landmark lists of {x, y, z}).
+ * Moves b along the motion from a to b by (now - tb) / (tb - ta) steps, at most `maxAhead`. Returns a new list, or null when it cannot be done.
+ */
+export function extrapolateLandmarks(a, ta, b, tb, now, maxAhead = 1.5) {
+  if (!a || !b || a.length !== b.length || !(tb > ta)) return null;
+  const k = Math.min(maxAhead, Math.max(0, (now - tb) / (tb - ta)));
+  const out = new Array(b.length);
+  for (let i = 0; i < b.length; i++) out[i] = { x: b[i].x + (b[i].x - a[i].x) * k, y: b[i].y + (b[i].y - a[i].y) * k, z: b[i].z };
+  return out;
+}
+
 // --- S11l, the photo's own face shape ----------------------------------------------------------------------------------------------
 // Without this the photo is warped to the live face's exact shape (its nose, its jaw, its lip width), so the result is "you with a skin
 // graft". Here the live mesh is moved part of the way toward the PHOTO's mesh, fitted onto the live face (scale, turn, shift from stable points),

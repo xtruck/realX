@@ -6,6 +6,8 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
+- [x] S11n (2026-10-17): on a slow laptop (face model over 28 ms) every second camera frame reuses the face from the last two detections moved on by their motion (extrapolateLandmarks, capped 1.5 steps), aiming at about 30 instead of 20 fps. Not yet measured in the benchmark. Full suite: 296 Node, 788 Python passed; one control-room test blinked under load and passes alone
+
 - [x] S11m (2026-10-17): the live mouth interior is shown only while the mouth is open (gap between the inner lips over the face height, smooth from 0.02 to 0.06); closed, the photo's own lips are drawn, which removes the live patch and its outline. Both Pexels pairs checked
 
 - [x] S11k-l (2026-10-17): speed: the pose model is asked 4 times a second and the joints are eased every frame (body option 9.4 to 17.6 fps), idle hand polling 500 ms. Realism: the photo's own face shape (mesh blended toward the photo's proportions, fitted by scale/turn/shift on stable points, fades with head yaw, eyes/brows/lips stay live, slider default 70%). Both-way test with the two Pexels portraits. 295 Node tests
