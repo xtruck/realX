@@ -146,3 +146,82 @@ export class RollingStats {
     return { fps: ((n - 1) * 1000) / span, foundPct: (100 * found) / n };
   }
 }
+
+// --- S11l, the photo's own face shape ----------------------------------------------------------------------------------------------
+// Without this the photo is warped to the live face's exact shape (its nose, its jaw, its lip width), so the result is "you with a skin
+// graft". Here the live mesh is moved part of the way toward the PHOTO's mesh, fitted onto the live face (scale, turn, shift from stable points),
+// except where the face moves with expression (eyes, brows, lips), which stay live. When the live head turns, the flat fit stops matching and
+// the effect fades out by itself.
+export const STABLE_POINTS = [33, 133, 362, 263, 168, 6, 1, 4, 10, 152, 234, 454, 61, 291];   // eye corners, nose bridge and tip, forehead, chin, face sides, mouth corners
+const OUTER_LIPS = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];
+const BROWS = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46, 300, 293, 334, 296, 336, 285, 295, 282, 283, 276];
+
+/** One weight per mesh point: 1 = take the photo's shape, 0 = stay live. */
+export function shapeWeights() {
+  const w = new Float32Array(VERTEX_COUNT).fill(1);
+  for (const v of [...LEFT_EYE, ...RIGHT_EYE, ...INNER_LIPS]) w[v] = 0;
+  for (const v of OUTER_LIPS) w[v] = 0.35;
+  for (const v of BROWS) w[v] = 0.4;
+  return w;
+}
+
+/**
+ * Fits the photo's stable points onto the live ones: a scale + turn + shift (least squares). `live` and `photo` are flat x, y arrays of the
+ * whole mesh (normalised), `liveAspect` and `photoAspect` the width / height of their pictures (so x and y have the same unit).
+ * Returns { re, im, pc, lc, rms } or null: z = re + i*im is the scale and turn, pc and lc the photo's and live centres, rms the mean gap
+ * left over in live face widths (a measure of how well a flat fit matches: a turned head gives a big number).
+ */
+export function similarityFit(live, photo, liveAspect = 1, photoAspect = 1, points = STABLE_POINTS) {
+  const n = points.length;
+  let lcx = 0, lcy = 0, pcx = 0, pcy = 0;
+  for (const i of points) { lcx += live[2 * i] * liveAspect; lcy += live[2 * i + 1]; pcx += photo[2 * i] * photoAspect; pcy += photo[2 * i + 1]; }
+  lcx /= n; lcy /= n; pcx /= n; pcy /= n;
+  let num_re = 0, num_im = 0, den = 0;
+  for (const i of points) {
+    const px = photo[2 * i] * photoAspect - pcx, py = photo[2 * i + 1] - pcy, qx = live[2 * i] * liveAspect - lcx, qy = live[2 * i + 1] - lcy;
+    num_re += px * qx + py * qy; num_im += px * qy - py * qx; den += px * px + py * py;
+  }
+  if (!(den > 1e-12)) return null;
+  const re = num_re / den, im = num_im / den;
+  let err = 0;
+  for (const i of points) {
+    const px = photo[2 * i] * photoAspect - pcx, py = photo[2 * i + 1] - pcy, qx = live[2 * i] * liveAspect - lcx, qy = live[2 * i + 1] - lcy;
+    const ax = re * px - im * py, ay = im * px + re * py;
+    err += (ax - qx) ** 2 + (ay - qy) ** 2;
+  }
+  const width = Math.hypot((live[2 * 454] - live[2 * 234]) * liveAspect, live[2 * 454 + 1] - live[2 * 234 + 1]);
+  if (!(width > 1e-9)) return null;
+  return { re, im, pc: [pcx, pcy], lc: [lcx, lcy], rms: Math.sqrt(err / n) / width };
+}
+
+/** How far a head is turned, from the mesh alone: [yaw, pitch] as the nose tip's place between the cheeks, and between the eyes and the chin. */
+export function headTurn(flat, aspect = 1) {
+  const xl = flat[2 * 234] * aspect, xr = flat[2 * 454] * aspect, nx = flat[2 * 1] * aspect;
+  const ey = (flat[2 * 133 + 1] + flat[2 * 362 + 1]) / 2, ny = flat[2 * 1 + 1], cy = flat[2 * 152 + 1];
+  const w = xr - xl, h = cy - ey;
+  return [Math.abs(w) > 1e-9 ? (nx - (xl + xr) / 2) / w : 0, Math.abs(h) > 1e-9 ? (ny - ey) / h : 0];
+}
+
+/**
+ * Moves the live mesh `live` (flat, edited in place) toward the photo's shape. `amount` 0..1 is how far, `weights` from shapeWeights().
+ * The photo is flat (front-on), so the effect fades out as the live head turns away from the photo's own pose: full while the nose sits
+ * between the cheeks as the photo's does (within `free`), none beyond `giveUp` (measured by headTurn()). Returns the amount really used.
+ */
+export function blendShape(live, photo, liveAspect, photoAspect, amount, weights, free = 0.05, giveUp = 0.16) {
+  if (!(amount > 0)) return 0;
+  const fit = similarityFit(live, photo, liveAspect, photoAspect);
+  if (!fit) return 0;
+  const a = headTurn(live, liveAspect), b = headTurn(photo, photoAspect);
+  const d = Math.abs(a[0] - b[0]);   // yaw only: how far up the face the nose sits differs between people, so pitch cannot be judged this way
+  const t = Math.min(1, Math.max(0, (d - free) / (giveUp - free)));
+  const k = amount * (1 - t * t * (3 - 2 * t));
+  if (!(k > 0)) return 0;
+  for (let i = 0; i < VERTEX_COUNT; i++) {
+    const w = k * weights[i];
+    if (w === 0) continue;
+    const px = photo[2 * i] * photoAspect - fit.pc[0], py = photo[2 * i + 1] - fit.pc[1];
+    const ax = (fit.re * px - fit.im * py + fit.lc[0]) / liveAspect, ay = fit.im * px + fit.re * py + fit.lc[1];
+    live[2 * i] += w * (ax - live[2 * i]); live[2 * i + 1] += w * (ay - live[2 * i + 1]);
+  }
+  return k;
+}

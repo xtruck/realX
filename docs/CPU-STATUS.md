@@ -11,6 +11,8 @@ gets as far as warping and relighting that photo on the live face; the last step
 | Photo on the live face, consent gate, "Virtual face" label, watermark | works | Node + browser tests |
 | Lighting-only colour match (the photo keeps ITS skin colour; only where the light falls comes from the live face) | works | screenshots, both directions (below), test_facemesh_browser |
 | Whole head (hair, ears, neck from the photo) | works, with limits (below) | screenshots |
+| The photo's own face shape (slider "Photo's face shape", default 70%): outline, nose and cheeks move toward the photo's proportions; eyes, brows and lips follow the live face; fades out when the head turns (yaw only) | works for near-frontal heads; mouth patch edge shows more at 100% | screenshots, both pairs, 3 Node tests |
+| Body and clothes: the shirt moves as ONE piece (arm bones off), cover starts at 0, pose model asked 4 times a second with eased joints | body option 9.4 to 17.6 fps (BENCHMARKS.md section 10) | screenshots, benchmark, Node tests |
 | Glasses in the photo: found automatically (share of "accessory" pixels along the eye line; 0.096 with, 0 without), then smoothed away | works on 2 photos | probe value, screenshots |
 | Photo's eyes by default; "Use my live eyes" button | works | screenshots (live eyes looked dark and purple on another skin tone) |
 | Mouth interior stays live (talking) | works | screenshots |

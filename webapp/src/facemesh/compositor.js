@@ -9,7 +9,7 @@
 //    while colour matching is on, and (S10c) while "Show my hands on top" is on. The shader reads it to take the live face's colour and lighting (a blurred
 //    copy) and give them to the photo's detail, so the photo does not look like a sticker. That one method is the only
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
-import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, edgeDepth, faceBox, flatten, keepMask } from "./mesh.js";
+import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, blendShape, edgeDepth, faceBox, flatten, keepMask, shapeWeights } from "./mesh.js";
 import { HEAD_VERTEX_COUNT, RING_TRIANGLES, headFade, ringFlag, ringPoints, ringTriangles } from "./head.js";
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
@@ -207,7 +207,7 @@ export class MeshCompositor {
     this.positions = new Float32Array(HEAD_VERTEX_COUNT * 2);   // 468 face points, then the head ring
     this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
-    this.look = { match: 1, keep: 1, keepEyes: 0, skin: 0, glasses: 0, relight: 1 };
+    this.look = { match: 1, shape: 0.5, keep: 1, keepEyes: 0, skin: 0, glasses: 0, relight: 1 };
     this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
     this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
@@ -438,8 +438,8 @@ export class MeshCompositor {
   setHead(on) { this.head = !!on; }
 
   /** How the photo is drawn: `match` 0..1 (how much of the live face's colour and light it takes), `keep` (live eyes and mouth show through). */
-  setLook({ match = this.look.match, keep = this.look.keep, keepEyes = this.look.keepEyes, skin = this.look.skin, glasses = this.look.glasses, relight = this.look.relight } = {}) {
-    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), keep: keep ? 1 : 0, keepEyes: keepEyes ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)), glasses: glasses ? 1 : 0, relight: relight ? 1 : 0 };
+  setLook({ match = this.look.match, shape = this.look.shape, keep = this.look.keep, keepEyes = this.look.keepEyes, skin = this.look.skin, glasses = this.look.glasses, relight = this.look.relight } = {}) {
+    this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), shape: Math.min(1, Math.max(0, Number(shape) || 0)), keep: keep ? 1 : 0, keepEyes: keepEyes ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)), glasses: glasses ? 1 : 0, relight: relight ? 1 : 0 };
   }
 
   /**
@@ -466,6 +466,7 @@ export class MeshCompositor {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);   // the photo
     setSampling(gl);
     this.photoRing = ring;
+    this.photoFlat = flat; this.photoAspect = w / h; this.shapeW = this.shapeW || shapeWeights();   // S11l: the photo's own face shape
     const eye = (a, b) => [(flat[a * 2] + flat[b * 2]) / 2, (flat[a * 2 + 1] + flat[b * 2 + 1]) / 2];   // the eye corners 33/133 and 362/263 of the face mesh
     const ea = eye(33, 133), eb = eye(362, 263);
     this.photoEyes = [ea[0], ea[1], eb[0], eb[1], w / h];
@@ -508,6 +509,7 @@ export class MeshCompositor {
     const liveNow = this.live.on && camera !== null;                    // your hands on top
     if (useCamera || liveNow) this.uploadCamera(camera);
     const aspect = this.canvas.width / Math.max(1, this.canvas.height);
+    if (this.photoFlat && this.look.shape > 0) this.shapeUsed = blendShape(this.positions, this.photoFlat, aspect, this.photoAspect, this.look.shape, this.shapeW);   // the face takes part of the photo's shape
     this.cheekR = [0.5 * BLUR * box.w, 0.5 * BLUR * box.w * aspect];
     let head = this.headActive;
     if (head) {                                     // the ring around the live face; if the face is degenerate, the face alone

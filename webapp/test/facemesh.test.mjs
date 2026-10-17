@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { INNER_LIPS, LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, RollingStats, buildMesh, checkPhotoFaces, edgeDepth, faceBox, fillSegments, flatten, keepMask, uniqueEdges } from "../src/facemesh/mesh.js";
+import { INNER_LIPS, LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, RollingStats, buildMesh, checkPhotoFaces, edgeDepth, faceBox, fillSegments, flatten, keepMask, uniqueEdges, blendShape, shapeWeights, similarityFit, STABLE_POINTS } from "../src/facemesh/mesh.js";
 import { MeshCompositor } from "../src/facemesh/compositor.js";
 
 const mesh = buildMesh();
@@ -234,7 +234,7 @@ test("the live frame goes to the graphics card only while colour matching is on 
   c.draw(face(0.3, 0.3), live);
   assert.equal(uploadsOf(live), 2, "colour match at 0: the live picture is not touched");
   c.setLook({ match: 0.5, keep: false });
-  assert.deepEqual(c.look, { match: 0.5, keep: 0, keepEyes: 0, skin: 0, glasses: 0, relight: 1 });   // S10h added skin (off by default); S11 added glasses (off: it smears the brows of a photo without glasses) and relight (on)
+  assert.deepEqual(c.look, { match: 0.5, shape: 0.5, keep: 0, keepEyes: 0, skin: 0, glasses: 0, relight: 1 });   // S10h added skin (off by default); S11 added glasses (off: it smears the brows of a photo without glasses) and relight (on)
   c.setLook({ skin: 3 });
   assert.equal(c.look.skin, 1, "skin is limited to 0..1");
   c.setLook({ skin: 0 });
@@ -260,4 +260,51 @@ test("the compositor fades the whole photo with an opacity, and draws nothing at
   c.draw(face(0.3, 0.3), null, 7);
   assert.ok(opacities().includes(1) && !opacities().includes(7), "the opacity is limited to 1");
   assert.equal(c.draw(face(0.3, 0.3)), TRIANGLE_COUNT, "left out: fully drawn, as before");
+});
+
+// --- S11l, the photo's own face shape -------------------------------------------------------------------------------------------
+function syntheticMesh(seed = 1, scale = 1, turn = 0, dx = 0, dy = 0) {
+  const flat = new Float32Array(VERTEX_COUNT * 2);
+  let r = seed;
+  const rnd = () => { r = (r * 16807) % 2147483647; return r / 2147483647; };
+  for (let i = 0; i < VERTEX_COUNT; i++) { const x = (rnd() - 0.5) * 0.3, y = (rnd() - 0.5) * 0.4; flat[2 * i] = 0.5 + dx + scale * (Math.cos(turn) * x - Math.sin(turn) * y); flat[2 * i + 1] = 0.5 + dy + scale * (Math.sin(turn) * x + Math.cos(turn) * y); }
+  return flat;
+}
+
+test("similarityFit finds the scale, turn and shift between two copies of the same face and leaves nothing over", () => {
+  const photo = syntheticMesh(7), live = syntheticMesh(7, 1.6, 0.3, 0.1, -0.05);
+  const fit = similarityFit(live, photo, 1, 1);
+  assert.ok(fit && fit.rms < 1e-4, `rms ${fit && fit.rms}`);
+  assert.ok(Math.abs(Math.hypot(fit.re, fit.im) - 1.6) < 1e-3 && Math.abs(Math.atan2(fit.im, fit.re) - 0.3) < 1e-3);
+  assert.equal(similarityFit(live, new Float32Array(VERTEX_COUNT * 2).fill(0.5), 1, 1), null, "a photo with no shape cannot be fitted");
+});
+
+test("blendShape leaves a live face that already has the photo's shape alone, moves a differently shaped one toward the photo, and keeps weight 0 points live", () => {
+  const photo = syntheticMesh(7), w = shapeWeights();
+  const same = syntheticMesh(7, 1.4, 0.2, 0.05, 0.02), before = Float32Array.from(same);
+  assert.ok(blendShape(same, photo, 1, 1, 1, w) > 0.9);
+  for (let i = 0; i < same.length; i++) assert.ok(Math.abs(same[i] - before[i]) < 1e-4, "same shape: nothing moves");
+  const other = Float32Array.from(before);
+  for (const i of [1, 4, 10, 152]) other[2 * i] += 0.01;      // a wider nose and a different jaw on the live face (stable points, so the fit sees it)
+  const wide = Float32Array.from(other);
+  blendShape(wide, photo, 1, 1, 1, w);
+  const gap = (a, i) => Math.abs(a[2 * i] - before[2 * i]);
+  assert.ok(gap(wide, 1) < gap(other, 1), "the nose comes back toward the photo's");
+  const eye = LEFT_EYE[0], lip = INNER_LIPS[0];
+  assert.equal(w[eye], 0); assert.equal(w[lip], 0);
+  const turned = Float32Array.from(other); blendShape(turned, photo, 1, 1, 1, w);
+  assert.equal(turned[2 * eye], other[2 * eye], "an eye point stays live");
+  assert.equal(turned[2 * lip + 1], other[2 * lip + 1], "an inner lip point stays live");
+});
+
+test("blendShape fades out when the live head is turned away from the photo's pose and does nothing at amount 0", () => {
+  const photo = syntheticMesh(7), w = shapeWeights();
+  const live = syntheticMesh(7, 1, 0, 0, 0);
+  const width = live[2 * 454] - live[2 * 234];
+  live[2 * 1] += 0.4 * width;                        // the nose tip slides across the face: the head is turned
+  const copy = Float32Array.from(live);
+  assert.equal(blendShape(live, photo, 1, 1, 1, w), 0, "a turned head: no effect");
+  assert.deepEqual(Array.from(live), Array.from(copy));
+  assert.equal(blendShape(live, photo, 1, 1, 0, w), 0);
+  assert.ok(STABLE_POINTS.every((i) => i >= 0 && i < VERTEX_COUNT));
 });
