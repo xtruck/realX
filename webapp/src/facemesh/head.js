@@ -20,7 +20,7 @@ export const HEAD_VERTEX_COUNT = VERTEX_COUNT + RING_VERTICES;
 export const RING_TRIANGLES = OVAL_COUNT * (RINGS) * 2;
 
 // How far the outermost ring lies from the oval, in face widths: above the head (hair), at the sides (ears), below (neck).
-export const REACH = { top: 0.55, side: 0.3, bottom: 0.5 };
+export const REACH = { top: 0.55, side: 0.3, bottom: 0.7 };   // S11c: the neck reaches further down, so the photo's neck runs on towards the collar
 
 // The classes of MediaPipe's multiclass selfie segmenter: 0 background, 1 hair, 2 body skin, 3 face skin, 4 clothes, 5 others
 // (hats, glasses, earrings...). The head is hair, both skins and the accessories; the background and the clothes are not.
@@ -76,10 +76,11 @@ export function ringTriangles() {
   return Uint16Array.from(out);
 }
 
-/** Per-vertex fade for the whole head: 1 over the face, 1 at the oval, falling to 0 on the outermost ring (the soft edge). */
+/** Per-vertex fade for the whole head: 1 over the face and at the oval, INNER_FADE on the inner ring, 0 on the outermost ring. S11c: the inner ring used to be 0.5, which made hair edges and the neck ghostly; the photo's own head mask already gives the soft outline. */
+export const INNER_FADE = 0.85;
 export function headFade() {
   const out = new Float32Array(HEAD_VERTEX_COUNT).fill(1);
-  for (let r = 1; r <= RINGS; r++) for (let k = 0; k < OVAL_COUNT; k++) out[VERTEX_COUNT + (r - 1) * OVAL_COUNT + k] = 1 - r / RINGS;
+  for (let r = 1; r <= RINGS; r++) for (let k = 0; k < OVAL_COUNT; k++) out[VERTEX_COUNT + (r - 1) * OVAL_COUNT + k] = r === 1 ? INNER_FADE : 0;
   return out;
 }
 

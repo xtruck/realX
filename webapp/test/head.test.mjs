@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { FACE_OVAL, HEAD_CLASSES, HEAD_VERTEX_COUNT, OVAL_COUNT, REACH, RINGS, RING_TRIANGLES, RING_VERTICES, headFade, headMask, maskUsable, ringFlag, ringPoints, ringTriangles } from "../src/facemesh/head.js";
+import { FACE_OVAL, HEAD_CLASSES, HEAD_VERTEX_COUNT, OVAL_COUNT, REACH, RINGS, RING_TRIANGLES, RING_VERTICES, headFade, INNER_FADE, headMask, maskUsable, ringFlag, ringPoints, ringTriangles } from "../src/facemesh/head.js";
 import { TRIANGLE_COUNT, VERTEX_COUNT, buildMesh } from "../src/facemesh/mesh.js";
 import { MeshCompositor } from "../src/facemesh/compositor.js";
 
@@ -30,7 +30,7 @@ test("FACE_OVAL is MediaPipe's own face oval, in order round the face", async ()
   }
 });
 
-test("ring points lie outside the oval, farther for the outer ring; reach is largest above, smallest at the sides", () => {
+test("ring points lie outside the oval, farther for the outer ring; reach is largest below (neck), then above (hair), smallest at the sides", () => {
   const lm = round();
   const ring = ringPoints(lm, 1);
   assert.equal(ring.length, RING_VERTICES * 2);
@@ -40,7 +40,7 @@ test("ring points lie outside the oval, farther for the outer ring; reach is lar
   assert.ok(Math.abs(top - 0.2 * REACH.top) < 2e-3, `top ${top}`);
   assert.ok(Math.abs(bottom - 0.2 * REACH.bottom) < 2e-3, `bottom ${bottom}`);
   assert.ok(Math.abs(side - 0.2 * REACH.side) < 2e-3, `side ${side}`);
-  assert.ok(top > bottom && bottom > side);
+  assert.ok(bottom > top && top > side)   // S11c: the neck reaches furthest (down towards the collar), then the hair above, then the ears at the sides;
 });
 
 test("ring points follow a tilted head", () => {
@@ -79,10 +79,10 @@ test("the ring's triangles join oval to ring 1 to ring 2: indices exist, none de
   for (const v of FACE_OVAL) assert.ok(used.has(v));
 });
 
-test("the fade is 1 over the face and at the oval, 0.5 on the inner ring and 0 on the outer ring; the ring flag marks only ring points", () => {
+test("the fade is 1 over the face and at the oval, INNER_FADE on the inner ring and 0 on the outer ring; the ring flag marks only ring points", () => {
   const f = headFade(), r = ringFlag();
   assert.ok(Array.from(f.slice(0, VERTEX_COUNT)).every((v) => v === 1));
-  assert.ok(Array.from(f.slice(VERTEX_COUNT, VERTEX_COUNT + OVAL_COUNT)).every((v) => v === 0.5));
+  assert.ok(Array.from(f.slice(VERTEX_COUNT, VERTEX_COUNT + OVAL_COUNT)).every((v) => v === Math.fround(INNER_FADE)));
   assert.ok(Array.from(f.slice(VERTEX_COUNT + OVAL_COUNT)).every((v) => v === 0));
   assert.equal(Array.from(r).filter((v) => v === 1).length, RING_VERTICES);
   assert.ok(Array.from(r.slice(0, VERTEX_COUNT)).every((v) => v === 0));

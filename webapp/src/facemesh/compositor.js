@@ -89,7 +89,15 @@ void main() {
     // gain = (how bright the live face is here compared with its own average) / (the same for the photo), so a dark-skinned photo on
     // a light-skinned face stays dark-skinned, and a purple room light does not tint it. Spectacles are smoothed away first.
     vec3 p = photo;
-    if (u_glasses > 0.0) p = mix(photo, soften(u_photo, v_uv, u_rp * 0.8), u_glasses * glassesBand() * 0.9);
+    if (u_glasses > 0.0) {
+      float gb = u_glasses * glassesBand();
+      p = mix(photo, soften(u_photo, v_uv, u_rp * 0.5), gb * 0.7);
+      // the lenses tint and wash the skin behind them (a grey haze): pull the colour of the band to the clean cheek's, keep its light
+      vec3 q = toYcc(p), c = toYcc((texture2D(u_photo, u_pp[2]).rgb + texture2D(u_photo, u_pp[3]).rgb) * 0.5);
+      q.yz = mix(q.yz, c.yz, gb * 0.3);
+      q.x = mix(q.x, min(q.x, c.x * 1.05), gb);   // and glare is cut to the cheek's brightness (brows and lashes, being darker, stay)
+      p = clamp(fromYcc(q), 0.0, 1.0);
+    }
     // a wide blur (twice the colour-match scale) so only the broad light and shade is followed, not patches, noise or the live face's own features
     float live = lum(soften(u_cam, v_scr, u_rl * 2.0)) / max(lightOf(u_cam, u_lp, u_rl * 0.5), 0.03);
     float ref = lum(soften(u_photo, v_uv, u_rp * 2.0)) / max(lightOf(u_photo, u_pp, u_rp * 0.5), 0.03);
