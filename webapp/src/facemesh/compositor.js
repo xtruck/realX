@@ -54,10 +54,31 @@ float lightOf(sampler2D t, vec2 p[5], vec2 r) {
   for (int i = 0; i < 5; i++) s += lum(texture2D(t, p[i]).rgb) + lum(texture2D(t, p[i] + r).rgb) + lum(texture2D(t, p[i] - r).rgb);
   return s / 15.0;
 }
+vec3 toYcc(vec3 c) { float y = lum(c); return vec3(y, (c.b - y) * 0.564, (c.r - y) * 0.713); }
+vec3 fromYcc(vec3 q) { float r = q.x + q.z / 0.713, b = q.x + q.y / 0.564; return vec3(r, (q.x - 0.299 * r - 0.114 * b) / 0.587, b); }
+// S11b, the live eyes and mouth that are kept: the live pixel, but its SKIN (the lids, the lips' surround) moves to the photo's skin tone so
+// the kept parts do not sit on the face as lighter or darker patches. Not-skin pixels (the whites, the iris, the teeth) are left alone.
+vec3 liveKept(vec3 cam) {
+  vec3 s = toYcc((texture2D(u_cam, u_lp[2]).rgb + texture2D(u_cam, u_lp[3]).rgb) * 0.5);
+  vec3 t = toYcc((texture2D(u_photo, u_pp[2]).rgb + texture2D(u_photo, u_pp[3]).rgb) * 0.5);
+  vec3 q = toYcc(cam);
+  float w = (1.0 - smoothstep(0.05, 0.12, distance(q.yz, s.yz))) * u_relight;
+  q.yz += w * (t.yz - s.yz);
+  q.x *= mix(1.0, clamp(t.x / max(s.x, 0.04), 0.3, 3.0), w);
+  return clamp(fromYcc(q), 0.0, 1.0);
+}
 float glassesBand() {
   vec2 d = (v_uv - u_eyeA) * u_eyeAsp, e = (u_eyeB - u_eyeA) * u_eyeAsp;
   float t = clamp(dot(d, e) / max(dot(e, e), 1e-6), -0.6, 1.6);
-  return 1.0 - smoothstep(0.34, 0.5, length(d - e * t) / sqrt(max(dot(e, e), 1e-6)));
+  float band = 1.0 - smoothstep(0.34, 0.5, length(d - e * t) / sqrt(max(dot(e, e), 1e-6)));
+  // not the eyes themselves (lids, lashes, iris): an ellipse around each eye, long along the eye line, short across it
+  float len = sqrt(max(dot(e, e), 1e-6));
+  vec2 ax = e / len, pr = vec2(-ax.y, ax.x);
+  vec2 da = d, db = d - e;
+  vec2 ea = vec2(dot(da, ax), dot(da, pr)) / len, eb = vec2(dot(db, ax), dot(db, pr)) / len;
+  float eyeA = 1.0 - smoothstep(0.7, 1.0, length(ea * vec2(1.0 / 0.26, 1.0 / 0.13)));
+  float eyeB = 1.0 - smoothstep(0.7, 1.0, length(eb * vec2(1.0 / 0.26, 1.0 / 0.13)));
+  return band * (1.0 - max(eyeA, eyeB));
 }
 
 void main() {
@@ -69,9 +90,10 @@ void main() {
     // a light-skinned face stays dark-skinned, and a purple room light does not tint it. Spectacles are smoothed away first.
     vec3 p = photo;
     if (u_glasses > 0.0) p = mix(photo, soften(u_photo, v_uv, u_rp * 0.8), u_glasses * glassesBand() * 0.9);
-    float live = lum(soften(u_cam, v_scr, u_rl)) / max(lightOf(u_cam, u_lp, u_rl * 0.5), 0.03);
-    float ref = lum(soften(u_photo, v_uv, u_rp)) / max(lightOf(u_photo, u_pp, u_rp * 0.5), 0.03);
-    matched = clamp(p * mix(1.0, clamp(live / max(ref, 0.05), 0.75, 1.3), u_relight), 0.0, 1.0);
+    // a wide blur (twice the colour-match scale) so only the broad light and shade is followed, not patches, noise or the live face's own features
+    float live = lum(soften(u_cam, v_scr, u_rl * 2.0)) / max(lightOf(u_cam, u_lp, u_rl * 0.5), 0.03);
+    float ref = lum(soften(u_photo, v_uv, u_rp * 2.0)) / max(lightOf(u_photo, u_pp, u_rp * 0.5), 0.03);
+    matched = clamp(p * mix(1.0, clamp(live / max(ref, 0.05), 0.8, 1.25), u_relight), 0.0, 1.0);
   } else if (u_match > 0.0) {
     // the photo's detail (what is left when its own blur is taken away) on top of the live face's colour and light
     // limited, so strong edges in the photo (lips, glasses' glare) do not leave bright halos on the live colours
@@ -84,7 +106,12 @@ void main() {
   vec3 colour = mix(photo, matched, u_match * (1.0 - v_ring * (1.0 - u_ringMatch)));
   float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
   float head = mix(1.0, smoothstep(0.35, 0.65, texture2D(u_mask, v_uv).r) * inside, v_ring * u_head);
-  float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - u_keep * v_keep) * u_opacity * head;
+  float keepAmt = u_keep * v_keep;
+  if (u_relight > 0.0 && u_match > 0.0 && keepAmt > 0.0) {      // the kept live eyes and mouth are drawn by us, in the photo's skin tone
+    colour = mix(colour, liveKept(texture2D(u_cam, v_scr).rgb), keepAmt);
+    keepAmt = 0.0;
+  }
+  float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - keepAmt) * u_opacity * head;
   gl_FragColor = vec4(colour * alpha, alpha);
 }`;
 

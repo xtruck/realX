@@ -6,6 +6,8 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
+- [x] S11 realism pass 2 (2026-10-17): the light gain follows only broad shade (wide blur, range 0.8 to 1.25) so cheeks are less blotchy; the kept live eyes and mouth are drawn by the page with their skin moved to the photo's tone (no more lighter/darker eye patches); the glasses smoothing leaves the eyes alone. Checked by screenshots of the owner's photo on a different live face. test_photo_is_drawn_on_the_live_face... can fail under load (it compares two moments of the moving fake camera); it passes alone
+
 - [x] S11 realism pass 1 (2026-10-16, from the owner's real-webcam screenshots): colour match now takes only the live LIGHT (gain from five face spots), the photo keeps its own skin colour (before: a purple room light tinted it, a light live face turned a dark photo grey); the photo's glasses are smoothed away along the eye line (button "Hide the photo's glasses", on by default). Measured with the owner's photo on a different live face: skin R/B 1.71 vs photo 1.86, G/B 1.18 vs 1.21. Still blotchy, hair is a flat cap, eyes and mouth edges, neck/clothes seams: see the next S11 steps
 
 - [x] S10h hand skin-tone matching (2026-10-16): option "Match my hands' skin to the photo" (off by default). In the hands-on-top shader, skin-coloured live pixels move towards the photo's cheek colour; both reference colours are sampled on the graphics card (no read-back); non-skin (bottle, sleeve) untouched. Shader tested on synthetic textures (tests/test_facemesh_skin.py); never tried with a real hand
