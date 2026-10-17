@@ -32,7 +32,7 @@ let detectMs = 0, lastTs = 0, lastVideoTime = -1, measure = null;
 // Numbers only, for the browser test and for anyone reading the page's state: no picture, no landmark.
 const probe = window.__facemesh = { state: "starting", frames: 0, found: 0, fps: 0, foundPct: 0, detectMs: 0, delegate: "", measured: null, photo: "none", drawn: 0, box: null };
 let compositor = null;   // made when the first photo is chosen; draws the photo on the live face
-const look = { match: 100, keep: true, hideHands: false, skin: false, glasses: true };   // colour match in percent; keep the live eyes and mouth; fade out when a hand covers the face
+const look = { match: 100, keep: true, hideHands: false, skin: false, glasses: false };   // glasses: off, it smears the brows of a photo with none   // colour match in percent; keep the live eyes and mouth; fade out when a hand covers the face
 probe.match = look.match; probe.keep = look.keep;
 // Step S4: smoothing, losing and regaining the face, a hand over the face (the hand model runs only when that option is on).
 const presence = new FacePresence();

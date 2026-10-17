@@ -101,7 +101,7 @@ void main() {
     // a wide blur (twice the colour-match scale) so only the broad light and shade is followed, not patches, noise or the live face's own features
     float live = lum(soften(u_cam, v_scr, u_rl * 2.0)) / max(lightOf(u_cam, u_lp, u_rl * 0.5), 0.03);
     float ref = lum(soften(u_photo, v_uv, u_rp * 2.0)) / max(lightOf(u_photo, u_pp, u_rp * 0.5), 0.03);
-    matched = clamp(p * mix(1.0, clamp(live / max(ref, 0.05), 0.8, 1.25), u_relight), 0.0, 1.0);
+    matched = clamp(p * mix(1.0, clamp(live / max(ref, 0.05), 0.9, 1.12), u_relight * 0.5), 0.0, 1.0);
   } else if (u_match > 0.0) {
     // the photo's detail (what is left when its own blur is taken away) on top of the live face's colour and light
     // limited, so strong edges in the photo (lips, glasses' glare) do not leave bright halos on the live colours
@@ -184,7 +184,7 @@ export class MeshCompositor {
     this.positions = new Float32Array(HEAD_VERTEX_COUNT * 2);   // 468 face points, then the head ring
     this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
-    this.look = { match: 1, keep: 1, skin: 0, glasses: 1, relight: 1 };
+    this.look = { match: 1, keep: 1, skin: 0, glasses: 0, relight: 1 };
     this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
     this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
