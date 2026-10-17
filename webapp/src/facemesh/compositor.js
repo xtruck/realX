@@ -511,7 +511,7 @@ export class MeshCompositor {
     gl.uniform1i(this.uni.u_cam, 1);
     gl.uniform1i(this.uni.u_mask, 2);
     gl.uniform1f(this.uni.u_head, head ? 1 : 0);
-    gl.uniform1f(this.uni.u_ringMatch, RING_MATCH);
+    gl.uniform1f(this.uni.u_ringMatch, this.look.relight ? 1 : RING_MATCH);   // S11f: with the lighting-only match the ring takes the same light as the face, or a step shows along the face outline
     gl.uniform1f(this.uni.u_match, useCamera ? this.look.match : 0);
     gl.uniform1f(this.uni.u_keep, this.look.keep);
     gl.uniform1f(this.uni.u_keepEyes, this.look.keepEyes);
