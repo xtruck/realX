@@ -83,6 +83,7 @@ export class BodyPuppet {
     this.anchorLive = Float32Array.from(this.anchors);     // where each point's nearest spot on its main bone is now (for the cover)
     this.haloPos = Float32Array.from(this.rest);
     this.liveWidth = this.shoulderWidth;                    // the live shoulder width, in the same units
+    this.torsoOnly = false;                                 // S11j: true = the shirt moves as ONE piece (the arm bones are not used): the arm joints of a cropped photo or a webcam are too shaky and tear the shirt into blocks
   }
 
   get count() { return this.rest.length / 2; }
@@ -97,7 +98,7 @@ export class BodyPuppet {
     const torso = boneTransform(this.restBones.torso, live.bones.torso);
     if (!torso) return false;
     // a bone that is not seen (in the photo or live) moves with the torso
-    const tf = BONES.map((name) => (name === "torso" ? torso : boneTransform(this.restBones[name], live.bones[name]) || torso));
+    const tf = BONES.map((name) => (name === "torso" || this.torsoOnly ? torso : boneTransform(this.restBones[name], live.bones[name]) || torso));
     const B = BONES.length, w = this.weights, rest = this.rest, out = this.pos;
     const anchors = this.anchors, anchorLive = this.anchorLive;
     for (let i = 0; i < this.count; i++) {

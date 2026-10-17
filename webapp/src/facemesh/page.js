@@ -216,7 +216,7 @@ function stepHair(now, shown) {
 // shoulders, elbows and wrists. The photo is cut once (shared with Whole head and Hair) and run through the pose model once; the live
 // pose comes from the pose model on the video every POSE_EVERY_MS. Nothing here reads back, stores or sends the camera picture.
 const POSE_EVERY_MS = 70;
-let coverGrow = 0.15, bodyOn = false, puppet = null, bodyItem = null, poseLandmarker = null, poseLast = -Infinity, poseTs = 0, poseSmooth = null, poseJoints = null;
+let coverGrow = 0, bodyOn = false, puppet = null, bodyItem = null, poseLandmarker = null, poseLast = -Infinity, poseTs = 0, poseSmooth = null, poseJoints = null;
 Object.assign(probe, { body: "off", bodyPoints: 0, bodyBones: 0, poseMs: 0, bodyDrawn: 0 });
 
 async function openPoseLandmarker(mode) {
@@ -266,7 +266,7 @@ async function applyBody() {
     if (!geometry) { probe.body = "nopose"; setStatus("No shoulders were found in this photo, so the body and clothes cannot follow you. Use a photo that shows the shoulders."); return; }
     if (!poseLandmarker) poseLandmarker = await openPoseLandmarker("VIDEO");
     if (!bodyOn || gallery.active !== item) return;
-    puppet = geometry; bodyItem = item;
+    puppet = geometry; puppet.torsoOnly = true; bodyItem = item;   // S11j: one-piece shirt
     compositor.setBody(geometry, mask);
     Object.assign(probe, { body: "on", bodyPoints: geometry.stats.points, bodyBones: geometry.stats.bones });
     setStatus("Body and clothes on: the shirt and sleeves of your photo follow your shoulders and arms. Look at the frames per second.");

@@ -183,3 +183,13 @@ test("the cover follows the live shoulder width and is limited, so a bad number 
   assert.ok(a.every(Number.isFinite));
   assert.ok(p.halo(NaN).every(Number.isFinite) && p.halo(-1).every(Number.isFinite));
 });
+
+test("torsoOnly: the shirt moves as one piece even when a forearm is raised (the arm bones are not used)", () => {
+  const raised = { 15: { x: 0.85, y: 0.40 } };         // the live person's left wrist goes up
+  const free = puppet(); free.update(live(raised));
+  const one = puppet(); one.torsoOnly = true; one.update(live(raised));
+  const i = nearest(one, 0.80 * W / H, 0.85);          // a point on the sleeve near the raised wrist, in image heights
+  const still = puppet(); still.update(live({}));
+  assert.ok(Math.hypot(free.pos[2 * i] - still.pos[2 * i], free.pos[2 * i + 1] - still.pos[2 * i + 1]) > 1e-3, "with arm bones the sleeve moves");
+  assert.ok(Math.hypot(one.pos[2 * i] - still.pos[2 * i], one.pos[2 * i + 1] - still.pos[2 * i + 1]) < 1e-6, "torsoOnly: the sleeve stays with the torso");
+});
