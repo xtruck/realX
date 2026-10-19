@@ -31,7 +31,10 @@ def _use_photo(page, path, timeout=60):
     """Choose a photo and give the consent it needs: tick the statement, press Allow, wait until it is drawn."""
     page.set_input_files("#photoFile", str(path))
     _wait(page, "window.__facemesh.photo === 'asking'", timeout)
+    print("photo quality:", page.evaluate("window.__facemesh.photoQuality"))
     page.check("#consentAttest")
+    if page.is_visible("#qualityOverride"):   # S13d: after a failed photo check one extra click is needed, on top of the statement
+        page.check("#qualityOverride")
     page.click("#consentOk")
     _wait(page, "window.__facemesh.photo === 'ready'", timeout)
 
@@ -408,6 +411,9 @@ def test_a_photo_is_used_only_after_a_signed_consent_for_that_exact_photo(stack,
         assert page.is_disabled("#consentOk"), "Allow stays off until the statement is ticked"
         assert page.evaluate("window.__facemesh.drawn") == 0 and page.is_hidden("#badge"), "nothing is drawn while consent is being asked"
         page.check("#consentAttest")
+        if page.is_visible("#qualityOverride"):   # S13d: a failed photo check needs one extra click, and the statement alone is not enough
+            assert page.is_disabled("#consentOk"), "after a failed photo check, Allow needs the extra click as well as the statement"
+            page.check("#qualityOverride")
         assert page.is_enabled("#consentOk")
         page.click("#consentNo")                                   # declining
         assert page.evaluate("window.__facemesh.photo") == "none" and page.is_hidden("#consent")
@@ -417,6 +423,8 @@ def test_a_photo_is_used_only_after_a_signed_consent_for_that_exact_photo(stack,
         page.set_input_files("#photoFile", str(photo))
         _wait(page, "window.__facemesh.photo === 'asking'", 60)
         page.check("#consentAttest")
+        if page.is_visible("#qualityOverride"):
+            page.check("#qualityOverride")
         page.click("#consentOk")
         _wait(page, "window.__facemesh.photo === 'ready' && window.__facemesh.drawn > 0", 60)
         sha = hashlib.sha256(Path(photo).read_bytes()).hexdigest()

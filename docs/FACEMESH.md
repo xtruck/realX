@@ -205,3 +205,7 @@ page. The frame owns the camera: the server releases its own camera and the cont
 mode. Switching to another mode blanks the frame and removes its `src`, which stops the camera. `/facemesh` is sent with
 `X-Frame-Options: SAMEORIGIN` (its CSP already has `frame-ancestors 'self'`), so only this server's own pages can frame it. Photo
 face is not an OBS source yet, so the OBS section is hidden in this mode.
+
+## Clean the edges (S13c)
+
+The live-frame segmenter keeps the privacy rule: the camera goes to MediaPipe as the video element itself, MediaPipe answers with WebGL textures, one small shader folds them into a running value inside MediaPipe's own context, and the compositor uploads that mask canvas (`MeshCompositor.setSeam`, a sixth texture upload, of values and not of the camera). `seammask.js` and `seams.js` may not call `getAsUint8Array`, `getAsFloat32Array`, `readPixels` or any other read-back (a Node test checks it); there is no CPU delegate for this reason.

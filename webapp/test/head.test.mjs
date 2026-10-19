@@ -180,7 +180,7 @@ test("segmentation sees only the user's photo, never the camera: one-shot IMAGE 
   const src = code("page.js");
   assert.ok(!/segmentForVideo|segmentWithResult/.test(src), "no per-frame segmentation");
   assert.ok(src.includes('runningMode: "IMAGE", outputCategoryMask: true'));
-  assert.deepEqual(src.match(/\.segment\([^)]*\)/g), [".segment(item.image)"]);
+  assert.deepEqual(src.match(/\.segment\([^)]*\)/g), [".segment(item.image)", ".segment(image)"]);   // S13d: the photo-quality check feeds the chosen photo (qualityReport), never a video
 });
 
 test("head.js reads no pixels and names no camera", () => {

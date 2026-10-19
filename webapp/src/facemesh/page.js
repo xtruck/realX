@@ -12,11 +12,16 @@ import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
 import { ConsentClient, sha256Hex } from "./consent.js";
 import { labelProblem, readLabel } from "./guard.js";
 import { Gallery, LiveTimer, Toast, formatClock } from "./gallery.js";
+import { photoLuminance } from "./photopixels.js";
+import { foreheadHairShare, photoQuality } from "./photoquality.js";
 import { BODY_CLASSES, HAIR_CLASSES, glassesShare, headMask, maskUsable } from "./head.js";
 import { HairSheet, buildHairSheet, handColliders, similarity } from "./hairsim.js";
 import { buildBodyPuppet, easeJoints, jointsFromPose, smoothJoints } from "./puppet.js";
 import { gripShapes, handFans, handShapes } from "./handlayer.js";
+import { MaskConfidence, holdFactors } from "./confidence.js";
 import { StainSet, bindToPuppet, stainFans } from "./stains.js";
+import { MotionGate, freshness, headZone, seamDue } from "./seams.js";
+import { SeamSegmenter } from "./seammask.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -32,8 +37,8 @@ let detectMs = 0, lastTs = 0, lastVideoTime = -1, measure = null;
 // Numbers only, for the browser test and for anyone reading the page's state: no picture, no landmark.
 const probe = window.__facemesh = { state: "starting", frames: 0, found: 0, fps: 0, foundPct: 0, detectMs: 0, delegate: "", measured: null, photo: "none", drawn: 0, box: null };
 let compositor = null;   // made when the first photo is chosen; draws the photo on the live face
-const look = { match: 100, shape: 70, keep: true, hideHands: false, skin: false, glasses: false, keepEyes: false };   // glasses: off, it smears the brows of a photo with none   // colour match in percent; keep the live eyes and mouth; fade out when a hand covers the face
-probe.match = look.match; probe.keep = look.keep;
+const look = { hold: 100, match: 100, shape: 70, keep: true, hideHands: false, skin: false, glasses: false, keepEyes: false };   // glasses: off, it smears the brows of a photo with none   // colour match in percent; keep the live eyes and mouth; fade out when a hand covers the face
+probe.hold = look.hold; probe.match = look.match; probe.keep = look.keep;
 // Step S4: smoothing, losing and regaining the face, a hand over the face (the hand model runs only when that option is on).
 const presence = new FacePresence();
 const jitter = new JitterMeter();
@@ -365,6 +370,41 @@ function stepStains(now, shown) {
   compositor.setStains(stainFans(stains.circles(scale), aspect));
 }
 
+// Step S13c, "Clean the edges" (on by default): a live-frame segmenter runs a few times a second ON THE GRAPHICS CARD (seammask.js; the
+// camera picture and the masks never reach this code) and the compositor hides live hair and ears round the photo's head with the photo's
+// own background colour. Off, not loaded, failed, stale or slow: nothing is drawn extra, which is the look before this step.
+let seamOn = true, seamSeg = null, seamLoading = false, seamGaveUp = false, seamAt = -Infinity;
+const seamState = { last: -Infinity, cost: 0 };
+const seamMotion = new MotionGate();
+Object.assign(probe, { seam: "on", seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
+
+async function loadSeams() {
+  if (seamSeg || seamLoading || seamGaveUp) return;
+  seamLoading = true; probe.seam = "loading";
+  try { seamSeg = await SeamSegmenter.open(); probe.seam = seamOn ? "on" : "off"; }
+  catch (err) { seamGaveUp = true; probe.seam = "unavailable"; probe.seamError = String((err && err.message) || err).slice(0, 160); }
+  finally { seamLoading = false; }
+}
+
+function closeSeams() { if (seamSeg) seamSeg.close(); seamSeg = null; }
+
+// Called every drawn frame; does model work only when it is due (seams.js seamDue), and always sets how much to draw.
+function stepSeams(now, shown) {
+  if (!compositor) return;
+  if (!seamOn || !shown) { compositor.setSeamAmount(0, null); seamMotion.update(null, now); probe.seamAmount = 0; return; }
+  if (!seamSeg) { loadSeams(); compositor.setSeamAmount(0, null); probe.seamAmount = 0; return; }
+  if (!seamSeg.failed && seamDue(now, seamState, detectMs)) {
+    seamState.last = now;
+    if (seamSeg.run(video)) { compositor.setSeam(seamSeg.canvas); seamAt = now; probe.seamAnswers = seamSeg.answers; }
+    seamState.cost = seamSeg.costMs; probe.seamMs = seamSeg.costMs;
+    if (seamSeg.failed) { probe.seam = "unavailable"; probe.seamError = String(seamSeg.error || "").slice(0, 160); }
+  }
+  const box = faceBox(shown.landmarks);
+  const amount = seamSeg.failed ? 0 : freshness(now - seamAt) * seamMotion.update(box, now);
+  compositor.setSeamAmount(amount, headZone(box));
+  probe.seamAmount = amount;
+}
+
 function setStatus(text) { $("status").textContent = text; }
 
 function explain(err) {
@@ -436,6 +476,49 @@ function closeHands() {
   handLandmarker = null; hands = []; handLast = -Infinity;
 }
 
+// S13d: advice about the chosen PHOTO (its own pixels, never the camera's): landmarks plus a small luminance sample of the picture.
+// Glasses and forehead hair are only judged when the segmenter is already loaded (the 16 MB model is not fetched for this).
+function qualityReport(image, faces) {
+  const iw = image.naturalWidth || image.width, ih = image.naturalHeight || image.height;
+  const sample = photoLuminance(image, (on) => { probe.readingPhotoMask = on ? 1 : 0; });   // the PHOTO's pixels, flagged for the privacy tests
+  const extra = { imageWidth: iw, imageHeight: ih, faceCount: faces.length };
+  if (segmenter && faces[0]) {
+    let result = null;
+    try {
+      result = segmenter.segment(image);
+      const cat = result.categoryMask;
+      probe.readingPhotoMask = 1;
+      let classes = null;
+      try { classes = cat ? cat.getAsUint8Array() : null; } finally { probe.readingPhotoMask = 0; }
+      if (classes) {
+        extra.glassesShare = glassesShare(classes, cat.width, cat.height, faces[0], iw / ih);
+        extra.foreheadHair = foreheadHairShare(classes, cat.width, cat.height, faces[0]);
+      }
+    } catch (err) { /* glasses and hair stay unchecked */ } finally { if (result) { try { result.close(); } catch (e) { /* nothing to free */ } } }
+  }
+  const report = photoQuality(faces[0], sample, extra);
+  probe.photoQuality = { score: report.score, worst: report.worst };
+  const box = $("photoQuality");
+  box.replaceChildren();
+  const h = document.createElement("h2");
+  h.textContent = `Photo check: ${report.score} out of 100`;
+  box.appendChild(h);
+  const ul = document.createElement("ul");
+  for (const c of report.checks) {
+    if (c.level === "pass" || c.level === "skip") continue;
+    const li = document.createElement("li");
+    li.className = c.level; li.textContent = `${c.level === "fail" ? "Problem" : "Tip"}: ${c.message}`;
+    ul.appendChild(li);
+  }
+  if (!ul.children.length) { const li = document.createElement("li"); li.textContent = "Nothing to fix that we can see."; ul.appendChild(li); }
+  box.appendChild(ul);
+  const note = document.createElement("p");
+  note.textContent = "This is only advice. You still confirm the statement below before the photo is used.";
+  box.appendChild(note);
+  box.hidden = false;
+  return report;
+}
+
 // The photo: chosen by the user, shown only in this page (never uploaded, never stored), read by a second, short-lived
 // face model that tells where the face is in it. The photo must be of the person using this page.
 async function usePhoto(file) {
@@ -450,12 +533,13 @@ async function usePhoto(file) {
     await image.decode();
     finder = await openLandmarker("IMAGE", 2);
     const faces = finder.detect(image).faceLandmarks || [];
+    const report = qualityReport(image, faces);   // S13d: advice only, shown before the consent question; it never replaces it
     const verdict = checkPhotoFaces(faces);
     if (!verdict.ok) throw new Error(verdict.reason);
     // consent first: a signed record for this exact photo (its hash; the photo itself stays here), or the photo is not used
     const sha = await sha256Hex(file);
     client = new ConsentClient();                   // every photo has its own consent
-    if (!(await askConsent(sha, client))) { setStatus("The photo is not used: no consent was given."); settleFlow(); return; }
+    if (!(await askConsent(sha, client, report.worst === "fail"))) { setStatus("The photo is not used: no consent was given."); settleFlow(); return; }
     if (!compositor) compositor = new MeshCompositor(faceCanvas, mesh);
     compositor.setPhoto(image, faces[0]);           // throws (and changes nothing) if the photo is too large for this graphics card
     const item = gallery.add({ name: file.name, sha, client, image, landmarks: faces[0], url });
@@ -592,19 +676,23 @@ function pruneInactive() {
 }
 
 // Shows the statement and waits for the user to confirm it (or not). Resolves true once the server has signed the consent.
-async function askConsent(sha, client) {
+async function askConsent(sha, client, needOverride = false) {
   const terms = await client.terms();
   const attest = $("consentAttest"), ok = $("consentOk"), no = $("consentNo"), panel = $("consent");
   $("consentTerms").textContent = terms.attestation;
+  const over = $("qualityOverride");
+  over.checked = false; $("qualityOverrideRow").hidden = !needOverride;   // S13d: after a failed photo check one extra click is needed, on top of the statement
+  const ready = () => attest.checked && (!needOverride || over.checked);
   attest.checked = false; ok.disabled = true; panel.hidden = false;
   probe.photo = "asking"; probe.consent = "asked";
   setStatus("Read the statement and confirm it to use this photo.");
   return new Promise((resolve) => {
-    const finish = (value) => { cancelAsk = null; panel.hidden = true; attest.onchange = ok.onclick = no.onclick = null; resolve(value); };
+    const finish = (value) => { cancelAsk = null; panel.hidden = true; $("qualityOverrideRow").hidden = true; attest.onchange = over.onchange = ok.onclick = no.onclick = null; resolve(value); };
     cancelAsk = () => finish(false);                // Stop closes the question
-    attest.onchange = () => { ok.disabled = !attest.checked; };
+    attest.onchange = over.onchange = () => { ok.disabled = !ready(); };
     no.onclick = () => finish(false);
     ok.onclick = async () => {
+      if (!ready()) return;
       ok.disabled = true;
       try { await client.issue(sha, Number($("consentHours").value), attest.checked); finish(true); }
       catch (err) { setStatus(`Consent was refused: ${err && err.message ? err.message : err}`); finish(false); }
@@ -741,6 +829,7 @@ function draw(landmarks) {
   }
 }
 
+const maskConf = new MaskConfidence();   // S13e
 let lastDet = null, prevDet = null, skipNext = false;
 const SKIP_ABOVE_MS = 28;
 function frame() {
@@ -792,14 +881,20 @@ function frame() {
         stepStains(now, shown);                    // spills and stains on the shirt (S10g)
         if (bodyOn) stepBody(now, shown);          // the body and dress for this frame (drawn first, behind the hair and the face)
         if (hairOn) stepHair(now, shown);          // the hair sheet for this frame (drawn behind the face by the compositor)
+        stepSeams(now, shown);                     // S13c: clean the seams between the photo's head and the live one
         // the video goes to the graphics card for colour matching only: see compositor.js
-        probe.drawn = compositor.draw(shown ? shown.landmarks : null, video, shown ? shown.opacity : 0);
+        // S13e: the photo gives way to the live picture where it would not hold (head turned far, mouth very wide, face partly out of frame)
+        const conf = maskConf.update(shown ? shown.landmarks : null, video.videoWidth / Math.max(1, video.videoHeight));
+        const hold = holdFactors(look.hold / 100, conf);
+        probe.confidence = conf.confidence; probe.holdPhoto = hold.photo; probe.holdRing = hold.ring;
+        probe.drawn = compositor.draw(shown ? shown.landmarks : null, video, shown ? shown.opacity * hold.photo : 0, hold.ring);
         probe.shapeUsed = compositor.shapeUsed || 0;
         probe.headDrawn = compositor.headActive;
         probe.hairDrawn = compositor.hairDrawn;
         probe.bodyDrawn = compositor.bodyDrawn;
         probe.liveDrawn = compositor.liveDrawn;
         probe.stainsDrawn = compositor.stainsDrawn;
+        probe.seamDrawn = compositor.seamDrawn;
       }
     }
     tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
@@ -890,6 +985,7 @@ function wireControls() {
     probe.fullscreen = document.fullscreenElement !== null;
     setStatus(probe.fullscreen ? "Full screen: press Esc to leave." : "Left full screen.");
   });
+  $("hold").addEventListener("input", (e) => { look.hold = Number(e.target.value); $("holdValue").textContent = `${look.hold}%`; applyLook(); });   // S13e
   $("shape").addEventListener("input", (e) => { look.shape = Number(e.target.value); $("shapeValue").textContent = `${look.shape}%`; applyLook(); });   // S11l
   $("match").addEventListener("input", (e) => { look.match = Number(e.target.value); $("matchValue").textContent = `${look.match}%`; applyLook(); });
   $("keepFace").addEventListener("click", (e) => {
@@ -948,6 +1044,13 @@ function wireControls() {
     look.skin = !look.skin; e.currentTarget.setAttribute("aria-pressed", String(look.skin)); applyLook();
     setStatus(look.skin ? "Your hands take the photo's skin tone (it shows with \"Show my hands on top\")." : "Your hands keep their own colour.");
   });
+  $("seamBtn").addEventListener("click", (e) => {            // S13c: hide the live hair and ears that peek out round the photo's head
+    seamOn = !seamOn; e.currentTarget.setAttribute("aria-pressed", String(seamOn));
+    probe.seam = seamOn ? (seamSeg ? "on" : "loading") : "off";
+    if (seamOn) seamGaveUp = false;                           // a second try is allowed when the user asks for it again
+    else { if (compositor) compositor.setSeamAmount(0, null); closeSeams(); }
+    setStatus(seamOn ? "Clean the edges is on: live hair and ears round the photo's head are hidden." : "Clean the edges is off.");
+  });
   $("handReach").addEventListener("input", (e) => {
     handReach = Number(e.currentTarget.value) / 100;
     $("handReachValue").textContent = `${e.currentTarget.value}%`;
@@ -955,6 +1058,10 @@ function wireControls() {
   $("hairReach").addEventListener("input", (e) => {          // S12b: the photo's hair grows to cover more of your own
     if (compositor) compositor.setHairReach(Number(e.currentTarget.value) / 100);
     $("hairReachValue").textContent = `${e.currentTarget.value}%`;
+  });
+  $("webcamLook").addEventListener("input", (e) => {         // S13b: the photo takes on the webcam's softness, grain and grade (measured on the GPU)
+    if (compositor) compositor.setWebcamLook(Number(e.currentTarget.value) / 100);
+    $("webcamLookValue").textContent = `${e.currentTarget.value}%`;
   });
   $("mouthPatch").addEventListener("input", (e) => {         // S12c: the live mouth patch pulls in, so it does not read bigger than the photo's lips
     if (compositor) compositor.setMouthShrink(Number(e.currentTarget.value) / 100);

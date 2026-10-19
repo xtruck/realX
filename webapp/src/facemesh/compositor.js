@@ -85,6 +85,47 @@ float glassesBand() {
   return band * (1.0 - max(eyeA, eyeB));
 }
 
+// ---- S13b: make the photo look filmed by the live webcam. All measuring is done here on the GPU; no camera pixel is ever read back to JavaScript. ----
+uniform float u_webcam; uniform vec2 u_camTexel; uniform float u_seed;   // strength 0..1 (0 = off, exactly the old picture), one camera texel, a number that changes every frame
+float hf(sampler2D t, vec2 c, vec2 e) {   // fine detail of the luminance at c: the centre against the mean of its four neighbours e away
+  return abs(lum(texture2D(t, c).rgb) - 0.25 * (lum(texture2D(t, c + vec2(e.x, 0.0)).rgb) + lum(texture2D(t, c - vec2(e.x, 0.0)).rgb) + lum(texture2D(t, c + vec2(0.0, e.y)).rgb) + lum(texture2D(t, c - vec2(0.0, e.y)).rgb)));
+}
+vec3 frameMean(sampler2D t) {   // 3 x 3 grid over the whole picture: its average colour
+  vec3 s = vec3(0.0);
+  for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) s += texture2D(t, vec2(0.2 + 0.3 * float(i), 0.2 + 0.3 * float(j))).rgb;
+  return s / 9.0;
+}
+float frameSpread(sampler2D t, float m) {   // and the spread of its brightness (contrast)
+  float s = 0.0;
+  for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) { float d = lum(texture2D(t, vec2(0.2 + 0.3 * float(i), 0.2 + 0.3 * float(j))).rgb) - m; s += d * d; }
+  return sqrt(s / 9.0);
+}
+vec3 webcamLook(vec3 c, float visible) {
+  float k = u_webcam * visible;
+  // 1. blur: live fine detail against the photo's, at the same fraction of the face width, on the cheeks. A softer webcam softens the photo.
+  vec2 el = u_rl * 0.25, ep = u_rp * 0.25;
+  float liveHf = 0.25 * (hf(u_cam, u_lp[2], el) + hf(u_cam, u_lp[3], el) + hf(u_cam, u_lp[2] + el, el) + hf(u_cam, u_lp[3] - el, el));
+  float photoHf = 0.25 * (hf(u_photo, u_pp[2], ep) + hf(u_photo, u_pp[3], ep) + hf(u_photo, u_pp[2] + ep, ep) + hf(u_photo, u_pp[3] - ep, ep));
+  float sharp = clamp(liveHf / max(photoHf, 0.004), 0.35, 1.0);              // below 1: the live face is softer than the photo
+  c = mix(c, soften(u_photo, v_uv, u_rp * 0.3), (1.0 - sharp) * 0.8 * k);
+  // 3. grade: contrast and white balance of the whole live frame against the whole photo, nudged a little (at most 12% and 4%), the photo's face level kept
+  vec3 mc = frameMean(u_cam), mp = frameMean(u_photo);
+  float con = clamp(frameSpread(u_cam, lum(mc)) / max(frameSpread(u_photo, lum(mp)), 0.02), 0.88, 1.12);
+  vec3 wb = clamp((mc / max(lum(mc), 0.02)) / max(mp / max(lum(mp), 0.02), vec3(0.05)), 0.96, 1.04);
+  float pivot = lightOf(u_photo, u_pp, u_rp * 0.5);
+  c = mix(vec3(pivot), c, mix(1.0, con, 0.5 * k));
+  c *= mix(vec3(1.0), wb, 0.5 * k);
+  // 2. grain: the live frame's own noise, measured at texel scale on two flat cheek patches, added fresh every frame; a little less in the highlights, none in pure black
+  float noise = 0.25 * (hf(u_cam, u_lp[2], u_camTexel) + hf(u_cam, u_lp[3], u_camTexel) + hf(u_cam, u_lp[2] + el, u_camTexel) + hf(u_cam, u_lp[3] - el, u_camTexel));
+  float amp = clamp(noise, 0.0, 0.04) * 1.4;
+  float y = lum(c);
+  float n = fract(sin(dot(v_scr * 997.0 + vec2(u_seed, u_seed * 1.7), vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+  float n2 = fract(sin(dot(v_scr * 613.0 + vec2(u_seed * 2.3, u_seed), vec2(39.346, 11.135))) * 24634.6345) - 0.5;
+  c += (n * vec3(1.0) + 0.3 * n2 * vec3(1.0, -0.5, 0.8)) * 2.0 * amp * mix(1.0, 0.6, smoothstep(0.4, 0.95, y)) * smoothstep(0.0, 0.06, y) * k;
+  return clamp(c, 0.0, 1.0);
+}
+// ---- end S13b ----
+
 void main() {
   vec3 photo = texture2D(u_photo, v_uv).rgb;
   vec3 matched = photo;
@@ -119,6 +160,7 @@ void main() {
   float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
   float ringW = clamp(v_ring * 4.0, 0.0, 1.0);   // S11h: v_ring runs 0 to 1 across the inner band of the ring; the mask must act on all of it
   float head = mix(1.0, smoothstep(0.62, 0.92, texture2D(u_mask, v_uv).r) * inside, ringW * u_head);   // S11h: the edge is taken from inside the head, or the photo's background shows as a light halo
+  if (u_webcam > 0.0 && u_match > 0.0) colour = webcamLook(colour, step(0.002, smoothstep(0.0, 1.0, v_fade) * u_opacity * head));   // S13b: never where nothing is drawn
   float keepAmt = u_keep * smoothstep(0.35, 1.0, v_keep) + u_keepEyes * smoothstep(0.35, 1.0, -v_keep);   // S11e: the inside of the mouth (+1) and of the eyes (-1) stay live when asked; S12d: the wider fade also softens the patch edge at the cheeks
   if (u_relight > 0.0 && u_match > 0.0 && keepAmt > 0.0) {      // the kept live eyes and mouth are drawn by us, in the photo's skin tone
     colour = mix(colour, liveKept(texture2D(u_cam, v_scr).rgb), keepAmt);
@@ -136,7 +178,9 @@ void main() {
   float neckX = 1.0 - smoothstep(0.6, 0.85, abs(v_uv.x - (u_pp[2].x + u_pp[3].x) * 0.5) / max(abs(u_pp[3].x - u_pp[2].x), 0.02));   // only as wide as a neck, so a beige wall beside it is left alone
   if (u_relight > 0.0 && u_head > 0.0 && v_ring > 0.0 && v_uv.y > u_pp[4].y - 0.02 && u_match > 0.0) {
     vec3 cam = texture2D(u_cam, v_scr).rgb;
-    float w = skinWeight(cam) * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
+    // S13a: the skin test runs on a blurred live picture. On the raw pixel the camera's own 8x8 compression blocks flipped it from pixel to pixel
+    // and the neck showed as a checkerboard (seen on a real webcam); the colour itself stays the live pixel.
+    float w = skinWeight(soften(u_cam, v_scr, u_rl)) * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
     if (w > 0.0) {
       float a = max(alpha, w);
       colour = mix(liveKept(cam), colour, alpha / max(a, 1e-4));
@@ -198,6 +242,40 @@ const STAIN_FRAG = `precision mediump float;
 varying float v_alpha; varying vec3 v_color; uniform float u_opacity;
 void main() { float a = v_alpha * u_opacity; gl_FragColor = vec4(v_color * a, a); }`;
 
+/** S13b: a slider value (0..1) made safe: anything that is not a number is 0, the rest is clamped. */
+export function lookStrength(v) { const n = Number(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0; }
+
+// --- S13c: clean seams (live hair and ears round the photo's head) --------------------------------------------------------------
+// A soft patch of the photo's own background colour drawn UNDER the photo's layers wherever the live-frame segmenter (seammask.js) says
+// there is live hair or body skin near the head, so the live hair does not show as a second hairline beside the photo's. It uses only the
+// mask texture (never the camera picture) and the photo. The mask is the running value over several answers; the gate and the taps below
+// make a soft edge. With the option off, no mask, or a stale one, this is not drawn at all.
+const SEAM_FRAG = `#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+varying vec2 v_scr; varying float v_alpha; uniform sampler2D u_seam; uniform sampler2D u_photo; uniform float u_amount; uniform float u_opacity;
+uniform vec4 u_zone;   // centre x, y and radii x, y of the area round the head where it may paint
+uniform vec4 u_face;   // half-width and half-height of the live face (left alone), the chin line, the width of the skin cut-off
+uniform vec2 u_tap;    // one tap step in screen units
+float seamGate(float v) { return smoothstep(0.35, 0.65, v); }   // SEAM.lo / SEAM.hi in seams.js
+void main() {
+  vec2 mean = vec2(0.0), reach = vec2(0.0);
+  for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
+    vec2 v = texture2D(u_seam, v_scr + vec2(float(i), float(j)) * u_tap).rg;
+    mean += v; reach = max(reach, v);
+  }
+  vec2 g = vec2(seamGate(mix(mean.x / 9.0, reach.x, 0.35)), seamGate(mix(mean.y / 9.0, reach.y, 0.35)));   // soft edge, a little reach
+  float zone = 1.0 - smoothstep(0.8, 1.0, length((v_scr - u_zone.xy) / u_zone.zw));
+  float face = smoothstep(0.85, 1.1, length((v_scr - u_zone.xy) / u_face.xy));
+  float above = 1.0 - smoothstep(u_face.z - 0.02, u_face.z + u_face.w, v_scr.y);
+  float a = max(g.x, g.y * above) * zone * face * u_amount * u_opacity * v_alpha;
+  vec3 fill = (texture2D(u_photo, vec2(0.04, 0.05)).rgb + texture2D(u_photo, vec2(0.96, 0.05)).rgb + texture2D(u_photo, vec2(0.5, 0.02)).rgb
+             + texture2D(u_photo, vec2(0.04, 0.4)).rgb + texture2D(u_photo, vec2(0.96, 0.4)).rgb) / 5.0;   // the photo's background, from its edges
+  gl_FragColor = vec4(fill * a, a);
+}`;
+
 export class MeshCompositor {
   /** canvas: the WebGL canvas; mesh: buildMesh()'s result. Throws when WebGL is not available. */
   constructor(canvas, mesh) {
@@ -208,6 +286,8 @@ export class MeshCompositor {
     this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
     this.look = { match: 1, shape: 0.5, keep: 1, keepEyes: 0, skin: 0, glasses: 0, relight: 1 };
+    this.webcamLook = 0.6;            // S13b: how much the photo takes on the webcam's softness, noise and grade (0 = the old picture)
+    this.frameNo = 0; this.camTexel = [1 / 640, 1 / 480];   // S13b: one camera pixel, noted in uploadCamera
     this.hairReach = REACH.top;       // S12b: how far the head ring reaches above the head (the photo's UV ring stays at the default, which is what makes the photo's hair grow with it)
     this.neck = { anchor: null, amount: 0.6 };   // S12a: where the photo's neck hangs from; null = the face's own middle
     this.mouthShrink = 0.5;           // S12c: how much the live mouth patch pulls in towards the middle of the mouth (0 = the old full patch)
@@ -218,7 +298,7 @@ export class MeshCompositor {
     gl.useProgram(this.program);
     const attr = (name) => gl.getAttribLocation(this.program, name);
     this.loc = { pos: attr("a_pos"), uv: attr("a_uv"), fade: attr("a_fade"), keep: attr("a_keep"), ring: attr("a_ring") };
-    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_keepEyes", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
+    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_keepEyes", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp", "u_webcam", "u_camTexel", "u_seed"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
     this.posBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.positions.byteLength, gl.DYNAMIC_DRAW);
@@ -255,6 +335,52 @@ export class MeshCompositor {
     this.stainUni = { u_opacity: gl.getUniformLocation(this.stainProgram, "u_opacity") };
     this.stains = { posBuffer: gl.createBuffer(), alphaBuffer: gl.createBuffer(), colorBuffer: gl.createBuffer(), indexBuffer: gl.createBuffer(), indexCount: 0, on: false };
     this.stainsDrawn = 0;
+    // S13c: clean seams
+    this.seamProgram = link(gl, LIVE_VERT, SEAM_FRAG);
+    this.seamLoc = { pos: gl.getAttribLocation(this.seamProgram, "a_pos"), alpha: gl.getAttribLocation(this.seamProgram, "a_alpha") };
+    this.seamUni = Object.fromEntries(["u_seam", "u_photo", "u_amount", "u_opacity", "u_zone", "u_face", "u_tap"].map((n) => [n, gl.getUniformLocation(this.seamProgram, n)]));
+    this.seam = { tex: gl.createTexture(), ready: false, amount: 0, zone: null, posBuffer: filled(gl, new Float32Array([0, 0, 0, 1, 1, 1, 1, 0])), alphaBuffer: filled(gl, new Float32Array([1, 1, 1, 1])) };
+    this.seamDrawn = 0;
+  }
+
+  /** S13c: take the segmenter's answer (its hidden canvas, seammask.js) as the seam mask texture. Done once per answer, a few times a second. */
+  setSeam(source) {
+    const gl = this.gl;
+    if (!source) return;
+    gl.activeTexture(gl.TEXTURE7);
+    gl.bindTexture(gl.TEXTURE_2D, this.seam.tex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);   // the mask the segmenter drew: values only, no camera pixels
+    setSampling(gl);
+    this.seam.ready = true;
+  }
+
+  /** S13c: how much of the cleaning to draw, 0..1 (0 = the old look), and the zone round the head (seams.js headZone()). */
+  setSeamAmount(amount, zone) {
+    const a = Number(amount);
+    this.seam.amount = Number.isFinite(a) ? Math.min(1, Math.max(0, a)) : 0;
+    this.seam.zone = zone || null;
+  }
+
+  clearSeam() { this.seam.ready = false; this.seam.amount = 0; this.seamDrawn = 0; }
+
+  _drawSeam(opacity, box, aspect) {
+    const gl = this.gl, z = this.seam.zone;
+    if (!this.seam.ready || !z || !(this.seam.amount > 0.002)) return 0;
+    gl.useProgram(this.seamProgram);
+    this.point(this.seam.posBuffer, this.seamLoc.pos, 2);
+    this.point(this.seam.alphaBuffer, this.seamLoc.alpha, 1);
+    gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D, this.seam.tex);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photo);
+    gl.uniform1i(this.seamUni.u_seam, 7);
+    gl.uniform1i(this.seamUni.u_photo, 0);
+    gl.uniform1f(this.seamUni.u_amount, this.seam.amount);
+    gl.uniform1f(this.seamUni.u_opacity, Math.min(1, opacity));
+    gl.uniform4f(this.seamUni.u_zone, z.cx, z.cy, z.rx, z.ry);
+    gl.uniform4f(this.seamUni.u_face, z.fx, z.fy, z.chin, 0.1 * box.h);
+    gl.uniform2f(this.seamUni.u_tap, 0.06 * box.w, 0.06 * box.w * aspect);
+    gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+    return 1;
   }
 
   /** The stain circles for this frame (stains.js stainFans()'s result), or null for none. */
@@ -448,6 +574,9 @@ export class MeshCompositor {
     if (Number.isFinite(v)) this.hairReach = Math.min(1.2, Math.max(0.3, v));
   }
 
+  /** S13b: how much the photo looks filmed by the live webcam, 0 (off, the old picture) to 1. */
+  setWebcamLook(v) { this.webcamLook = lookStrength(v); }
+
   /** S12a: where the photo's neck hangs from. `anchor` is [x, y] normalised (the middle of the live shoulders) or null (the face's own middle stands in); `amount` 0..1 is how much the neck yields. */
   setNeckAnchor(anchor, amount = 0.6) {
     const a = Math.min(1, Math.max(0, Number(amount) || 0));
@@ -539,7 +668,7 @@ export class MeshCompositor {
    * `opacity` (0..1) fades the whole photo, for a face that is being lost or covered; at 0 nothing is drawn.
    * Returns the number of triangles drawn: 0 when there is no photo, no face or no opacity.
    */
-  draw(liveLandmarks, camera = null, opacity = 1) {
+  draw(liveLandmarks, camera = null, opacity = 1, ringFactor = 1) {
     const gl = this.gl;
     this.clear();
     if (!this.photo || !(opacity > 0.002) || !flatten(liveLandmarks, this.positions)) return 0;
@@ -559,6 +688,7 @@ export class MeshCompositor {
       } else head = false;
     }
     this.hairDrawn = 0; this.bodyDrawn = 0;
+    this.seamDrawn = this._drawSeam(opacity, box, aspect);                                  // S13c: first of all, under the photo's own layers
     if (this.body && this.body.on) this.bodyDrawn = this._drawLayer(this.body, opacity);   // the body and dress go down first,
     if (this.hair && this.hair.on) this.hairDrawn = this._drawLayer(this.hair, opacity);   // then the hair over them, all behind the face
     this.stainsDrawn = this.stains.on ? this._drawStains(opacity) : 0;                        // spills and stains on the shirt
@@ -592,11 +722,19 @@ export class MeshCompositor {
     const pe = this.photoEyes;
     gl.uniform1f(this.uni.u_glasses, this.look.glasses);
     gl.uniform1f(this.uni.u_relight, this.look.relight);
+    this.frameNo = (this.frameNo + 1) % 997;                                  // S13b: the grain changes every frame
+    gl.uniform1f(this.uni.u_webcam, useCamera ? this.webcamLook : 0);
+    gl.uniform1f(this.uni.u_seed, this.frameNo * 0.37 + 1.0);
+    gl.uniform2f(this.uni.u_camTexel, this.camTexel[0], this.camTexel[1]);
     const lp = new Float32Array(10); SPOTS.forEach((v, i) => { lp[i * 2] = this.positions[v * 2]; lp[i * 2 + 1] = this.positions[v * 2 + 1]; });
     gl.uniform2fv(this.uni.u_lp, lp); gl.uniform2fv(this.uni.u_pp, this.photoSpots);
     gl.uniform2f(this.uni.u_eyeA, pe[0], pe[1]); gl.uniform2f(this.uni.u_eyeB, pe[2], pe[3]); gl.uniform2f(this.uni.u_eyeAsp, pe[4], 1);
     const triangles = TRIANGLE_COUNT + (head ? RING_TRIANGLES : 0);
-    gl.drawElements(gl.TRIANGLES, triangles * 3, gl.UNSIGNED_SHORT, 0);
+    if (head && ringFactor < 1) {                  // S13e: on a turned head the ring (hair, ear, neck) fades before the face: two draws, the ring with its own opacity
+      gl.drawElements(gl.TRIANGLES, TRIANGLE_COUNT * 3, gl.UNSIGNED_SHORT, 0);
+      const ringOpacity = Math.min(1, opacity) * Math.max(0, ringFactor);
+      if (ringOpacity > 0.002) { gl.uniform1f(this.uni.u_opacity, ringOpacity); gl.drawElements(gl.TRIANGLES, RING_TRIANGLES * 3, gl.UNSIGNED_SHORT, TRIANGLE_COUNT * 6); }
+    } else gl.drawElements(gl.TRIANGLES, triangles * 3, gl.UNSIGNED_SHORT, 0);
     this.liveDrawn = liveNow ? this._drawLive(opacity) : 0;                // your own hands go over everything, face included
     return triangles;
   }
@@ -616,6 +754,7 @@ export class MeshCompositor {
     gl.bindTexture(gl.TEXTURE_2D, this.camera);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    if (video.videoWidth > 0 && video.videoHeight > 0) this.camTexel = [1 / video.videoWidth, 1 / video.videoHeight];   // S13b: the size only, never the pixels
   }
 
   dispose() {
@@ -624,6 +763,7 @@ export class MeshCompositor {
     for (const b of [this.live.posBuffer, this.live.alphaBuffer, this.live.indexBuffer, this.stains.posBuffer, this.stains.alphaBuffer, this.stains.colorBuffer, this.stains.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.stainProgram);
     gl.deleteProgram(this.liveProgram); gl.deleteProgram(this.hairProgram);
+    gl.deleteProgram(this.seamProgram); gl.deleteTexture(this.seam.tex); gl.deleteBuffer(this.seam.posBuffer); gl.deleteBuffer(this.seam.alphaBuffer);
     for (const t of [this.photo, this.camera, this.maskTex]) if (t) gl.deleteTexture(t);
     for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.headFadeBuffer, this.ringBuffer, this.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.program);

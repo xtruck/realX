@@ -14,6 +14,8 @@
   #stage.mirror { transform: scaleX(-1); }
   #wrap { position: relative; }
   #badge { position: absolute; left: 10px; bottom: 10px; background: rgba(12, 20, 27, .75); color: #fff; font-size: 12px; padding: 4px 10px; border-radius: 999px; }
+  #photoQuality { background: #1b1f24; border: 1px solid #3a4c5a; border-radius: 10px; padding: 8px 14px; margin: 10px 0; }
+  #photoQuality h2 { font-size: 14px; margin: 0 0 4px; } #photoQuality ul { margin: 4px 0; padding-left: 20px; } #photoQuality .warn { color: #f0c36a; } #photoQuality .fail { color: #ff8a80; }
   #consent { background: #14212b; border: 1px solid #3a4c5a; border-radius: 10px; padding: 10px 14px; margin: 10px 0; }
   #consent h2 { font-size: 15px; margin: 0 0 6px; } #consent label { display: block; margin: 6px 0; }
   #cam, #face, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
@@ -69,6 +71,7 @@
     <button id="headBtn" type="button" aria-pressed="false" aria-describedby="headNote">Whole head (hair, ears, neck)</button>
     <button id="handsTop" type="button" aria-pressed="false" aria-describedby="handsNote">Show my hands on top</button>
     <button id="eyesBtn" type="button" aria-pressed="false">Use my live eyes</button>
+    <button id="seamBtn" type="button" aria-pressed="true">Clean the edges</button>
     <button id="glassesBtn" type="button" aria-pressed="false">Hide the photo's glasses</button>
     <button id="skinBtn" type="button" aria-pressed="false" aria-describedby="handsNote">Match my hands' skin to the photo</button>
     <label>Hand reach <input id="handReach" type="range" min="50" max="200" value="100" step="10"> <span id="handReachValue">100%</span></label>
@@ -82,7 +85,9 @@
     <button id="hairBtn" type="button" aria-pressed="false" aria-describedby="hairNote">Hair that moves</button>
     <label>Hair reach <input id="hairReach" type="range" min="30" max="100" value="55" step="5"> <span id="hairReachValue">55%</span></label>
     <button id="keepFace" type="button" aria-pressed="true">Keep my eyes and mouth</button>
+    <label>Match the webcam's look <input id="webcamLook" type="range" min="0" max="100" value="60" step="10"> <span id="webcamLookValue">60%</span></label>
     <label>Mouth patch <input id="mouthPatch" type="range" min="0" max="100" value="50" step="10"> <span id="mouthPatchValue">50%</span></label>
+    <label>Hold the mask when turning <input id="hold" type="range" min="0" max="100" value="100" step="10"> <span id="holdValue">100%</span></label>
     <label>Photo's face shape <input id="shape" type="range" min="0" max="100" value="70" step="5"> <span id="shapeValue">70%</span></label>
     <label>Colour match <input id="match" type="range" min="0" max="100" value="100" step="5"> <span id="matchValue">100%</span></label>
     <button id="wire" type="button" aria-pressed="true">Mesh lines</button>
@@ -104,6 +109,7 @@
   <p class="note" id="bodyNote">Body and clothes (off by default): the shirt and sleeves of your photo follow your shoulders and arms and are sized to you.
     It cuts the body and clothes out of your <em>photo</em> (not the camera), finds the photo's shoulders once, and runs the body model on the live video about 14 times a second, so watch the frames per second.
     It works best when your photo shows the shoulders. It is a flat cut-out bent along the arms, not a 3D body. <em>Cover my clothes</em> draws a slightly bigger copy of the photo's shirt underneath to hide the edges of your own clothes (0 turns it off); it does not repaint the background behind you, so a big cover looks like a puffy shirt.</p>
+  <p class="note" id="webcamLookNote"><em>Match the webcam's look</em>: the photo is softened, given your webcam's grain and nudged towards its contrast and white balance, so it looks filmed by the same camera. Measured on the graphics card from your live picture; 0% draws the photo as it is. It never changes the photo's skin colour by more than a few percent.</p>
   <p class="note" id="hairReachNote"><em>Hair reach</em> (with Whole head): how far the photo's head reaches above your face. Raise it when more of your own hair shows round the photo's hairstyle — the photo's hair is drawn taller to cover it. It changes nothing below the ears.</p>
   <p class="note" id="mouthNote"><em>Mouth patch</em> is how much of your live mouth shows when it is open. Lower values pull the patch in towards the middle, which stops your own lips reading bigger and pinker than the photo's; 0% restores the full patch.</p>
   <div id="gallery" hidden role="group" aria-label="Your photos"></div>
@@ -114,9 +120,11 @@
     <div>runs on<b id="delegate">-</b></div>
     <div>photo consent<b id="consentState">none</b></div>
   </div>
+  <div id="photoQuality" hidden role="status" aria-live="polite"></div>
   <div id="consent" hidden role="group" aria-labelledby="consentTitle">
     <h2 id="consentTitle">Use this photo?</h2>
     <p id="consentTerms"></p>
+    <label id="qualityOverrideRow" hidden><input id="qualityOverride" type="checkbox"> I have read the photo advice above and want to use this photo anyway.</label>
     <label><input id="consentAttest" type="checkbox"> I confirm this.</label>
     <label>Allowed for <select id="consentHours"><option value="1">1 hour</option><option value="2" selected>2 hours</option><option value="4">4 hours</option><option value="12">12 hours</option></select></label>
     <button id="consentOk" type="button" disabled>Allow</button> <button id="consentNo" type="button">Cancel</button>
