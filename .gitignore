@@ -11,3 +11,5 @@ outputs/
 webapp/node_modules/
 dist/
 build/
+
+.claude/
