@@ -91,6 +91,31 @@ export function keepMask() {
   return mask;
 }
 
+/**
+ * S12c, a smaller live mouth patch. When the mouth is open the live picture shows through the inner-lip vertices; on a real
+ * webcam that patch reads bigger and pinker than the photo's own lips, because the live inner-lip outline carries the live lip
+ * skin with it. Here each inner-lip vertex gets a weight below 1 (the others stay 0), so the patch edge that the shader fades
+ * moves in towards the middle of the mouth. `shrink` 0 keeps every weight at 1 (the patch as it was); 1 keeps only the very
+ * middle. The weights are measured on the PHOTO's mouth (that is the size the patch should sit inside), so they are computed
+ * once per photo, not once per frame. Returns a Float32Array of VERTEX_COUNT weights, or null for a wrong-shaped input.
+ */
+export const MOUTH_CENTRE = [13, 14];   // the middle of the inner lips (top and bottom), as MediaPipe numbers them
+export const MOUTH_CORNERS = [61, 291]; // the outer lip corners: the mouth's own scale
+export function mouthKeepWeights(flat, aspect = 1, shrink = 0) {
+  if (!flat || flat.length < VERTEX_COUNT * 2 || !(aspect > 0)) return null;
+  const s = Math.min(1, Math.max(0, Number(shrink) || 0));
+  const weights = new Float32Array(VERTEX_COUNT);
+  if (!(s > 0)) { for (const v of INNER_LIPS) weights[v] = 1; return weights; }
+  const cx = (flat[2 * MOUTH_CENTRE[0]] + flat[2 * MOUTH_CENTRE[1]]) / 2 * aspect;
+  const cy = (flat[2 * MOUTH_CENTRE[0] + 1] + flat[2 * MOUTH_CENTRE[1] + 1]) / 2;
+  const half = Math.max(Math.hypot(flat[2 * MOUTH_CORNERS[0]] * aspect - flat[2 * MOUTH_CORNERS[1]] * aspect, flat[2 * MOUTH_CORNERS[0] + 1] - flat[2 * MOUTH_CORNERS[1] + 1]) / 2, 1e-6);
+  for (const v of INNER_LIPS) {
+    const d = Math.hypot(flat[2 * v] * aspect - cx, flat[2 * v + 1] - cy) / half;   // 0 at the centre, about 1 at the corners
+    weights[v] = 1 - s * Math.min(1, Math.max(0, (d - 0.35) / 0.65));
+  }
+  return weights;
+}
+
 /** The mesh points as a flat x, y array (normalised, y down): a face's live positions, or the photo's texture coordinates. */
 export function flatten(landmarks, out = new Float32Array(VERTEX_COUNT * 2)) {
   if (!landmarks || landmarks.length < VERTEX_COUNT) return null;

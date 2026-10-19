@@ -6,6 +6,13 @@ each step so a resumed session knows exactly where to continue.
 
 ## Done
 
+- [x] S12a-d (2026-10-19): four realism fixes aimed at the owner's real-webcam report ("neck not moving, hair not real, kept live lips big and pink, hard patch edge at the cheeks"), all in the face-mesh page, no new model, no new privacy surface:
+  - **S12a neck that yields** (`head.js neckAnchor`): the head ring's points below the chin are pulled toward hanging from the live shoulders when the pose model sees them (page.js stepBody, `compositor.setNeckAnchor`), from the face's own middle otherwise (0.6 strength). Only points below the chin's own level bend; the pull is eased from the jaw and clamped to 0.6 face widths, so a noisy pose cannot tear the mesh. The doll's-neck swing on head turns is the target.
+  - **S12b hair reach** (`ringPoints` reach argument, `compositor.setHairReach`, slider "Hair reach" 30-100%, default 55 = unchanged): the LIVE ring reaches further above the face while the photo's UV ring stays at the default, which stretches the photo's own hair over more of the live head — for the live hair that used to show round a shorter photo hairstyle. Only the top changes; ears and neck keep their reach.
+  - **S12c mouth patch** (`mesh.js mouthKeepWeights`, `compositor.setMouthShrink`, slider "Mouth patch" 0-100%, default 50): the live inner-lip vertices get weights that fall toward the mouth's middle (measured ON THE PHOTO's lips, once per photo), so the live patch that shows while the mouth is open no longer reads bigger and pinker than the photo's lips; 0% restores the old full patch. The keep buffer is rebuilt on photo change and on slider input (one 468-float upload, not per frame).
+  - **S12d softer patch edge** (compositor shader): the kept eyes and mouth fade over smoothstep 0.35-1.0 instead of 0.6-1.0, softening the hard edge at the cheeks.
+  Tests: 17 new Node tests (`webapp/test/s12.test.mjs`: reach bounds, jaw fixed under head turn, symmetric narrowing, clamp, shoulder anchor, mouth weights, aspect invariance, compositor clamps and buffer rebuild, page wiring). Suite: **313 Node, 665 Python passed** (browser/Chromium tests not run in this environment: no Chrome; they were green before and are untouched in logic). `facemesh.bundle.js` rebuilt. NOT yet done: a real-webcam look judgement by the owner, benchmark rerun, browser screenshot tests.
+
 - [x] S11n (2026-10-17): on a slow laptop (face model over 28 ms) every second camera frame reuses the face from the last two detections moved on by their motion (extrapolateLandmarks, capped 1.5 steps), aiming at about 30 instead of 20 fps. Not yet measured in the benchmark. Full suite: 296 Node, 788 Python passed; one control-room test blinked under load and passes alone
 
 - [x] S11m (2026-10-17): the live mouth interior is shown only while the mouth is open (gap between the inner lips over the face height, smooth from 0.02 to 0.06); closed, the photo's own lips are drawn, which removes the live patch and its outline. Both Pexels pairs checked
@@ -119,6 +126,8 @@ each step so a resumed session knows exactly where to continue.
 **Continuing on another computer? Start with `HANDOFF.md`**: where the code is (branch `handoff-2026-10-14`), what is
 tested and what is not, the owner's decisions, and the commands to rerun everything.
 
+- [ ] Owner: judge S12a-d on a real webcam (neck yield, Hair reach for the afro, Mouth patch 0/50/100%, the softer cheek edge) and say which defaults to keep
+- [ ] Owner: run the browser tests with Chrome (`REALX_CHROMIUM`), then `scripts/bench_facemesh.py` idle — the S12 changes add a few hundred multiplications per frame and one buffer rebuild per photo, but no model; the fps gate should not move
 - [ ] Run `docs/REAL-WEBCAM-VALIDATION.md` on a real person and microphone; tune filter constants from the results
 - [ ] Re-measure the browser tracker on an idle machine (`scripts/bench_tracking.py`)
 - [ ] Tune the filter constants and hold/fade times with a real person on a real webcam (never done)

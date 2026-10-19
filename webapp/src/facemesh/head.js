@@ -21,6 +21,19 @@ export const RING_TRIANGLES = OVAL_COUNT * (RINGS) * 2;
 
 // How far the outermost ring lies from the oval, in face widths: above the head (hair), at the sides (ears), below (neck).
 export const REACH = { top: 0.55, side: 0.3, bottom: 0.7 };   // S11c: the neck reaches further down, so the photo's neck runs on towards the collar
+const REACH_LIMITS = { top: [0.15, 1.2], side: [0.1, 0.8], bottom: [0.2, 1.2] };   // S12b: sane bounds for a reach the user can tune
+
+/** S12b: a validated reach (top / side / bottom, each in its sane bounds): a number means "a new top" (hair), a partial object fills the rest from REACH, and anything odd falls back to REACH untouched. */
+export function normalizeReach(reach = REACH) {
+  const out = { top: REACH.top, side: REACH.side, bottom: REACH.bottom };
+  const put = (key, value) => {
+    const v = Number(value), [lo, hi] = REACH_LIMITS[key];
+    if (Number.isFinite(v)) out[key] = Math.min(hi, Math.max(lo, v));
+  };
+  if (typeof reach === "number") put("top", reach);
+  else if (reach && typeof reach === "object") for (const key of ["top", "side", "bottom"]) put(key, reach[key]);
+  return out;
+}
 
 // The classes of MediaPipe's multiclass selfie segmenter: 0 background, 1 hair, 2 body skin, 3 face skin, 4 clothes, 5 others
 // (hats, glasses, earrings...). The head is hair, both skins and the accessories; the background and the clothes are not.
@@ -30,11 +43,13 @@ export const HAIR_CLASSES = [1];   // hair only: what the moving hair of step S9
 
 /**
  * Positions of the ring points around a face. `landmarks` are normalised points; `aspect` is the picture's width / height,
- * so "outwards by 0.3 of the face width" is the same distance in x and y. Returns RING_VERTICES x, y pairs (inner ring first,
+ * so "outwards by 0.3 of the face width" is the same distance in x and y. `reach` (S12b) overrides how far the rings reach:
+ * a number is a new top (hair) reach, an object may hold top / side / bottom. Returns RING_VERTICES x, y pairs (inner ring first,
  * each ring in the oval's order), or null when the face is incomplete or degenerate.
  */
-export function ringPoints(landmarks, aspect = 1) {
+export function ringPoints(landmarks, aspect = 1, reach = REACH) {
   if (!landmarks || landmarks.length < VERTEX_COUNT || !(aspect > 0)) return null;
+  const R = normalizeReach(reach);
   const at = (i) => [landmarks[i].x * aspect, landmarks[i].y];   // work in a space where x and y have the same unit
   let cx = 0, cy = 0;
   for (const i of FACE_OVAL) { const [x, y] = at(i); cx += x; cy += y; }
@@ -53,10 +68,59 @@ export function ringPoints(landmarks, aspect = 1) {
     const len = Math.hypot(dx, dy);
     if (!(len > 1e-9)) { dx = ux; dy = uy; } else { dx /= len; dy /= len; }
     const up = dx * ux + dy * uy;                                        // 1 straight above the head, -1 below the chin
-    const reach = width * (REACH.side + (up > 0 ? (REACH.top - REACH.side) * up : (REACH.bottom - REACH.side) * -up));
+    const reach = width * (R.side + (up > 0 ? (R.top - R.side) * up : (R.bottom - R.side) * -up));
     for (let r = 1; r <= RINGS; r++) {
       const d = (reach * r) / RINGS, o = ((r - 1) * OVAL_COUNT + k) * 2;
       out[o] = (x + dx * d) / aspect; out[o + 1] = y + dy * d;
+    }
+  });
+  return out;
+}
+
+/**
+ * S12a, a neck that yields: the photo's neck ring normally swings sideways with the head (every point is pushed radially out of
+ * the face oval), which reads as a stiff doll's neck. Here the ring points BELOW the jaw are pulled toward hanging from the body:
+ * `anchor` is [x, y] in normalised coordinates (the middle of the live shoulders, from the pose model) — or null, and the middle
+ * of the face itself stands in. The pull grows from nothing at the jaw to full at the outer ring, and is clamped to a fraction of
+ * a face width so a noisy pose cannot tear the mesh. Returns a new Float32Array (the ring as it was when there is nothing to do),
+ * or null for a wrong-shaped input.
+ */
+export const NECK_JAW_LINE = -0.45;   // how far below the chin the yielding starts (up = -1 is the chin itself); low enough that a turned head's tilted axis never calls a cheek "neck"
+export const NECK_MAX_PULL = 0.6;     // the most a ring point may be dragged, in face widths
+export function neckAnchor(ring, flat, aspect = 1, anchor = null, amount = 1) {
+  if (!ring || ring.length !== RING_VERTICES * 2 || !flat || flat.length < VERTEX_COUNT * 2 || !(aspect > 0)) return null;
+  const a = Math.min(1, Math.max(0, Number(amount) || 0));
+  const out = Float32Array.from(ring);
+  if (!(a > 0)) return out;
+  // the same face centre, up direction and width that ringPoints() used
+  let cx = 0, cy = 0;
+  for (const i of FACE_OVAL) { cx += flat[2 * i] * aspect; cy += flat[2 * i + 1]; }
+  cx /= OVAL_COUNT; cy /= OVAL_COUNT;
+  let ux = flat[2 * 10] * aspect - flat[2 * 152] * aspect, uy = flat[2 * 10 + 1] - flat[2 * 152 + 1];
+  const ulen = Math.hypot(ux, uy), width = Math.abs(flat[2 * 454] * aspect - flat[2 * 234] * aspect);
+  if (!(ulen > 1e-6) || !(width > 1e-6)) return out;
+  ux /= ulen; uy /= ulen;
+  // where the neck hangs from: the live shoulders when they are seen AND below the head; the face's own middle otherwise
+  const useShoulders = anchor && Number.isFinite(anchor[0]) && Number.isFinite(anchor[1]) && anchor[1] > cy;
+  const ax = (useShoulders ? anchor[0] : cx / aspect) * aspect;
+  const maxPull = NECK_MAX_PULL * width;
+  const chinY = flat[2 * 152 + 1];
+  FACE_OVAL.forEach((index, k) => {
+    const x = flat[2 * index] * aspect, y = flat[2 * index + 1];
+    const dx = x - cx, dy = y - cy, len = Math.hypot(dx, dy);
+    if (!(len > 1e-9)) return;
+    const up = (dx * ux + dy * uy) / len;                 // 1 above the head, -1 below the chin
+    if (up >= NECK_JAW_LINE) return;                      // the jaw and everything above it keep the head's turn
+    const t = Math.min(1, Math.max(0, (-up + NECK_JAW_LINE) / (1 - NECK_JAW_LINE)));
+    const ease = t * t * (3 - 2 * t);
+    for (let r = 1; r <= RINGS; r++) {
+      const o = ((r - 1) * OVAL_COUNT + k) * 2;
+      if (out[o + 1] <= chinY) continue;                  // S12a: only ring points that hang below the chin's own level bend (a turned head tilts the axis, so the up value alone would drag the jaw with it)
+      const w = a * ease * (r === RINGS ? 1 : 0.45);      // the inner ring yields less, so the bend spreads over both bands
+      if (!(w > 0)) continue;
+      const here = out[o] * aspect;                       // the ring is stored normalised; the pull happens where x and y share a unit
+      const pull = Math.max(-maxPull, Math.min(maxPull, (ax - here) * w));
+      out[o] = (here + pull) / aspect;
     }
   });
   return out;

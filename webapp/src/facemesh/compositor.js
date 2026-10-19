@@ -9,8 +9,8 @@
 //    while colour matching is on, and (S10c) while "Show my hands on top" is on. The shader reads it to take the live face's colour and lighting (a blurred
 //    copy) and give them to the photo's detail, so the photo does not look like a sticker. That one method is the only
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
-import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, blendShape, edgeDepth, faceBox, flatten, keepMask, shapeWeights } from "./mesh.js";
-import { HEAD_VERTEX_COUNT, RING_TRIANGLES, headFade, ringFlag, ringPoints, ringTriangles } from "./head.js";
+import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, blendShape, edgeDepth, faceBox, flatten, keepMask, mouthKeepWeights, shapeWeights } from "./mesh.js";
+import { HEAD_VERTEX_COUNT, REACH, RING_TRIANGLES, headFade, neckAnchor, ringFlag, ringPoints, ringTriangles } from "./head.js";
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
 const RING_MATCH = 0.35;   // how much of the live colour the head ring takes (the face takes the Colour match setting in full)
@@ -119,7 +119,7 @@ void main() {
   float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
   float ringW = clamp(v_ring * 4.0, 0.0, 1.0);   // S11h: v_ring runs 0 to 1 across the inner band of the ring; the mask must act on all of it
   float head = mix(1.0, smoothstep(0.62, 0.92, texture2D(u_mask, v_uv).r) * inside, ringW * u_head);   // S11h: the edge is taken from inside the head, or the photo's background shows as a light halo
-  float keepAmt = u_keep * smoothstep(0.6, 1.0, v_keep) + u_keepEyes * smoothstep(0.6, 1.0, -v_keep);   // S11e: the inside of the mouth (+1) and of the eyes (-1) stay live when asked
+  float keepAmt = u_keep * smoothstep(0.35, 1.0, v_keep) + u_keepEyes * smoothstep(0.35, 1.0, -v_keep);   // S11e: the inside of the mouth (+1) and of the eyes (-1) stay live when asked; S12d: the wider fade also softens the patch edge at the cheeks
   if (u_relight > 0.0 && u_match > 0.0 && keepAmt > 0.0) {      // the kept live eyes and mouth are drawn by us, in the photo's skin tone
     colour = mix(colour, liveKept(texture2D(u_cam, v_scr).rgb), keepAmt);
     keepAmt = 0.0;
@@ -208,6 +208,9 @@ export class MeshCompositor {
     this.photo = null; this.camera = null; this.photoRing = null;
     this.photoRadius = [0.05, 0.05];
     this.look = { match: 1, shape: 0.5, keep: 1, keepEyes: 0, skin: 0, glasses: 0, relight: 1 };
+    this.hairReach = REACH.top;       // S12b: how far the head ring reaches above the head (the photo's UV ring stays at the default, which is what makes the photo's hair grow with it)
+    this.neck = { anchor: null, amount: 0.6 };   // S12a: where the photo's neck hangs from; null = the face's own middle
+    this.mouthShrink = 0.5;           // S12c: how much the live mouth patch pulls in towards the middle of the mouth (0 = the old full patch)
     this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
     this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
@@ -224,7 +227,9 @@ export class MeshCompositor {
     this.headFadeBuffer = filled(gl, headFade());
     const keep = keepMask();
     for (const v of [...LEFT_EYE, ...RIGHT_EYE]) keep[v] = -1;   // S11e: the eyes are marked -1 and the mouth +1, so the two can be switched separately
-    this.keepBuffer = filled(gl, Float32Array.from({ length: HEAD_VERTEX_COUNT }, (_, i) => (i < VERTEX_COUNT ? keep[i] : 0)));
+    this.baseKeep = keep;
+    this.keepBuffer = gl.createBuffer();
+    this._uploadKeep();                                          // S12c: the mouth weights depend on the photo, so the buffer is rebuilt when it changes
     this.ringBuffer = filled(gl, ringFlag());
     this.indexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
@@ -437,6 +442,39 @@ export class MeshCompositor {
   /** Whole head on or off (it only shows once a head mask is set). */
   setHead(on) { this.head = !!on; }
 
+  /** S12b: how far the head ring reaches above the head, in face widths (0.3 to 1.2). Further out makes the photo's own hair cover more of the live head (a taller live hairstyle); the default is REACH.top. */
+  setHairReach(reach) {
+    const v = Number(reach);
+    if (Number.isFinite(v)) this.hairReach = Math.min(1.2, Math.max(0.3, v));
+  }
+
+  /** S12a: where the photo's neck hangs from. `anchor` is [x, y] normalised (the middle of the live shoulders) or null (the face's own middle stands in); `amount` 0..1 is how much the neck yields. */
+  setNeckAnchor(anchor, amount = 0.6) {
+    const a = Math.min(1, Math.max(0, Number(amount) || 0));
+    const ok = anchor && anchor.length >= 2 && Number.isFinite(Number(anchor[0])) && Number.isFinite(Number(anchor[1]));
+    this.neck = { anchor: ok ? [Number(anchor[0]), Number(anchor[1])] : null, amount: a };
+  }
+
+  /** S12c: how much the live mouth patch pulls in towards the middle of the mouth, 0 (the old full patch) to 1. Needs the photo's mouth to measure; it is applied again when a photo arrives. */
+  setMouthShrink(shrink) {
+    const v = Number(shrink);
+    this.mouthShrink = Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+    this._uploadKeep();
+  }
+
+  /** The keep values for every vertex: the eyes and the mouth of keepMask(), the mouth reweighted by S12c on the photo's own mouth. */
+  _keepValues() {
+    const mouth = (this.photoFlat && this.mouthShrink > 0) ? mouthKeepWeights(this.photoFlat, this.photoAspect, this.mouthShrink) : null;
+    return Float32Array.from({ length: HEAD_VERTEX_COUNT }, (_, i) => (i < VERTEX_COUNT ? (mouth ? this.baseKeep[i] * mouth[i] : this.baseKeep[i]) : 0));
+  }
+
+  _uploadKeep() {
+    if (!this.keepBuffer) return;
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.keepBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, this._keepValues(), gl.DYNAMIC_DRAW);
+  }
+
   /** How the photo is drawn: `match` 0..1 (how much of the live face's colour and light it takes), `keep` (live eyes and mouth show through). */
   setLook({ match = this.look.match, shape = this.look.shape, keep = this.look.keep, keepEyes = this.look.keepEyes, skin = this.look.skin, glasses = this.look.glasses, relight = this.look.relight } = {}) {
     this.look = { match: Math.min(1, Math.max(0, Number(match) || 0)), shape: Math.min(1, Math.max(0, Number(shape) || 0)), keep: keep ? 1 : 0, keepEyes: keepEyes ? 1 : 0, skin: Math.min(1, Math.max(0, Number(skin) || 0)), glasses: glasses ? 1 : 0, relight: relight ? 1 : 0 };
@@ -467,6 +505,7 @@ export class MeshCompositor {
     setSampling(gl);
     this.photoRing = ring;
     this.photoFlat = flat; this.photoAspect = w / h; this.shapeW = this.shapeW || shapeWeights();   // S11l: the photo's own face shape
+    this._uploadKeep();                             // S12c: the mouth patch is measured on this photo's own mouth
     const eye = (a, b) => [(flat[a * 2] + flat[b * 2]) / 2, (flat[a * 2 + 1] + flat[b * 2 + 1]) / 2];   // the eye corners 33/133 and 362/263 of the face mesh
     const ea = eye(33, 133), eb = eye(362, 263);
     this.photoEyes = [ea[0], ea[1], eb[0], eb[1], w / h];
@@ -513,8 +552,11 @@ export class MeshCompositor {
     this.cheekR = [0.5 * BLUR * box.w, 0.5 * BLUR * box.w * aspect];
     let head = this.headActive;
     if (head) {                                     // the ring around the live face; if the face is degenerate, the face alone
-      const live = ringPoints(liveLandmarks, aspect);
-      if (live) this.positions.set(live, VERTEX_COUNT * 2); else head = false;
+      const live = ringPoints(liveLandmarks, aspect, this.hairReach !== REACH.top ? this.hairReach : REACH);   // S12b: the live ring reaches further out; the photo's UV ring stays put, which is what stretches the photo's hair over more of the live head
+      if (live) {
+        const hung = neckAnchor(live, this.positions, aspect, this.neck.anchor, this.neck.amount);   // S12a: the neck yields to the body instead of swinging with the head
+        this.positions.set(hung || live, VERTEX_COUNT * 2);
+      } else head = false;
     }
     this.hairDrawn = 0; this.bodyDrawn = 0;
     if (this.body && this.body.on) this.bodyDrawn = this._drawLayer(this.body, opacity);   // the body and dress go down first,

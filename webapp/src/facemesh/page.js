@@ -240,7 +240,7 @@ function closePose() {
 
 function forgetBody() {
   puppet = null; bodyItem = null;
-  if (compositor) compositor.clearBody();
+  if (compositor) { compositor.clearBody(); compositor.setNeckAnchor(null, 0.6); }   // S12a: the shoulders are gone; the face's own middle takes over
   probe.bodyPoints = 0; probe.bodyBones = 0;
 }
 
@@ -291,6 +291,11 @@ function stepBody(now, shown) {
     poseSmooth = s.state; poseTarget = s.joints;
   }
   poseJoints = poseTarget ? easeJoints(poseJoints, poseTarget, 0.35) : null;   // every frame: a step toward the latest pose
+  // S12a: the photo's neck hangs from the live shoulders when the pose model sees them (a softer pull on the face's own middle when it does not),
+  // so it stops swinging sideways with the head like a doll's neck. Numbers only: the anchor rides the same rig message, nothing new leaves the page.
+  const neck = poseJoints && poseJoints.lSh && poseJoints.rSh
+    ? [(poseJoints.lSh[0] + poseJoints.rSh[0]) / 2, (poseJoints.lSh[1] + poseJoints.rSh[1]) / 2] : null;
+  compositor.setNeckAnchor(neck, neck ? 1 : 0.6);
   if (!poseJoints || !puppet.update(poseJoints)) { compositor.setBodyPositions(null); compositor.setBodyHalo(null); return; }
   compositor.setBodyPositions(puppet.pos, aspect);
   compositor.setBodyHalo(coverGrow > 0 ? puppet.halo(coverGrow) : null, aspect);     // S10e: a slightly bigger copy underneath hides your own clothes' edges
@@ -946,6 +951,14 @@ function wireControls() {
   $("handReach").addEventListener("input", (e) => {
     handReach = Number(e.currentTarget.value) / 100;
     $("handReachValue").textContent = `${e.currentTarget.value}%`;
+  });
+  $("hairReach").addEventListener("input", (e) => {          // S12b: the photo's hair grows to cover more of your own
+    if (compositor) compositor.setHairReach(Number(e.currentTarget.value) / 100);
+    $("hairReachValue").textContent = `${e.currentTarget.value}%`;
+  });
+  $("mouthPatch").addEventListener("input", (e) => {         // S12c: the live mouth patch pulls in, so it does not read bigger than the photo's lips
+    if (compositor) compositor.setMouthShrink(Number(e.currentTarget.value) / 100);
+    $("mouthPatchValue").textContent = `${e.currentTarget.value}%`;
   });
   $("spillBtn").addEventListener("click", () => spillNow($("stainKind").value));
   $("cleanBtn").addEventListener("click", () => { stains.clear(); setStatus("The shirt is clean."); });
