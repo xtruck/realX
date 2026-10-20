@@ -12,6 +12,7 @@ an item is "done" only when its check has been run.
 | Consent gate, "Virtual face" label, watermark in every path | holds; the S13c auto-off added today touches none of them (Node source check) | browser tests |
 | Camera pixels never read back | holds | Node source checks on `compositor.js`, `seams.js`, `seammask.js` |
 | Blocked models cannot load | holds | `tests/test_model_licenses.py` |
+| Every fetched model has a primary-source licence | holds: the last open one, the selfie multiclass card, was read 2026-10-20 (Apache-2.0) | `REALX_LICENSES.md` |
 | Open: watermark does not survive compression; no C2PA | known, M4 | - |
 
 ## P1: it runs reliably
@@ -19,7 +20,7 @@ an item is "done" only when its check has been run.
 | # | Item | Done when |
 |---|---|---|
 | 1 | Review and merge PR #18 (two flaky face-mesh browser tests). CI on its head: python, browser (108) and webapp green | owner merges |
-| 2 | Review the S13c auto-off change (this audit, uncommitted) and decide whether to commit it | owner says commit |
+| 2 | S13c auto-off: pushed to `main` (`3b93322`); still to see on the laptop that it does not trigger on the real GPU | `seam` stays "on" in the probe on the UHD 620 |
 | 3 | Laptop: confirm `chrome://gpu` shows WebGL hardware-accelerated; if not, S13c and the page fall back to software and are slow | owner's reading |
 | 4 | Stage 2 real-webcam checklist (`scripts/facemesh_baseline.md`), then `docs/FACEMESH-DEFECTS.md` | owner's results |
 

@@ -38,7 +38,7 @@ a one-off pytest measurement (`page.evaluate` of `window.__facemesh` plus a `req
 scheduler's back-off (cost / 0.15, about 80 s). Between passes the option costs little. On the target laptop's real GPU the pass cost is
 **unknown**; if it is above about 250 ms the same freeze happens, in shorter form.
 
-**Change made (uncommitted, 2026-10-20):** the option now turns itself off after one pass over 1 s, or two passes in a row over 250 ms,
+**Change made (2026-10-20, commit `3b93322`):** the option now turns itself off after one pass over 1 s, or two passes in a row over 250 ms,
 and says so in the status line; clicking it retries. The two limits are first guesses. See `REALX_AUDIT.md`, section 5.
 
 ## Next measurements, in order

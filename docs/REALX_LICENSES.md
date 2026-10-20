@@ -14,7 +14,7 @@ marked as not checked.
 | MediaPipe `face_landmarker.task` | browser, all pages | Apache-2.0 | model cards read 2026-10-14 | no |
 | MediaPipe `pose_landmarker_lite.task` | browser | Apache-2.0 | model card read 2026-10-14 | no |
 | MediaPipe `hand_landmarker.task` | browser | Apache-2.0 | model card read 2026-10-14 | no |
-| MediaPipe `selfie_multiclass_256x256.tflite` | face-mesh page (photo masks, and the live S13c pass) | Apache-2.0 **as stated, card not re-read** | `LICENSE-AUDIT.md` says to check the card before shipping | **yes: read the model card** |
+| MediaPipe `selfie_multiclass_256x256.tflite` | face-mesh page (photo masks, and the live S13c pass) | Apache-2.0 | model card "Model Card Multiclass Segmentation" (May 10, 2023) re-read 2026-10-20: "LICENSED UNDER Apache License, Version 2.0" | no |
 
 ## 2. Blocked (cannot be fetched or loaded; `tests/test_model_licenses.py`)
 
@@ -57,7 +57,7 @@ FLAME (non-commercial; `PHOTOREAL-NEXT.md`).
 
 1. **The repository has no `LICENSE` file.** `webapp/package.json` says MIT, `pyproject.toml` declares no licence. The owner has to pick
    the product licence (listed as a blocking decision in `ROADMAP.md`).
-2. Read the selfie multiclass model card before any release (row 1.6).
+2. ~~Read the selfie multiclass model card~~ done 2026-10-20: Apache-2.0 (row 1.6).
 3. `LICENSE-AUDIT.md` "Code" table listed GHOST as "may reuse with attribution" while its own model section says "not adopted, unverified".
    Corrected on 2026-10-20 to "ideas only until the open licence questions are answered" (see that file).
 4. Any commercial use: lawyer review of the whole table (the audit file says the same).

@@ -69,7 +69,7 @@ Not legal advice. Have a lawyer review before any commercial release.
 | MediaPipe Face Landmarker bundle `face_landmarker.task` (BlazeFace short range, Face Mesh V2, Blendshape V2) | Apache-2.0 | yes | sha256 pinned in `models.py` (`mp_face`); each model card states "Licensed under Apache License, Version 2.0" |
 | MediaPipe Pose Landmarker lite `pose_landmarker_lite.task` (BlazePose GHUM 3D) | Apache-2.0 | yes | pinned (`mp_pose`); card "Model Card BlazePose GHUM 3D" states Apache 2.0 |
 | MediaPipe Hand Landmarker `hand_landmarker.task` | Apache-2.0 | yes | pinned (`mp_hand`); card "Hand Tracking (Lite_Full) with Fairness" states Apache 2.0 |
-| MediaPipe Image Segmenter `selfie_multiclass_256x256.tflite` (float32) | Apache-2.0 (per Google's model card; **the card itself was not re-read when this row was added: check it before shipping**) | yes | pinned (`mp_segmenter`, sha256 `c6748b12...`); used only on the user's own photo, face-mesh page |
+| MediaPipe Image Segmenter `selfie_multiclass_256x256.tflite` (float32) | Apache-2.0 (model card re-read 2026-10-20: "Model Card Multiclass Segmentation", dated May 10, 2023, `storage.googleapis.com/mediapipe-assets/Model%20Card%20Multiclass%20Segmentation.pdf`, linked from the Image Segmenter docs page next to the same download URL as `models.py`, states "LICENSED UNDER Apache License, Version 2.0"; PDF sha256 `59372fce...`) | yes | pinned (`mp_segmenter`, sha256 `c6748b12...`); used only on the user's own photo, face-mesh page |
 
 How the MediaPipe licenses were checked (2026-10-14): the Google docs pages for the three
 landmarkers state no license for the model files (only CC-BY for the page and Apache for the code

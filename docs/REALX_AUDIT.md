@@ -59,13 +59,13 @@ Five levels: **A** works and was tried for real (real camera, real GPU or the ow
    Impact: P1/P2. Needs the owner's machine (`REALX_ROADMAP.md` P1.3-4, P2.1).
 2. **S13c "Clean the edges" can freeze the page for seconds at a time.** Its segmenter pass is synchronous on the main thread; on a
    software renderer one pass took about 12 s (measured here), repeated about every 80 s. A laptop whose Chrome blocks the GPU driver
-   gets the same. Impact: P2 (looks like a hang). **Fixed in this audit (section 5), uncommitted.**
+   gets the same. Impact: P2 (looks like a hang). **Fixed in this audit (section 5), commit `3b93322`.**
 3. **Documentation drift.** `ARCHITECTURE.md` and `ROADMAP.md` describe a cloud/WebRTC/neural-swap target as if it were the design in
    use; `LICENSE-AUDIT.md` contradicted itself on GHOST; 28 MB of onnxruntime-web WASM is shipped and served but nothing loads it; the
    repository has no `LICENSE` file. Impact: P5, but it misleads decisions. Partly addressed: the `REALX_*` pages, the GHOST row, and
    one-line pointers at the top of the older pages.
 
-## 5. The change made in this audit (uncommitted)
+## 5. The change made in this audit (commit `3b93322`, pushed to `main` at the owner's request)
 
 **What:** S13c turns itself off when one segmenter pass is too slow: at once for a pass over 1 s, or after two passes in a row over
 250 ms (one slow first pass is allowed, as the GPU warms up). The status line says "Clean the edges was turned off: one pass took
