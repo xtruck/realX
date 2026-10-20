@@ -18,6 +18,20 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -e ".[dev]"
       - run: python -m playwright install --with-deps chromium   # the browser tests skip without a Chromium
+      # the browser tests need the MediaPipe models; Google's storage sometimes answers 401 to an anonymous download, so cache
+      # them between runs and retry. If they still cannot be fetched, those tests skip and -rs says why.
+      - uses: actions/cache@v4
+        with:
+          path: models
+          key: models-${{ hashFiles('src/realx/models.py') }}
+      - name: Fetch the models (hash-verified), with retries
+        run: |
+          for attempt in 1 2 3 4; do
+            realx models fetch
+            if python -c "import sys; from realx.models import MANIFEST, models_dir; sys.exit(any(not (models_dir() / m.filename).is_file() for m in MANIFEST.values()))"; then exit 0; fi
+            echo "some models are missing; retrying in $((attempt * 20)) s"; sleep $((attempt * 20))
+          done
+          echo "::warning::some models could not be fetched; the tests that need them will skip"
       - run: python -m pytest -q -rs
 
   webapp:
