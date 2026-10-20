@@ -40,7 +40,7 @@ FLAME (non-commercial; `PHOTOREAL-NEXT.md`).
 | three | 0.178.0 | MIT | `package.json`, checked here | bundled |
 | @pixiv/three-vrm | 3.4.2 | MIT | `package.json`, checked here | bundled |
 | @mediapipe/tasks-vision (+ vendored WASM) | 0.10.21 | Apache-2.0 | `package.json`, checked here | bundled / vendored |
-| onnxruntime-web | 1.30.0 | MIT | `package.json`, checked here | its WASM (28 MB) is copied into `src/realx/web/ort` but **no page uses it** |
+| onnxruntime-web | - | MIT | `package.json`, checked here | **removed 2026-10-20** (no page used it) |
 | esbuild | 0.25.5 | MIT | `package.json`, checked here | build only |
 | pytest, scikit-image, playwright | dev / browser extras | MIT / BSD-3 / Apache-2.0 | general knowledge, **not checked here** | tests only |
 | pyvirtualcam | - | GPL-2.0 | `LICENSE-AUDIT.md` | **excluded** |
