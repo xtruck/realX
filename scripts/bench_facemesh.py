@@ -128,7 +128,7 @@ def _sample(page) -> dict:
     return out
 
 
-def run(args: argparse.Namespace) -> tuple[list[dict], str, str]:
+def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
     from playwright.sync_api import sync_playwright
 
     from realx.server import Engine, Server
@@ -156,6 +156,12 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str]:
                     _wait(page, "window.__facemesh && window.__facemesh.state === 'running' && window.__facemesh.found >= 5", args.startup_timeout)
                     page.set_input_files("#photoFile", str(photo))
                     _wait(page, "window.__facemesh.photo === 'asking'", args.startup_timeout)
+                    # S13d: a photo that fails the photo check needs one more tick box before Allow; the bench photo is small, so it may.
+                    # The check is advice only and does not change how the photo is drawn; the report records that the override was used.
+                    photo_check = page.evaluate("window.__facemesh.photoQuality") or {}
+                    photo_check["override_used"] = page.is_visible("#qualityOverrideRow")
+                    if photo_check["override_used"]:
+                        page.check("#qualityOverride")
                     page.check("#consentAttest")
                     page.click("#consentOk")
                     _wait(page, "window.__facemesh.photo === 'ready' && window.__facemesh.drawn > 0", args.startup_timeout)
@@ -185,7 +191,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str]:
                         step("+ hands on top (hand model on, no hand in the clip)", lambda: page.click("#handsTop"), "window.__facemesh.liveHands === 'on' || window.__facemesh.liveHands === 'error'"),
                         step("+ a spill on the shirt", lambda: (page.select_option("#stainKind", "coffee"), page.click("#spillBtn")), "window.__facemesh.stains > 0 || window.__facemesh.body !== 'on'"),
                     ]
-                    return steps, browser.version, renderer
+                    return steps, browser.version, renderer, photo_check
                 finally:
                     browser.close()
         finally:
@@ -207,9 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     contention = detect_contention()
     profile = hardware.detect()
     hw = hardware.to_dict(profile, hardware.recommend(profile))
-    steps, browser_version, renderer = run(args)
-    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "browser": browser_version},
-                       hw, contention, renderer, steps)
+    steps, browser_version, renderer, photo_check = run(args)
+    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "browser": browser_version,
+                        "photo_check": photo_check}, hw, contention, renderer, steps)
     print(f"machine: {hw['cpu']['name']}; renderer: {renderer}; representative: {doc['representative']}")
     for n in doc["notes"]:
         print("NOTE:", n)
