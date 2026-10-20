@@ -1,13 +1,11 @@
-import glob
 import importlib.util
 import json
-import os
 import struct
 import time
 from pathlib import Path
 
 import pytest
-from conftest import token_cookie
+from conftest import find_chromium, token_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_BONES = {
@@ -96,11 +94,7 @@ def test_bundle_has_no_hardcoded_external_hosts():
 
 # --- real browser check: loads the model, receives rig numbers over the WebSocket ----
 def _chromium():
-    exe = os.environ.get("REALX_CHROMIUM")
-    if exe and os.path.exists(exe):
-        return exe
-    hits = sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"))
-    return hits[-1] if hits else None
+    return find_chromium()
 
 
 def test_character_renders_and_follows_the_tracker_in_a_real_browser():

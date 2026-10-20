@@ -8,6 +8,7 @@ Python 3.10+ package in `src/realx`, browser avatar renderer in `webapp/` (bundl
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Windows: .\.venv\Scripts\...
 python -m pytest -q                                         # ~2 min, no model downloads needed
+python -m playwright install chromium                       # optional: then the ~90 browser tests run too (they fetch the MediaPipe models; ~30 min on a software renderer)
 cd webapp && npm ci --ignore-scripts && npm test            # node tests
 cd webapp && npm run build                                  # rebuild src/realx/web/avatar.bundle.js
 realx serve                                                 # control room on 127.0.0.1:8765

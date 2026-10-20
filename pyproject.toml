@@ -12,7 +12,7 @@ dependencies = ["numpy>=1.26"]
 [project.optional-dependencies]
 onnx = ["onnxruntime>=1.18"]
 video = ["opencv-python-headless>=4.9"]
-dev = ["pytest>=8", "scikit-image>=0.22", "opencv-python-headless>=4.9"]
+dev = ["pytest>=8", "scikit-image>=0.22", "opencv-python-headless>=4.9", "playwright>=1.40"]
 
 [project.scripts]
 realx = "realx.cli:main"

@@ -8,8 +8,10 @@ make carries it as `Authorization: Bearer`. Tests that are *about* authenticatio
 
 from __future__ import annotations
 
+import glob
 import http.client
 import os
+import re
 
 import pytest
 
@@ -17,6 +19,21 @@ TEST_TOKEN = "test-token-0123456789abcdef"
 
 _original_putrequest = http.client.HTTPConnection.putrequest
 _state = {"auto": True}
+
+
+def find_chromium() -> str | None:
+    """A Chromium for the browser tests: REALX_CHROMIUM, then a preinstalled Playwright browser folder, then the browsers
+    `python -m playwright install chromium` downloads (what CI uses). None when there is none: the tests then skip.
+    Only folders are searched, so this never starts Playwright (it is often called inside a running one)."""
+    exe = os.environ.get("REALX_CHROMIUM")
+    if exe and os.path.exists(exe):
+        return exe
+    roots = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "/opt/pw-browsers", os.path.expanduser("~/.cache/ms-playwright"),
+             os.path.expanduser("~/Library/Caches/ms-playwright"), os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright")]
+    names = ("chrome-linux/chrome", "chrome-linux64/chrome", "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+             "chrome-win/chrome.exe", "chrome-win64/chrome.exe")
+    hits = [h for root in roots if root and os.path.isdir(root) for name in names for h in glob.glob(os.path.join(root, "chromium-*", name))]
+    return max(hits, key=lambda h: int(re.search(r"chromium-(\d+)", h).group(1))) if hits else None
 
 
 def token_cookie(port: int) -> list[dict]:

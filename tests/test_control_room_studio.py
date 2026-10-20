@@ -5,10 +5,8 @@ records what the control room sends it. Nothing here opens a real camera or micr
 proves behaviour on real hardware (see docs/REAL-WEBCAM-VALIDATION.md for that procedure).
 """
 
-import glob
 import http.client
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -17,7 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from conftest import token_cookie
+from conftest import find_chromium, token_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts" / "windows"
@@ -48,11 +46,7 @@ def stats_message(**over):
 
 
 def _chromium():
-    exe = os.environ.get("REALX_CHROMIUM")
-    if exe and os.path.exists(exe):
-        return exe
-    hits = sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"))
-    return hits[-1] if hits else None
+    return find_chromium()
 
 
 @pytest.fixture(scope="module")

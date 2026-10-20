@@ -5,13 +5,11 @@ only the page is under test, so /api/config and /api/stats answers for that mode
 tracking iframe is replaced by a tiny page that records the messages the control room sends it.
 """
 
-import glob
 import json
-import os
 import time
 
 import pytest
-from conftest import token_cookie
+from conftest import find_chromium, token_cookie
 
 STUB_PAGE = (
     "<!doctype html><title>stub</title><script>window.__msgs=[];"
@@ -20,11 +18,7 @@ STUB_PAGE = (
 
 
 def _chromium():
-    exe = os.environ.get("REALX_CHROMIUM")
-    if exe and os.path.exists(exe):
-        return exe
-    hits = sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"))
-    return hits[-1] if hits else None
+    return find_chromium()
 
 
 @pytest.fixture(scope="module")
@@ -183,7 +177,8 @@ def test_legs_and_recenter_reach_the_tracking_page_same_origin(make_room):
     r.wait("window.__msgs !== undefined", where=frame)
     r.page.select_option("#legsMode", "off")
     r.page.click("#recenter")
-    r.wait("window.__msgs.length >= 2", where=frame)
+    # wait for the two messages this test sends, not for a count: the page also sends realx-gestures when the frame loads
+    r.wait("['realx-legs', 'realx-recenter'].every(t => window.__msgs.some(m => m.data && m.data.type === t))", where=frame)
     msgs = frame.evaluate("window.__msgs")
     assert {"type": "realx-legs", "mode": "off"} in [m["data"] for m in msgs]
     assert {"type": "realx-recenter"} in [m["data"] for m in msgs]
