@@ -12,7 +12,6 @@ the same body through the server's relay. The checks are about what must hold fo
 
 import json
 import math
-import os
 import re
 import time
 from pathlib import Path

@@ -7,7 +7,6 @@ proves behaviour on real hardware (see docs/REAL-WEBCAM-VALIDATION.md for that p
 
 import http.client
 import json
-import os
 import re
 import shutil
 import subprocess

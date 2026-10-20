@@ -4,7 +4,6 @@ Real server, real /api/config and /api/stats; only the browser's camera is fake.
 test_control_room_body.py (Playwright, scikit-image, a Chromium via REALX_CHROMIUM, the yunet model).
 """
 
-import os
 import time
 
 import pytest
