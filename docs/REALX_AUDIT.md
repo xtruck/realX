@@ -61,7 +61,7 @@ Five levels: **A** works and was tried for real (real camera, real GPU or the ow
    software renderer one pass took about 12 s (measured here), repeated about every 80 s. A laptop whose Chrome blocks the GPU driver
    gets the same. Impact: P2 (looks like a hang). **Fixed in this audit (section 5), commit `3b93322`.**
 3. **Documentation drift.** `ARCHITECTURE.md` and `ROADMAP.md` describe a cloud/WebRTC/neural-swap target as if it were the design in
-   use; `LICENSE-AUDIT.md` contradicted itself on GHOST; 28 MB of onnxruntime-web WASM is shipped and served but nothing loads it; the
+   use; `LICENSE-AUDIT.md` contradicted itself on GHOST; 28 MB of onnxruntime-web WASM was shipped and served but nothing loaded it (removed later on 2026-10-20 at the owner's request); the
    repository has no `LICENSE` file. Impact: P5, but it misleads decisions. Partly addressed: the `REALX_*` pages, the GHOST row, and
    one-line pointers at the top of the older pages.
 

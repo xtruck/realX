@@ -68,7 +68,7 @@ segmenter (browser). Blocked: `inswapper_128`, `buffalo_l`, `liveportrait`, `liv
 
 | What | Command | Notes |
 |---|---|---|
-| Browser bundles | `cd webapp && npm run build` | esbuild; writes `avatar.bundle.js`, `dock.js`, `facemesh.bundle.js`, copies the dock and face-mesh HTML and the onnxruntime-web WASM (MediaPipe WASM is vendored in `web/mp`). Rebuilt on 2026-10-20: identical to the committed files |
+| Browser bundles | `cd webapp && npm run build` | esbuild; writes `avatar.bundle.js`, `dock.js`, `facemesh.bundle.js`, copies the dock and face-mesh HTML (MediaPipe WASM is vendored in `web/mp`). Rebuilt on 2026-10-20: identical to the committed files |
 | Node tests | `cd webapp && npm test` | 358 tests, about 4 s |
 | Python tests without a browser | `python -m pytest -q -m "not browser"` | 649 tests, about 2 min 15 s here |
 | Browser tests | `python -m pytest -q -m browser` | 108 tests, real Chromium; about 10 min in CI, about 30 min on a software renderer |
@@ -76,7 +76,6 @@ segmenter (browser). Blocked: `inswapper_128`, `buffalo_l`, `liveportrait`, `liv
 
 ## Parts that exist but nothing uses
 
-- `src/realx/web/ort/` (28 MB onnxruntime-web WASM, served at `/ort/`) and `webapp/src/utils/onnxInference.js`: no page loads
-  them (0 references in either bundle); only `tests/test_ort_files.py` and a Node test touch them. They came with commit `793bdd9`.
-  Removing them needs the owner's go-ahead (it deletes files).
+- (Removed 2026-10-20 at the owner's request: the 28 MB onnxruntime-web runtime in `src/realx/web/ort/`, its `/ort/` route,
+  `webapp/src/utils/onnxInference.js` and the npm dependency. No page loaded them; they came with commit `793bdd9`.)
 - `runtime/providers.py` `SessionCache`: tested with fakes, used by no stage.

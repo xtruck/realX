@@ -45,5 +45,5 @@ identity model listed there is non-commercial or unverified. Remote GPU needs a 
 
 ## P5: product
 
-Pick a product licence (no `LICENSE` file exists), installer, the OBS virtual camera validation, unused 28 MB onnxruntime-web assets
-(remove with the owner's go-ahead).
+Pick a product licence (no `LICENSE` file exists), installer, the OBS virtual camera validation. (The unused 28 MB onnxruntime-web
+assets were removed on 2026-10-20.)
