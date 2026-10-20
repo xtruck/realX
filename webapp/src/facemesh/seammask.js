@@ -64,7 +64,7 @@ export class SeamSegmenter {
 
   constructor(task, canvas) {
     this.task = task; this.canvas = canvas;
-    this.failed = false; this.answers = 0; this.lastTs = 0; this.costMs = 0; this.gl = null;
+    this.failed = false; this.answers = 0; this.lastTs = 0; this.costMs = 0; this.lastMs = 0; this.gl = null;
   }
 
   setup() {
@@ -172,6 +172,7 @@ export class SeamSegmenter {
     if (!ok && !this.error) this.error = "no usable mask in the answer";
     if (!ok) this.failed = true;
     const took = performance.now() - t0;
+    this.lastMs = took;
     this.costMs = this.costMs ? 0.8 * this.costMs + 0.2 * took : took;
     if (ok) this.answers++;
     return ok;

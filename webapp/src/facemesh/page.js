@@ -20,7 +20,7 @@ import { buildBodyPuppet, easeJoints, jointsFromPose, smoothJoints } from "./pup
 import { gripShapes, handFans, handShapes } from "./handlayer.js";
 import { MaskConfidence, holdFactors } from "./confidence.js";
 import { StainSet, bindToPuppet, stainFans } from "./stains.js";
-import { MotionGate, freshness, headZone, seamDue } from "./seams.js";
+import { MotionGate, freshness, headZone, seamDue, seamTooSlow } from "./seams.js";
 import { SeamSegmenter } from "./seammask.js";
 import { AnglePicker, SerialLoader, checkAngle, gateVerdict, photoYaw } from "./angles.js";
 
@@ -375,7 +375,7 @@ function stepStains(now, shown) {
 // camera picture and the masks never reach this code) and the compositor hides live hair and ears round the photo's head with the photo's
 // own background colour. Off, not loaded, failed, stale or slow: nothing is drawn extra, which is the look before this step.
 let seamOn = true, seamSeg = null, seamLoading = false, seamGaveUp = false, seamAt = -Infinity;
-const seamState = { last: -Infinity, cost: 0 };
+const seamState = { last: -Infinity, cost: 0, slowRuns: 0 };
 const seamMotion = new MotionGate();
 Object.assign(probe, { seam: "on", seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
 
@@ -389,6 +389,17 @@ async function loadSeams() {
 
 function closeSeams() { if (seamSeg) seamSeg.close(); seamSeg = null; }
 
+// A pass freezes the page while it runs; on a computer where it is that slow the option turns itself off and says so. Only this
+// optional look feature stops: the photo, the consent checks and the "Virtual face" label carry on unchanged. Clicking the button
+// again retries.
+function stopSlowSeams(ms) {
+  seamOn = false; seamState.slowRuns = 0;
+  $("seamBtn").setAttribute("aria-pressed", "false");
+  compositor.setSeamAmount(0, null); closeSeams();
+  probe.seam = "too slow"; probe.seamSlowMs = Math.round(ms); probe.seamAmount = 0;
+  setStatus(`Clean the edges was turned off: one pass took ${(ms / 1000).toFixed(1)} s on this computer and froze the picture. Click it to try again.`);
+}
+
 // Called every drawn frame; does model work only when it is due (seams.js seamDue), and always sets how much to draw.
 function stepSeams(now, shown) {
   if (!compositor) return;
@@ -399,6 +410,7 @@ function stepSeams(now, shown) {
     if (seamSeg.run(video)) { compositor.setSeam(seamSeg.canvas); seamAt = now; probe.seamAnswers = seamSeg.answers; }
     seamState.cost = seamSeg.costMs; probe.seamMs = seamSeg.costMs;
     if (seamSeg.failed) { probe.seam = "unavailable"; probe.seamError = String(seamSeg.error || "").slice(0, 160); }
+    else if (seamTooSlow(seamSeg.lastMs, seamState)) { stopSlowSeams(seamSeg.lastMs); return; }
   }
   const box = faceBox(shown.landmarks);
   const amount = seamSeg.failed ? 0 : freshness(now - seamAt) * seamMotion.update(box, now);
@@ -1185,7 +1197,7 @@ function wireControls() {
   $("seamBtn").addEventListener("click", (e) => {            // S13c: hide the live hair and ears that peek out round the photo's head
     seamOn = !seamOn; e.currentTarget.setAttribute("aria-pressed", String(seamOn));
     probe.seam = seamOn ? (seamSeg ? "on" : "loading") : "off";
-    if (seamOn) seamGaveUp = false;                           // a second try is allowed when the user asks for it again
+    if (seamOn) { seamGaveUp = false; seamState.slowRuns = 0; seamState.cost = 0; }   // a second try (measured afresh) when the user asks again
     else { if (compositor) compositor.setSeamAmount(0, null); closeSeams(); }
     setStatus(seamOn ? "Clean the edges is on: live hair and ears round the photo's head are hidden." : "Clean the edges is off.");
   });

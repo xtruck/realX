@@ -1,5 +1,7 @@
 # Audit report
 
+> Baseline of 2026-10-14, kept as history. The current audit is `REALX_AUDIT.md` (2026-10-20).
+
 Baseline taken 2026-10-14 at commit `8cc365c` (pushed). It extends and replaces `docs/AUDIT.md`, whose
 findings are kept below. Method: read the code, ran it, and ran the tests. README and progress-log claims
 were treated as claims. Where something was **not run, not measured, or not possible on this hardware**,

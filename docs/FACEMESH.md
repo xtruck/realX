@@ -208,6 +208,10 @@ face is not an OBS source yet, so the OBS section is hidden in this mode.
 
 ## Clean the edges (S13c)
 
+**Too slow here: it turns itself off (2026-10-20).** A segmenter pass blocks the page while it runs (about 12 s per pass measured on a
+software renderer). After one pass over 1 s, or two in a row over 250 ms, the option switches off, the status line says why, and
+`window.__facemesh.seam` reads `"too slow"`. Clicking "Clean the edges" tries again.
+
 The live-frame segmenter keeps the privacy rule: the camera goes to MediaPipe as the video element itself, MediaPipe answers with WebGL textures, one small shader folds them into a running value inside MediaPipe's own context, and the compositor uploads that mask canvas (`MeshCompositor.setSeam`, a sixth texture upload, of values and not of the camera). `seammask.js` and `seams.js` may not call `getAsUint8Array`, `getAsFloat32Array`, `readPixels` or any other read-back (a Node test checks it); there is no CPU delegate for this reason.
 
 ## Photos at several angles (Stage 3)

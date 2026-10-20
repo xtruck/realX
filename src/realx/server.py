@@ -88,9 +88,6 @@ ASSET_MAX_AGE = 3600  # seconds: MediaPipe runtime and models are pinned by hash
 MP_MODELS = ("mp_face", "mp_pose", "mp_hand", "mp_segmenter")  # the only models /mp/models serves
 PREFETCH_MODELS = ("mp_face", "mp_pose", "mp_hand")  # the 16 MB segmenter is fetched only when the face-mesh page asks for it
 _WASM_NAME = re.compile(r"[a-z0-9_]+\.(js|wasm)")
-# onnxruntime-web's runtime, served from this origin because the CSP allows nothing else. Only the all-in-one "jsep" build
-# (it runs both the WebGPU and the WebAssembly backends), under its exact file names.
-_ORT_NAME = re.compile(r"ort-wasm-simd-threaded\.jsep\.(mjs|wasm)")
 
 CSP = (
     "default-src 'none'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; "
@@ -656,8 +653,6 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
     # MediaPipe runtime files: exactly the ones bundled in the package, by name. Nothing else under /mp is served.
     wasm_root = resources.files("realx.web").joinpath("mp/wasm")
     wasm_files = {p.name: p for p in wasm_root.iterdir() if _WASM_NAME.fullmatch(p.name)} if wasm_root.is_dir() else {}
-    ort_root = resources.files("realx.web").joinpath("ort")
-    ort_files = {p.name: p for p in ort_root.iterdir() if _ORT_NAME.fullmatch(p.name)} if ort_root.is_dir() else {}
     hw_lock = threading.Lock()
     hw_cache: dict = {"t": 0.0, "doc": None}
     facemesh_consent = FaceMeshConsent()  # consent for the face-mesh page's photo: this run's key, nothing on disk
@@ -914,8 +909,6 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                 self.wfile.write(avatar)
             elif path.startswith("/mp/wasm/"):
                 self._mp_wasm(path[len("/mp/wasm/") :])
-            elif path.startswith("/ort/"):
-                self._ort_file(path[len("/ort/") :])
             elif path.startswith("/mp/models/"):
                 self._mp_model(path[len("/mp/models/") :])
             elif path == "/favicon.ico":
@@ -970,21 +963,6 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             )
             self.end_headers()
             self.wfile.write(data)
-
-        def _ort_file(self, name: str) -> None:
-            entry = ort_files.get(name)
-            if entry is None:
-                return self._deny(404, "not found")
-            with entry.open("rb") as fh:  # the runtime is tens of MB: stream it, do not hold it in memory
-                size = fh.seek(0, 2)
-                fh.seek(0)
-                self.send_response(200)
-                self._headers(
-                    "application/wasm" if name.endswith(".wasm") else "text/javascript; charset=utf-8", size, max_age=ASSET_MAX_AGE
-                )
-                self.end_headers()
-                while chunk := fh.read(1 << 20):
-                    self.wfile.write(chunk)
 
         def _mp_model(self, name: str) -> None:
             key = next((k for k in MP_MODELS if MANIFEST[k].filename == name), None)

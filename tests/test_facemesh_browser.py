@@ -155,6 +155,12 @@ def test_photo_is_drawn_on_the_live_face_refused_without_a_face_and_removable(st
         page.click("#wire")   # mesh lines off, as they are once a photo is shown: the reference is the plain camera picture
         time.sleep(0.5)
         before = _stage_pixels(page)
+        # the clip sways sideways, so two shots taken a moment apart differ a little everywhere; a few more shots without a photo
+        # let "far from the face" be compared with the one in the same phase of the sway (the photo would change all of them)
+        references = [before]
+        for _ in range(5):
+            time.sleep(0.3)
+            references.append(_stage_pixels(page))
 
         page.set_input_files("#photoFile", str(nothing))
         _wait(page, "window.__facemesh.photo === 'error'", 60)
@@ -175,11 +181,11 @@ def test_photo_is_drawn_on_the_live_face_refused_without_a_face_and_removable(st
         face = lambda img: img[y0:y1, x0:x1]   # noqa: E731
         diff = abs(face(with_photo) - face(before)).mean()
         blue_gain = (face(with_photo)[..., 0] - face(with_photo)[..., 2]).mean() - (face(before)[..., 0] - face(before)[..., 2]).mean()   # BGR: channel 0 is blue
-        outside = abs(with_photo[: y0 // 2] - before[: y0 // 2]).mean()   # the top of the frame, far from the face, must not change
+        outside = min(abs(with_photo[: y0 // 2] - r[: y0 // 2]).mean() for r in references)   # the top of the frame, far from the face, must not change
         print(f"\nphoto drawn: face area changed by {diff:.1f}/255, blue minus red {blue_gain:+.1f}; far from the face {outside:.1f}")
         assert diff > 15 and blue_gain > 15, "the photo did not change the picture where the face is"
-        # the test clip sways, and the two pictures are taken a moment apart, so "far from the face" is not exactly zero (it measured 18 against a
-        # third of 39 under load, while the photo itself is drawn only on the face): half is still a clear separation
+        # the test clip sways, so "far from the face" is not exactly zero even against the closest reference; under load in CI a single
+        # reference once measured 20 against half of 36, which is why several are taken: half is still a clear separation
         assert outside < diff / 2, "the photo changed the picture away from the face"
 
         page.click("#photoClear")
@@ -237,19 +243,24 @@ def test_colour_match_takes_the_live_colours_and_the_picture_is_never_read_back(
         _use_photo(page, blue)
         _wait(page, "window.__facemesh.drawn > 0", 60)
         assert page.evaluate("window.__facemesh.match") == 100, "colour matching is on by default"
+        # S13c is not what this test is about, and on a software renderer one of its passes freezes the page for seconds
+        page.evaluate("() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') === 'true') b.click(); }")
 
-        box = page.evaluate("window.__facemesh.box")
-        h, w = plain.shape[:2]
-        x0, x1 = int(w * (1 - box["x"] - box["w"] * 0.8)), int(w * (1 - box["x"] - box["w"] * 0.2))
-        y0, y1 = int(h * (box["y"] + box["h"] * 0.2)), int(h * (box["y"] + box["h"] * 0.8))
-        gain = lambda img: (img[y0:y1, x0:x1, 0] - img[y0:y1, x0:x1, 2]).mean() - (plain[y0:y1, x0:x1, 0] - plain[y0:y1, x0:x1, 2]).mean()  # noqa: E731
+        def gain(percent):
+            """Blue minus red over the middle of the live face, against the plain camera picture, once the page has drawn two new
+            frames with the setting (the page runs at about 2 fps here, so a fixed pause could still show the old setting). The
+            face box is read at that moment: the clip sways, so a box read earlier would drift off the face."""
+            _set_match(page, percent)
+            f0 = page.evaluate("window.__facemesh.frames")
+            _wait(page, f"window.__facemesh.match === {percent} && window.__facemesh.frames >= {f0 + 2}", 60)
+            img, box = _stage_pixels(page), page.evaluate("window.__facemesh.box")
+            h, w = plain.shape[:2]
+            x0, x1 = int(w * (1 - box["x"] - box["w"] * 0.8)), int(w * (1 - box["x"] - box["w"] * 0.2))
+            y0, y1 = int(h * (box["y"] + box["h"] * 0.2)), int(h * (box["y"] + box["h"] * 0.8))
+            return (img[y0:y1, x0:x1, 0] - img[y0:y1, x0:x1, 2]).mean() - (plain[y0:y1, x0:x1, 0] - plain[y0:y1, x0:x1, 2]).mean()
 
-        _set_match(page, 0)
-        time.sleep(0.6)
-        raw = gain(_stage_pixels(page))     # blue minus red, against the plain camera picture: the photo's own blue skin
-        _set_match(page, 100)
-        time.sleep(0.6)
-        matched = gain(_stage_pixels(page))
+        raw = gain(0)                       # the photo's own blue skin
+        matched = gain(100)
         print(f"\nblue skin of the photo: raw {raw:+.0f}, colour matched {matched:+.0f} (0 = the live colours)")
         assert raw > 60, "with no matching the photo's blue skin should show"
         # S11: matching now takes only the live LIGHT; the photo keeps its own skin colour (that is the identity), so a purple room light or a
@@ -430,7 +441,8 @@ def test_a_photo_is_used_only_after_a_signed_consent_for_that_exact_photo(stack,
         sha = hashlib.sha256(Path(photo).read_bytes()).hexdigest()
         record = page.evaluate("window.__facemesh.record")
         assert record["scope"] == f"portrait:{sha}" and record["subject_id"] == "self" and len(record["signature"]) == 64
-        assert page.is_visible("#badge") and "h" in page.inner_text("#consentState"), page.inner_text("#consentState")
+        assert page.is_visible("#badge")
+        _wait(page, "document.getElementById('consentState').textContent.includes(' h ')", 10)   # the HUD refreshes every 500 ms
 
         posts = [(u, json.loads(b)) for m, u, b in requests if m == "POST"]
         issued = [b for u, b in posts if u.endswith("/api/facemesh/consent")]

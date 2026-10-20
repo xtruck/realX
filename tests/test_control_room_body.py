@@ -107,7 +107,9 @@ class Room:
             for f in self.page.frames:
                 if f.url.rstrip("?").split("?")[0].endswith("/avatar"):
                     return f
-            time.sleep(0.05)
+            # not time.sleep: the sync Playwright API only takes in events (here, the frame's navigation) while it is inside one
+            # of its own calls, so a plain sleep could leave page.frames frozen for the whole timeout (seen in CI, 2026-10-20)
+            self.page.wait_for_timeout(50)
         raise AssertionError("the tracking frame never navigated to /avatar: " + repr([f.url for f in self.page.frames]))
 
     def close(self):
@@ -225,9 +227,9 @@ def test_leaving_the_mode_releases_the_camera_page(make_room):
     # dropping the attribute alone would leave the old page, and its camera, running: it must be unloaded
     deadline = time.time() + 5
     while time.time() < deadline and any("/avatar" in f.url for f in r.page.frames):
-        time.sleep(0.1)
+        r.page.wait_for_timeout(100)   # lets Playwright take in the frame's unload (a plain sleep would not)
     assert not any("/avatar" in f.url for f in r.page.frames)
     assert r.mode == "avatar"
     r.wait("document.querySelector('#view').getAttribute('src')")  # the picture stream is back
-    time.sleep(0.2)
+    r.page.wait_for_timeout(200)   # page errors arrive as events: give them a chance to be taken in
     assert not r.errors
