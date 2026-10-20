@@ -44,6 +44,10 @@ and says so in the status line; clicking it retries. The two limits are first gu
 ## Next measurements, in order
 
 1. On the laptop: `chrome://gpu` (is WebGL hardware-accelerated?) and the face-mesh page's "Measure 10 s" line, idle machine.
-2. `scripts/bench_facemesh.py --headed` once more, with S13c on and off, to get `seamMs` on the UHD 620.
+2. One command on the laptop (idle, other browsers closed):
+   `python scripts\bench_facemesh.py --headed --json facemesh.json` (with `$env:REALX_CHROMIUM` set to `chrome.exe`). Since 2026-10-20 the
+   first two steps are the face alone with "Clean the edges" off, then on; the "edges ms" column is one segmenter pass on the UHD 620, and the
+   report notes it if the option turned itself off as too slow. Checked end to end in the container (software renderer, short settings):
+   the option stopped after a 13 701 ms pass and the report said so; the label was shown in every drawn sample.
 3. The Stage 2 real-webcam checklist (`scripts/facemesh_baseline.md`), which also decides the 20 fps gate for Stage 3.
 4. A 10-minute soak with the laptop on battery and on mains.
