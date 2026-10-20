@@ -4,20 +4,15 @@ Real server, real /api/config and /api/stats; only the browser's camera is fake.
 test_control_room_body.py (Playwright, scikit-image, a Chromium via REALX_CHROMIUM, the yunet model).
 """
 
-import glob
 import os
 import time
 
 import pytest
-from conftest import token_cookie
+from conftest import find_chromium, token_cookie
 
 
 def _chromium():
-    exe = os.environ.get("REALX_CHROMIUM")
-    if exe and os.path.exists(exe):
-        return exe
-    hits = sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"))
-    return hits[-1] if hits else None
+    return find_chromium()
 
 
 @pytest.fixture(scope="module")

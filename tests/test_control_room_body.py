@@ -183,7 +183,8 @@ def test_legs_and_recenter_reach_the_tracking_page_same_origin(make_room):
     r.wait("window.__msgs !== undefined", where=frame)
     r.page.select_option("#legsMode", "off")
     r.page.click("#recenter")
-    r.wait("window.__msgs.length >= 2", where=frame)
+    # wait for the two messages this test sends, not for a count: the page also sends realx-gestures when the frame loads
+    r.wait("['realx-legs', 'realx-recenter'].every(t => window.__msgs.some(m => m.data && m.data.type === t))", where=frame)
     msgs = frame.evaluate("window.__msgs")
     assert {"type": "realx-legs", "mode": "off"} in [m["data"] for m in msgs]
     assert {"type": "realx-recenter"} in [m["data"] for m in msgs]

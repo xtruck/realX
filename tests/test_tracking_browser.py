@@ -10,7 +10,6 @@ the same body through the server's relay. The checks are about what must hold fo
 * refusing the camera leaves the character page usable and says why
 """
 
-import glob
 import json
 import math
 import os
@@ -19,7 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import token_cookie
+from conftest import find_chromium, token_cookie
 
 ROOT = Path(__file__).resolve().parents[1]
 ARGS = ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
@@ -32,11 +31,7 @@ FORBIDDEN = [  # calls that would read, copy, encode or ship camera pixels
 
 
 def _chromium():
-    exe = os.environ.get("REALX_CHROMIUM")
-    if exe and os.path.exists(exe):
-        return exe
-    hits = sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"))
-    return hits[-1] if hits else None
+    return find_chromium()
 
 
 def test_tracker_sources_never_touch_camera_pixels():

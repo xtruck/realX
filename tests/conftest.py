@@ -8,6 +8,7 @@ make carries it as `Authorization: Bearer`. Tests that are *about* authenticatio
 
 from __future__ import annotations
 
+import glob
 import http.client
 import os
 
@@ -17,6 +18,31 @@ TEST_TOKEN = "test-token-0123456789abcdef"
 
 _original_putrequest = http.client.HTTPConnection.putrequest
 _state = {"auto": True}
+
+
+def find_chromium() -> str | None:
+    """A Chromium for the browser tests: REALX_CHROMIUM, then a preinstalled Playwright browser folder, then the one
+    `python -m playwright install chromium` downloaded (what CI uses). None when there is none: the tests then skip."""
+    exe = os.environ.get("REALX_CHROMIUM")
+    if exe and os.path.exists(exe):
+        return exe
+    hits = sorted(glob.glob("/opt/pw-browsers/chromium-*/chrome-linux/chrome"))
+    if hits:
+        return hits[-1]
+    if "chromium" not in _found:
+        _found["chromium"] = None
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as p:
+                path = p.chromium.executable_path
+            _found["chromium"] = path if path and os.path.exists(path) else None
+        except Exception:  # playwright missing, or its browser never installed
+            pass
+    return _found["chromium"]
+
+
+_found: dict = {}
 
 
 def token_cookie(port: int) -> list[dict]:
