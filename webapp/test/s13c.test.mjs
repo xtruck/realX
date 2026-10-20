@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { SEAM, MotionGate, freshness, gate, headZone, seamDue, stepMask, stepMaskArray } from "../src/facemesh/seams.js";
+import { SEAM, MotionGate, freshness, gate, headZone, seamDue, seamTooSlow, stepMask, stepMaskArray } from "../src/facemesh/seams.js";
 
 const src = (name) => readFileSync(new URL(`../src/facemesh/${name}`, import.meta.url), "utf8");
 const code = (name) => src(name).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
@@ -146,4 +146,30 @@ test("with no mask, an option off or a stale answer the compositor draws no seam
   assert.ok(page.includes("seamSeg.failed ? 0 : freshness(now - seamAt)"));
   const comp = code("compositor.js");
   assert.ok(comp.includes("if (!this.seam.ready || !z || !(this.seam.amount > 0.002)) return 0;"));
+});
+
+test("seamTooSlow: a pass that freezes the page turns the option off; one slow warm-up pass does not", () => {
+  const st = { slowRuns: 0 };
+  assert.equal(seamTooSlow(12000, st), true, "about 12 s per pass was measured on a software renderer: off at once");
+  assert.equal(seamTooSlow(SEAM.stopPassMs + 1, { slowRuns: 0 }), true);
+  const warm = { slowRuns: 0 };
+  assert.equal(seamTooSlow(SEAM.slowPassMs + 100, warm), false, "one slow pass may be the graphics card warming up");
+  assert.equal(seamTooSlow(20, warm), false, "a fast pass clears the count");
+  assert.equal(warm.slowRuns, 0);
+  assert.equal(seamTooSlow(SEAM.slowPassMs + 100, warm), false);
+  assert.equal(seamTooSlow(SEAM.slowPassMs + 100, warm), true, "two slow passes in a row: off");
+  const fast = { slowRuns: 0 };
+  for (let i = 0; i < 50; i++) assert.equal(seamTooSlow(30, fast), false, "a normal GPU pass never stops it");
+  for (const bad of [NaN, -1, Infinity, undefined, null, "x"]) assert.equal(seamTooSlow(bad, { slowRuns: 1 }), false, String(bad));
+});
+
+test("the page stops only the segmenter when it is too slow, says so, and keeps the label and consent untouched", () => {
+  const page = readFileSync(new URL("../src/facemesh/page.js", import.meta.url), "utf8");
+  const body = page.slice(page.indexOf("function stopSlowSeams"), page.indexOf("}", page.indexOf("setStatus(`Clean the edges was turned off")) + 1);
+  assert.ok(page.includes("seamTooSlow(seamSeg.lastMs, seamState)"), "the page asks the rule after every pass");
+  assert.match(body, /seamOn = false/);
+  assert.match(body, /aria-pressed", "false"/);
+  assert.match(body, /closeSeams\(\)/);
+  assert.match(body, /probe\.seam = "too slow"/);
+  assert.doesNotMatch(body, /label|consent|guard|watermark|stopCamera|revoke/i, "nothing safety-related is touched by this path");
 });

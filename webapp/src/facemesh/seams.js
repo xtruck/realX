@@ -15,6 +15,8 @@ export const SEAM = Object.freeze({
   fadeMs: 300,        // ... over this long
   slowMs: 60,         // the face model slower than this per frame: run the segmenter half as often
   maxShare: 0.15,     // the segmenter may use this share of the time (its own measured cost sets a floor on the gap between runs)
+  slowPassMs: 250,    // one pass blocks the page for its whole duration: two passes in a row slower than this turn the option off
+  stopPassMs: 1000,   // ... and one pass slower than this turns it off at once (a software renderer measured about 12 000 ms)
 });
 
 const clamp01 = (v) => (v > 0 ? (v > 1 ? 1 : v) : 0);   // NaN becomes 0
@@ -45,6 +47,19 @@ export function seamDue(now, state, faceMs = 0) {
   if (faceMs > SEAM.slowMs) gap *= 2;                                  // the face tracker is struggling: leave it the time
   if (state.cost > 0) gap = Math.max(gap, state.cost / SEAM.maxShare);  // and never use more than maxShare of the time
   return now - state.last >= gap;
+}
+
+/**
+ * Whether the segmenter is too slow on this computer to keep running. A pass runs on the page's main thread, so the picture freezes
+ * for as long as it takes (measured 2026-10-20: about 12 s per pass on a software renderer, SwiftShader). `passMs` is the last pass's
+ * own time; `state.slowRuns` counts slow passes in a row (one slow first pass may be the graphics card warming up). The two limits are
+ * first guesses, never tuned on the target laptop's GPU.
+ */
+export function seamTooSlow(passMs, state) {
+  if (!Number.isFinite(passMs) || passMs < 0) return false;
+  if (passMs > SEAM.stopPassMs) return true;
+  state.slowRuns = passMs > SEAM.slowPassMs ? (state.slowRuns || 0) + 1 : 0;
+  return state.slowRuns >= 2;
 }
 
 /** How much of the effect to show for an answer that arrived `ageMs` ago: 1 when fresh, fading to 0 when stale, 0 when there is none. */

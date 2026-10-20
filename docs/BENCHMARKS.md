@@ -1,5 +1,7 @@
 # Benchmarks
 
+> Summary, gaps and the 2026-10-20 software-renderer measurement of S13c: `REALX_BENCHMARKS.md`.
+
 Two repeatable benchmarks, plus the resilience tests that guard long sessions. Every number in this file
 was produced by the commands below on one laptop, and the conditions of each run are stated next to it.
 **None of it is a promise about any other machine, and nothing here was measured on a discrete GPU, CUDA,

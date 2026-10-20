@@ -1,5 +1,7 @@
 # Architecture
 
+> This page is the long-term target design. For what the code on `main` actually does, see `REALX_ARCHITECTURE.md` (2026-10-20).
+
 ## Goals
 
 - Real-time (target 30 FPS, under 100 ms glass-to-glass) on a GPU machine.

@@ -186,8 +186,9 @@ def test_the_live_badge_counts_while_a_photo_is_drawn_and_goes_after_stop(stack,
         # nothing about the timer. It is switched off here (it is not what this test is about), the test waits for the timer to
         # advance 6 s, and checks that it never runs faster than real time. The allowance is one capped step (1 s): the reading
         # only changes on a drawn frame, so the first one can be up to one step old when the clock starts.
-        page.click("#seamBtn")
-        _wait(page, "window.__facemesh.seam === 'off' && window.__facemesh.drawn > 0", SLOW)
+        # switched off in one step inside the page: it may already have turned itself off as too slow, and a click would turn it back on
+        page.evaluate("() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') === 'true') b.click(); }")
+        _wait(page, "(window.__facemesh.seam === 'off' || window.__facemesh.seam === 'too slow') && window.__facemesh.drawn > 0", SLOW)
         t0, w0 = page.evaluate("window.__facemesh.liveSeconds"), time.monotonic()
         _wait(page, f"window.__facemesh.liveSeconds >= {t0 + 6}", SLOW)
         t1, w1 = page.evaluate("window.__facemesh.liveSeconds"), time.monotonic()
@@ -258,6 +259,36 @@ def test_everything_the_dashboard_sends_is_ours_and_small(stack, tmp_path):  # n
         for _method, _url, post in requests:
             for path in (first, second):
                 assert Path(path).read_bytes()[:64].hex() not in (post or ""), "a photo's bytes were sent"
+        assert not errors, errors
+    finally:
+        browser.close()
+
+
+def test_clean_the_edges_turns_itself_off_when_one_pass_freezes_the_page(stack, tmp_path):  # noqa: F811
+    """S13c on a slow renderer: the segmenter blocks the page for its whole pass (about 12 s each on this software renderer, measured
+    2026-10-20). The option must stop itself, say so, and leave the photo, the consent and the "Virtual face" label as they were.
+    On a graphics card fast enough to keep it, the test instead checks that it is still on."""
+    browser, ctx, page, _unused, requests, errors = _ready_page(stack, tmp_path)
+    try:
+        first, _second = _write_photos(tmp_path)
+        _use_photo(page, first, SLOW)
+        _wait(page, "window.__facemesh.drawn > 0", SLOW)
+        _wait(page, "window.__facemesh.seam === 'too slow' || window.__facemesh.seamAnswers >= 3", SLOW * 3)
+        s = page.evaluate("window.__facemesh")
+        if s["seam"] != "too slow":
+            assert s["seamMs"] < 1000 and page.get_attribute("#seamBtn", "aria-pressed") == "true", s
+            return
+        assert s["seamSlowMs"] > 250, s
+        assert page.get_attribute("#seamBtn", "aria-pressed") == "false"
+        assert "Clean the edges was turned off" in page.inner_text("#status")
+        frames = s["frames"]                                            # the page keeps drawing the photo (drawn = triangles, not frames)
+        _wait(page, f"window.__facemesh.frames > {frames} + 3 && window.__facemesh.drawn > 0 && window.__facemesh.seamAmount === 0", SLOW)
+        assert page.is_visible("#badge") and "Virtual face" in page.inner_text("#badge"), "the label stays on screen"
+        assert page.evaluate("window.__facemesh.label") == "", "the label guard is not disturbed"
+        assert page.evaluate("window.__facemesh.record") is not None, "consent is untouched"
+        page.click("#seamBtn")                                          # the user may ask for it again
+        _wait(page, "window.__facemesh.seam === 'loading' || window.__facemesh.seam === 'on'", SLOW)
+        _assert_requests_are_ours(requests, stack[3])
         assert not errors, errors
     finally:
         browser.close()

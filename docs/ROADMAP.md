@@ -1,5 +1,7 @@
 # Roadmap
 
+> Long-term milestones. The working order by priority (P0-P5) is `REALX_ROADMAP.md` (2026-10-20).
+
 | Milestone | Scope | Exit criteria |
 |---|---|---|
 | **M0 Foundation** (this commit) | Research, license audit, architecture, scaffold, tests | `pytest` green, `realx selftest` passes |

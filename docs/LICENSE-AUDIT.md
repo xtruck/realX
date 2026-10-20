@@ -1,5 +1,7 @@
 # License audit (working document)
 
+> Short register with the open points for a human: `REALX_LICENSES.md` (2026-10-20). The evidence stays here.
+
 Not legal advice. Have a lawyer review before any commercial release.
 
 ## Rules for this repo
@@ -26,7 +28,7 @@ Not legal advice. Have a lawyer review before any commercial release.
 | webatar | no license file found | ideas only until confirmed |
 | MediaPipe (tasks-vision) | Apache-2.0 | allowed, check each model card |
 | VRM / three-vrm | MIT-style | allowed; check each avatar's own license (e.g. CC0) |
-| ghost | Apache-2.0 | may reuse with attribution, review model weights separately |
+| ghost | Apache-2.0 reported by GitHub, but the repo contains CC BY-NC-SA 4.0 code and depends on InsightFace ArcFace (see the GHOST rows below) | ideas only until those questions are answered (corrected 2026-10-20; was "may reuse with attribution") |
 | Real-ESRGAN | BSD-3-Clause | may reuse with attribution |
 | ONNX Runtime, FFmpeg (LGPL build), WebRTC | permissive / LGPL | allowed as dependencies |
 
