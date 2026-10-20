@@ -19,7 +19,7 @@ an item is "done" only when its check has been run.
 
 | # | Item | Done when |
 |---|---|---|
-| 1 | Review and merge PR #18 (two flaky face-mesh browser tests). CI on its head: python, browser (108) and webapp green | owner merges |
+| 1 | PR #18 (two flaky face-mesh browser tests): merged 2026-10-20 (`4347b74`) | done |
 | 2 | S13c auto-off: pushed to `main` (`3b93322`); still to see on the laptop that it does not trigger on the real GPU | `seam` stays "on" in the probe on the UHD 620 |
 | 3 | Laptop: confirm `chrome://gpu` shows WebGL hardware-accelerated; if not, S13c and the page fall back to software and are slow | owner's reading |
 | 4 | Stage 2 real-webcam checklist (`scripts/facemesh_baseline.md`), then `docs/FACEMESH-DEFECTS.md` | owner's results |
