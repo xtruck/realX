@@ -181,10 +181,17 @@ def test_the_live_badge_counts_while_a_photo_is_drawn_and_goes_after_stop(stack,
         _use_photo(page, first, SLOW)
         _wait(page, "window.__facemesh.session === 'live' && window.__facemesh.drawn > 0", SLOW)
         assert page.is_visible("#live") and re.search(r"LIVE\s+\d{1,2}:\d\d", page.inner_text("#live")), page.inner_text("#live")
-        t0 = page.evaluate("window.__facemesh.liveSeconds")
-        time.sleep(4)
-        t1 = page.evaluate("window.__facemesh.liveSeconds")
-        assert t1 >= t0 + 3, f"the timer runs: {t0} -> {t1}"
+        # The timer counts the time between drawn frames, and a gap longer than a second adds only a second (a frozen page is not
+        # live). On a software renderer "Clean the edges" freezes the page for ~12 s per segmenter run, so a fixed 4 s wait proved
+        # nothing about the timer. It is switched off here (it is not what this test is about), the test waits for the timer to
+        # advance 6 s, and checks that it never runs faster than real time. The allowance is one capped step (1 s): the reading
+        # only changes on a drawn frame, so the first one can be up to one step old when the clock starts.
+        page.click("#seamBtn")
+        _wait(page, "window.__facemesh.seam === 'off' && window.__facemesh.drawn > 0", SLOW)
+        t0, w0 = page.evaluate("window.__facemesh.liveSeconds"), time.monotonic()
+        _wait(page, f"window.__facemesh.liveSeconds >= {t0 + 6}", SLOW)
+        t1, w1 = page.evaluate("window.__facemesh.liveSeconds"), time.monotonic()
+        assert t1 - t0 <= (w1 - w0) + 1.0, f"the timer ran faster than the clock: {t1 - t0:.2f} s counted in {w1 - w0:.2f} s"
         page.click("#stop")
         _wait(page, "window.__facemesh.session === 'stopped'", SLOW)
         assert page.is_hidden("#live")
