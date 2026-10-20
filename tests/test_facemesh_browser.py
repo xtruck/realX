@@ -155,6 +155,12 @@ def test_photo_is_drawn_on_the_live_face_refused_without_a_face_and_removable(st
         page.click("#wire")   # mesh lines off, as they are once a photo is shown: the reference is the plain camera picture
         time.sleep(0.5)
         before = _stage_pixels(page)
+        # the clip sways sideways, so two shots taken a moment apart differ a little everywhere; a few more shots without a photo
+        # let "far from the face" be compared with the one in the same phase of the sway (the photo would change all of them)
+        references = [before]
+        for _ in range(5):
+            time.sleep(0.3)
+            references.append(_stage_pixels(page))
 
         page.set_input_files("#photoFile", str(nothing))
         _wait(page, "window.__facemesh.photo === 'error'", 60)
@@ -175,11 +181,11 @@ def test_photo_is_drawn_on_the_live_face_refused_without_a_face_and_removable(st
         face = lambda img: img[y0:y1, x0:x1]   # noqa: E731
         diff = abs(face(with_photo) - face(before)).mean()
         blue_gain = (face(with_photo)[..., 0] - face(with_photo)[..., 2]).mean() - (face(before)[..., 0] - face(before)[..., 2]).mean()   # BGR: channel 0 is blue
-        outside = abs(with_photo[: y0 // 2] - before[: y0 // 2]).mean()   # the top of the frame, far from the face, must not change
+        outside = min(abs(with_photo[: y0 // 2] - r[: y0 // 2]).mean() for r in references)   # the top of the frame, far from the face, must not change
         print(f"\nphoto drawn: face area changed by {diff:.1f}/255, blue minus red {blue_gain:+.1f}; far from the face {outside:.1f}")
         assert diff > 15 and blue_gain > 15, "the photo did not change the picture where the face is"
-        # the test clip sways, and the two pictures are taken a moment apart, so "far from the face" is not exactly zero (it measured 18 against a
-        # third of 39 under load, while the photo itself is drawn only on the face): half is still a clear separation
+        # the test clip sways, so "far from the face" is not exactly zero even against the closest reference; under load in CI a single
+        # reference once measured 20 against half of 36, which is why several are taken: half is still a clear separation
         assert outside < diff / 2, "the photo changed the picture away from the face"
 
         page.click("#photoClear")
@@ -430,7 +436,8 @@ def test_a_photo_is_used_only_after_a_signed_consent_for_that_exact_photo(stack,
         sha = hashlib.sha256(Path(photo).read_bytes()).hexdigest()
         record = page.evaluate("window.__facemesh.record")
         assert record["scope"] == f"portrait:{sha}" and record["subject_id"] == "self" and len(record["signature"]) == 64
-        assert page.is_visible("#badge") and "h" in page.inner_text("#consentState"), page.inner_text("#consentState")
+        assert page.is_visible("#badge")
+        _wait(page, "document.getElementById('consentState').textContent.includes(' h ')", 10)   # the HUD refreshes every 500 ms
 
         posts = [(u, json.loads(b)) for m, u, b in requests if m == "POST"]
         issued = [b for u, b in posts if u.endswith("/api/facemesh/consent")]
