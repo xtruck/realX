@@ -201,10 +201,12 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
                     # S13c "Clean the edges" is on by default: measure the face alone without it first, then with it, so its own cost shows
                     seam_off = "() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') === 'true') b.click(); }"
                     seam_on = "() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') !== 'true') b.click(); }"
-                    steps = [
-                        step("face only, Clean the edges off", lambda: page.evaluate(seam_off), "window.__facemesh.seam === 'off' || window.__facemesh.seam === 'too slow'"),
-                        step("face only (photo on the live face; Clean the edges on, the default)", lambda: page.evaluate(seam_on),
-                             "['on', 'too slow', 'unavailable'].includes(window.__facemesh.seam)"),   # 'loading' until the model is open
+                    steps = [step("face only, Clean the edges off", lambda: page.evaluate(seam_off),
+                                  "window.__facemesh.seam === 'off' || window.__facemesh.seam === 'too slow'")]
+                    if args.edges == "on":   # --edges off keeps it off for every step: the feature costs without it
+                        steps.append(step("face only (photo on the live face; Clean the edges on, the default)", lambda: page.evaluate(seam_on),
+                                          "['on', 'too slow', 'unavailable'].includes(window.__facemesh.seam)"))   # 'loading' until the model is open
+                    steps += [
                         step("+ body and clothes", lambda: page.click("#bodyBtn"), "['on','nopose','nomask','error'].includes(window.__facemesh.body)"),
                         step("+ hair that moves", lambda: page.click("#hairBtn"), "['on','nohair','nomask','error'].includes(window.__facemesh.hair)"),
                         step("+ hands on top (hand model on, no hand in the clip)", lambda: page.click("#handsTop"), "window.__facemesh.liveHands === 'on' || window.__facemesh.liveHands === 'error'"),
@@ -225,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--settle", type=float, default=6.0, help="seconds to wait after each step before sampling")
     ap.add_argument("--warmup", type=float, default=15.0, help="seconds to run the plain page before the first step, discarded")
     ap.add_argument("--startup-timeout", type=float, default=240.0)
+    ap.add_argument("--edges", choices=("on", "off"), default="on",
+                    help='"Clean the edges" (S13c) for the steps after the first: on (the page default) or off, to see the other features without it')
     ap.add_argument("--json", default=None, metavar="PATH")
     args = ap.parse_args(argv)
     from realx import hardware
@@ -233,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = hardware.detect()
     hw = hardware.to_dict(profile, hardware.recommend(profile))
     steps, browser_version, renderer, photo_check = run(args)
-    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "browser": browser_version,
+    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "edges": args.edges, "browser": browser_version,
                         "photo_check": photo_check}, hw, contention, renderer, steps)
     print(f"machine: {hw['cpu']['name']}; renderer: {renderer}; representative: {doc['representative']}")
     for n in doc["notes"]:

@@ -119,3 +119,12 @@ def test_the_first_pass_freeze_is_reported_on_its_own():
     assert s["seam_warm_ms"] == 8270 and s["seamMs_median"] == 26.0
     assert any("first pass" in n and "8270" in n for n in doc["notes"])
     assert not any("too slow" in n for n in doc["notes"]), "a warm-up freeze is not reported as the option stopping"
+
+
+def test_edges_option_is_on_by_default_and_can_be_switched_off():
+    import re
+
+    src = (ROOT / "scripts" / "bench_facemesh.py").read_text(encoding="utf-8")
+    assert re.search(r'add_argument\("--edges", choices=\("on", "off"\), default="on"', src)
+    assert 'if args.edges == "on":' in src, "the edges-on step only runs when asked"
+    assert '"edges": args.edges' in src, "the report records which way it ran"
