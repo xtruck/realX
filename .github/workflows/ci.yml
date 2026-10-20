@@ -9,15 +9,27 @@ permissions:
   contents: read
 
 jobs:
-  python:
+  python:   # everything except the real-browser tests: a few minutes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
       - run: python -m pip install -e ".[dev]"
-      - run: python -m playwright install --with-deps chromium   # the browser tests skip without a Chromium
+      - run: python -m pytest -q -rs -m "not browser"
+
+  browser:   # the real-browser tests (marked in tests/conftest.py), in parallel with the job above: slower, software rendering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev,browser]"
+      - run: python -m playwright install --with-deps chromium
       # the browser tests need the MediaPipe models; Google's storage sometimes answers 401 to an anonymous download, so cache
       # them between runs and retry. If they still cannot be fetched, those tests skip and -rs says why.
       - uses: actions/cache@v4
@@ -32,7 +44,7 @@ jobs:
             echo "some models are missing; retrying in $((attempt * 20)) s"; sleep $((attempt * 20))
           done
           echo "::warning::some models could not be fetched; the tests that need them will skip"
-      - run: python -m pytest -q -rs
+      - run: python -m pytest -q -rs -m browser
 
   webapp:
     runs-on: ubuntu-latest

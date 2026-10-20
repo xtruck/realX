@@ -50,6 +50,22 @@ def _putrequest(self, method, url, *args, **kwargs):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "raw_http: do not add the access token to http.client requests")
+    config.addinivalue_line("markers", "browser: needs Playwright and a Chromium (CI runs these in their own job)")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Mark the real-browser tests: those using the shared `stack` fixture, and every test in a file that uses Playwright.
+    CI runs `-m "not browser"` (quick) and `-m browser` (slow) as two jobs; a plain `pytest` still runs everything."""
+    uses_playwright: dict = {}
+    for item in items:
+        path = str(item.fspath)
+        if path not in uses_playwright:
+            try:
+                uses_playwright[path] = "playwright" in open(path, encoding="utf-8").read()
+            except OSError:
+                uses_playwright[path] = False
+        if uses_playwright[path] or "stack" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.browser)
     http.client.HTTPConnection.putrequest = _putrequest
     os.environ["REALX_TOKEN"] = TEST_TOKEN  # before any module-scoped server fixture is built
 

@@ -45,7 +45,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\test.ps1
 
 This runs the JavaScript tests (if Node.js is present) and then `pytest`, including the tests that start
 Chrome with a **fake** camera. It finds Chrome or Edge by itself and sets `REALX_CHROMIUM`; set that
-variable yourself to use another browser. `-Quick` skips the real-browser tests. `-DryRun` prints the
+variable yourself to use another browser. Those tests also need Playwright, which the install script does not add:
+`..\realx-venv\Scripts\python -m pip install -e ".[browser]"`. Without it they skip. `-Quick` skips the real-browser tests. `-DryRun` prints the
 commands. These tests use made-up video and sound. They do not use your camera or microphone and do not
 prove that tracking works for you; for that, follow `docs\REAL-WEBCAM-VALIDATION.md`.
 
