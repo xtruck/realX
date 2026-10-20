@@ -51,8 +51,16 @@ if (-not $py) {
     if ($DryRun) { Write-Warning $message } else { throw $message }
 }
 elseif (-not $DryRun) {
+    # Windows puts a python.exe in ...\WindowsApps that only offers the Microsoft Store: it is found on PATH but does not run Python.
+    $version = & $py.Source -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not ($version -match '^\d+\.\d+$')) {
+        throw ("'$($py.Source)' did not run Python. If that path is under WindowsApps it is only the Microsoft Store shortcut. " +
+               "Install Python 3.10 or newer from https://www.python.org/downloads/ (tick 'Add python.exe to PATH'), " +
+               "or pass -Python with the full path to an installed python.exe (for example -Python 'D:\Python312\python.exe'). " +
+               "To stop the shortcut, turn off python.exe under Settings > Apps > Advanced app settings > App execution aliases.")
+    }
     $ok = & $py.Source -c "import sys; print(sys.version_info >= (3, 10))"
-    if ($ok -ne 'True') { throw "Python 3.10 or newer is needed; $($py.Source) is older." }
+    if ($ok -ne 'True') { throw "Python 3.10 or newer is needed; $($py.Source) is Python $version." }
 }
 
 # --- environment -----------------------------------------------------------------------------------------
