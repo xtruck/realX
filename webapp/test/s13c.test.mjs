@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { SEAM, MotionGate, freshness, gate, headZone, seamDue, seamTooSlow, stepMask, stepMaskArray } from "../src/facemesh/seams.js";
+import { SEAM, MotionGate, freshness, gate, headZone, maxAge, seamDue, seamRate, seamTooSlow, stepMask, stepMaskArray } from "../src/facemesh/seams.js";
 
 const src = (name) => readFileSync(new URL(`../src/facemesh/${name}`, import.meta.url), "utf8");
 const code = (name) => src(name).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
@@ -133,7 +133,7 @@ test("seams.js and seammask.js never read back, keep or send anything, and the m
 test("the page, not the compositor, runs the segmenter; the compositor only uploads the mask canvas and never names the video for it", () => {
   const page = code("page.js");
   assert.ok(page.includes("stepSeams(now, shown)") && page.includes("seamBtn"));
-  assert.ok(src("facemesh.html").includes('id="seamBtn" type="button" aria-pressed="true"'), "Clean the edges is on by default");
+  assert.ok(src("facemesh.html").includes('id="seamBtn" type="button" aria-pressed="false"'), "Clean the edges is off by default (owner's decision, 2026-10-20)");
   const comp = code("compositor.js");
   const method = comp.match(/setSeam\(source\) \{[\s\S]*?\n  \}/);
   assert.ok(method && (method[0].match(/texImage2D/g) || []).length === 1 && !/video/i.test(method[0]));
@@ -143,7 +143,7 @@ test("with no mask, an option off or a stale answer the compositor draws no seam
   // the amount that reaches the compositor is 0 in all of these (see stepSeams in page.js): option off or no face -> 0; failed -> 0; stale -> freshness 0
   const page = code("page.js");
   assert.ok(page.includes("if (!seamOn || !shown) { compositor.setSeamAmount(0, null)"));
-  assert.ok(page.includes("seamSeg.failed ? 0 : freshness(now - seamAt)"));
+  assert.ok(page.includes("seamSeg.failed ? 0 : freshness(now - seamAt, seamHz)"));
   const comp = code("compositor.js");
   assert.ok(comp.includes("if (!this.seam.ready || !z || !(this.seam.amount > 0.002)) return 0;"));
 });
@@ -166,10 +166,51 @@ test("seamTooSlow: a pass that freezes the page turns the option off; one slow w
 test("the page stops only the segmenter when it is too slow, says so, and keeps the label and consent untouched", () => {
   const page = readFileSync(new URL("../src/facemesh/page.js", import.meta.url), "utf8");
   const body = page.slice(page.indexOf("function stopSlowSeams"), page.indexOf("}", page.indexOf("setStatus(`Clean the edges was turned off")) + 1);
-  assert.ok(page.includes("seamTooSlow(seamSeg.lastMs, seamState)"), "the page asks the rule after every pass");
+  assert.ok(page.includes("seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)"), "the page asks the rule after every pass");
   assert.match(body, /seamOn = false/);
   assert.match(body, /aria-pressed", "false"/);
   assert.match(body, /closeSeams\(\)/);
   assert.match(body, /probe\.seam = "too slow"/);
   assert.doesNotMatch(body, /label|consent|guard|watermark|stopCamera|revoke/i, "nothing safety-related is touched by this path");
+});
+
+test("seamTooSlow: the first pass (the model being prepared) never stops it; the passes after it are judged", () => {
+  const st = { slowRuns: 0 };
+  assert.equal(seamTooSlow(8270, st, true), false, "UHD 620: the first pass took 6.5 to 8.3 s, then about 26 ms");
+  assert.equal(st.slowRuns, 0, "a warm-up pass is not counted");
+  for (let i = 0; i < 20; i++) assert.equal(seamTooSlow(26, st, false), false);
+  const soft = { slowRuns: 0 };
+  assert.equal(seamTooSlow(12000, soft, true), false, "software renderer: the first 12 s pass is let through ...");
+  assert.equal(seamTooSlow(12000, soft, false), true, "... and the second one stops it");
+});
+
+test("the segmenter leaves its first pass out of the running cost and tells the page which pass was the warm-up", () => {
+  const src = readFileSync(new URL("../src/facemesh/seammask.js", import.meta.url), "utf8");
+  assert.match(src, /this\.warmup = this\.passes === 0;/);
+  assert.match(src, /if \(!this\.warmup\) this\.costMs =/);
+  const page = readFileSync(new URL("../src/facemesh/page.js", import.meta.url), "utf8");
+  assert.ok(page.includes("seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)"));
+});
+
+test("Clean the edges is off by default: the button, the page flag and the probe agree", () => {
+  const page = readFileSync(new URL("../src/facemesh/page.js", import.meta.url), "utf8");
+  const html = readFileSync(new URL("../src/facemesh/facemesh.html", import.meta.url), "utf8");
+  assert.match(page, /let seamOn = false,/);
+  assert.match(page, /seam: "off", seamHz,/);
+  assert.match(html, /<button id="seamBtn" type="button" aria-pressed="false">/);
+});
+
+test("seamRate: a rate from the page address between minHz and rateHz, the default for anything else", () => {
+  assert.equal(seamRate("2"), 2); assert.equal(seamRate("0.5"), 0.5); assert.equal(seamRate("5"), 5); assert.equal(seamRate(" 1 "), 1);
+  for (const bad of [null, undefined, "", " ", "0", "0.4", "6", "-1", "abc", "Infinity", "NaN", "2hz", 2]) assert.equal(seamRate(bad), SEAM.rateHz, String(bad));
+});
+
+test("a lower rate spaces the passes out and keeps an answer fresh until the next one is due", () => {
+  const st = { last: 1000, cost: 0 };
+  assert.equal(seamDue(1000 + 499, st, 0, 2), false); assert.equal(seamDue(1000 + 501, st, 0, 2), true);
+  assert.equal(seamDue(1000 + 999, st, 0, 1), false); assert.equal(seamDue(1000 + 1001, st, 0, 1), true);
+  assert.equal(maxAge(SEAM.rateHz), SEAM.maxAgeMs, "the default rate keeps the old limit");
+  assert.equal(maxAge(1), 2500); assert.equal(freshness(2400, 1), 1, "at 1 a second an answer 2.4 s old still shows");
+  assert.equal(freshness(2400), 0, "at the default rate it would be stale");
+  for (const hz of [0.5, 1, 2, 5]) assert.ok(maxAge(hz) > 1000 / hz * 2, `at ${hz}/s an answer outlives two gaps`);
 });

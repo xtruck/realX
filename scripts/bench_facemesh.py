@@ -9,6 +9,8 @@ What the numbers can and cannot say:
 * They belong to this machine and this moment. The report records other running Chrome processes before it starts and says "not
   representative" when it finds any, because another tab shares the GPU.
 * The WebGL renderer is recorded. A software renderer ("SwiftShader") means the numbers are NOT the real GPU's: use --headed.
+* "Clean the edges" (S13c) is measured as its own step ("edges ms" = one segmenter pass); if it turns itself off as too slow, the
+  report says so and the later steps run without it.
 * The camera is a fake one playing a portrait with no hand, so the hand model runs but finds no hand: the hands-on-top and wiping
   costs with a real hand are not included. This is stated in the report.
 
@@ -35,7 +37,7 @@ from bench_tracking import (  # noqa: E402
     CAMERA_FLAGS, SOFTWARE_GL, _find_browser, detect_contention, open_authenticated_page, parse_resolution, write_clip,
 )
 
-FIELDS = ("fps", "detectMs", "poseMs", "handMs", "hairMs")
+FIELDS = ("fps", "detectMs", "poseMs", "handMs", "hairMs", "seamMs")
 # Acceptance figure from the roadmap: tracking plus compositing at 640x480.
 GATE_FPS = 20.0
 
@@ -60,7 +62,9 @@ def summarize_step(name: str, samples: list[dict]) -> dict:
     span = (timed[-1]["t"] - timed[0]["t"]) if len(timed) >= 2 else 0
     out["hand_hz"] = round((timed[-1]["handPolls"] - timed[0]["handPolls"]) / span, 2) if span > 0 else None   # how often the hand model really ran
     last = samples[-1] if samples else {}
-    out["states"] = {k: last.get(k) for k in ("body", "hair", "liveHands", "stains")}
+    out["states"] = {k: last.get(k) for k in ("body", "hair", "liveHands", "stains", "seam")}
+    out["seam_slow_ms"] = last.get("seamSlowMs")   # set when "Clean the edges" turned itself off as too slow (S13c)
+    out["seam_warm_ms"] = last.get("seamWarmMs")   # its first pass, while the model is prepared: the picture freezes that long once
     drawn = [s for s in samples if (s.get("drawn") or 0) > 0]
     out["drawn_samples"] = len(drawn)
     out["label_visible_while_drawn"] = (all(s.get("badge_visible") for s in drawn) if drawn else None)
@@ -76,6 +80,14 @@ def build_report(config: dict, hardware: dict, contention: dict, renderer: str, 
     if software:
         notes.append("The WebGL renderer is a SOFTWARE renderer, not the GPU: these numbers are not this laptop's real speed. Run with --headed.")
     notes.append("The fake camera shows no hand, so the hand model ran but found none: costs with a real hand are not included.")
+    warm = next((s.get("seam_warm_ms") for s in steps if s.get("seam_warm_ms")), None)
+    if warm:
+        notes.append(f"\"Clean the edges\" first pass (the model being prepared on the graphics card) took {warm} ms: the picture froze that "
+                     "long once; \"edges ms\" is the cost of the passes after it.")
+    slow = next((s for s in steps if s.get("states", {}).get("seam") == "too slow"), None)
+    if slow:
+        notes.append(f"\"Clean the edges\" turned itself off as too slow (one pass took {slow.get('seam_slow_ms')} ms): on this machine it would freeze the "
+                     "picture, so the steps after it ran without it.")
     return {
         "kind": "realx-facemesh-bench", "version": 1, "date_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M"),
         "config": config, "hardware": hardware, "contention": contention, "webgl_renderer": renderer,
@@ -85,14 +97,14 @@ def build_report(config: dict, hardware: dict, contention: dict, renderer: str, 
 
 def format_table(doc: dict) -> str:
     lines = [
-        "| Step | fps (median) | fps p95 | face ms | pose ms | hand ms | hand runs/s | hair ms | started | label shown | >= 20 fps |",
-        "|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Step | fps (median) | fps p95 | face ms | pose ms | hand ms | hand runs/s | hair ms | edges ms | started | label shown | >= 20 fps |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for s in doc["steps"]:
         started = ", ".join(f"{k}={v}" for k, v in s["states"].items() if v not in (None, "off", 0))
-        lines.append("| {step} | {fps} | {p95} | {det} | {pose} | {hand} | {hz} | {hair} | {started} | {label} | {gate} |".format(
+        lines.append("| {step} | {fps} | {p95} | {det} | {pose} | {hand} | {hz} | {hair} | {seam} | {started} | {label} | {gate} |".format(
             step=s["step"], fps=s["fps_median"], p95=s["fps_p95"], det=s["detectMs_median"], pose=s["poseMs_median"],
-            hand=s["handMs_median"], hz=s.get("hand_hz"), hair=s["hairMs_median"], started=started or "-",
+            hand=s["handMs_median"], hz=s.get("hand_hz"), hair=s["hairMs_median"], seam=s.get("seamMs_median"), started=started or "-",
             label={True: "yes", False: "NO", None: "n/a"}[s["label_visible_while_drawn"]],
             gate={True: "yes", False: "no", None: "n/a"}[s["gate_20fps"]]))
     return "\n".join(lines)
@@ -119,7 +131,9 @@ def _photo(tmp: Path) -> Path:
 
 def _sample(page) -> dict:
     s = page.evaluate("window.__facemesh") or {}
-    out = {k: s.get(k) for k in (*FIELDS, "drawn", "body", "hair", "liveHands", "stains", "handPolls")}
+    out = {k: s.get(k) for k in (*FIELDS, "drawn", "body", "hair", "liveHands", "stains", "handPolls", "seam", "seamSlowMs", "seamWarmMs")}
+    if out.get("seam") != "on":
+        out["seamMs"] = None   # the page keeps its last pass time after the option stops: only count it while it runs
     out["t"] = time.time()
     try:
         out["badge_visible"] = bool(page.is_visible("#badge"))
@@ -152,7 +166,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
                 browser = p.chromium.launch(executable_path=exe, headless=not args.headed, args=flags)
                 try:
                     page = open_authenticated_page(browser, server, viewport={"width": 800, "height": 1800})
-                    page.goto(f"http://127.0.0.1:{server.port}/facemesh")
+                    page.goto(f"http://127.0.0.1:{server.port}/facemesh" + (f"?seamHz={args.edges_hz:g}" if args.edges_hz else ""))
                     _wait(page, "window.__facemesh && window.__facemesh.state === 'running' && window.__facemesh.found >= 5", args.startup_timeout)
                     page.set_input_files("#photoFile", str(photo))
                     _wait(page, "window.__facemesh.photo === 'asking'", args.startup_timeout)
@@ -184,8 +198,16 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
                         return summarize_step(name, samples)
 
                     time.sleep(args.warmup)   # models loading and shaders compiling would otherwise bias the first step; nothing is sampled
-                    steps = [
-                        step("face only (photo on the live face)", None, None),
+                    # S13c "Clean the edges" (off by default since 2026-10-20): the face alone without it first, then with it, so its own cost shows
+                    seam_off = "() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') === 'true') b.click(); }"
+                    seam_on = "() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') !== 'true') b.click(); }"
+                    steps = [step("face only, Clean the edges off", lambda: page.evaluate(seam_off),
+                                  "window.__facemesh.seam === 'off' || window.__facemesh.seam === 'too slow'")]
+                    if args.edges == "on":   # --edges off keeps it off for every step: the feature costs without it
+                        steps.append(step("face only, Clean the edges on", lambda: page.evaluate(seam_on),
+                                          # sampled once its first pass (a one-off freeze while the model is prepared) is over
+                                          "window.__facemesh.seamAnswers > 0 || ['too slow', 'unavailable'].includes(window.__facemesh.seam)"))
+                    steps += [
                         step("+ body and clothes", lambda: page.click("#bodyBtn"), "['on','nopose','nomask','error'].includes(window.__facemesh.body)"),
                         step("+ hair that moves", lambda: page.click("#hairBtn"), "['on','nohair','nomask','error'].includes(window.__facemesh.hair)"),
                         step("+ hands on top (hand model on, no hand in the clip)", lambda: page.click("#handsTop"), "window.__facemesh.liveHands === 'on' || window.__facemesh.liveHands === 'error'"),
@@ -206,6 +228,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--settle", type=float, default=6.0, help="seconds to wait after each step before sampling")
     ap.add_argument("--warmup", type=float, default=15.0, help="seconds to run the plain page before the first step, discarded")
     ap.add_argument("--startup-timeout", type=float, default=240.0)
+    ap.add_argument("--edges", choices=("on", "off"), default="on",
+                    help='"Clean the edges" (S13c) for the steps after the first: on (the page default) or off, to see the other features without it')
+    ap.add_argument("--edges-hz", type=float, default=None, metavar="HZ",
+                    help="passes a second for Clean the edges (0.5 to 5; the page default is 5), given to the page as ?seamHz=")
     ap.add_argument("--json", default=None, metavar="PATH")
     args = ap.parse_args(argv)
     from realx import hardware
@@ -214,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = hardware.detect()
     hw = hardware.to_dict(profile, hardware.recommend(profile))
     steps, browser_version, renderer, photo_check = run(args)
-    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "browser": browser_version,
+    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "edges": args.edges, "edges_hz": args.edges_hz, "browser": browser_version,
                         "photo_check": photo_check}, hw, contention, renderer, steps)
     print(f"machine: {hw['cpu']['name']}; renderer: {renderer}; representative: {doc['representative']}")
     for n in doc["notes"]:

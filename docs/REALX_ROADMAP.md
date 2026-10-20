@@ -20,16 +20,19 @@ an item is "done" only when its check has been run.
 | # | Item | Done when |
 |---|---|---|
 | 1 | PR #18 (two flaky face-mesh browser tests): merged 2026-10-20 (`4347b74`) | done |
-| 2 | S13c auto-off: pushed to `main` (`3b93322`); still to see on the laptop that it does not trigger on the real GPU | `seam` stays "on" in the probe on the UHD 620 |
-| 3 | Laptop: confirm `chrome://gpu` shows WebGL hardware-accelerated; if not, S13c and the page fall back to software and are slow | owner's reading |
+| 2 | S13c auto-off: on the laptop it **did** trigger, on the one-off first pass (6.5-8.3 s; later passes about 26 ms). Fix: branch `seam-warmup-pass` | `seam` stays "on" on the UHD 620 |
+| 3 | Laptop GPU: the benchmark's renderer is `ANGLE (Intel, UHD Graphics 620, Direct3D11)`, i.e. hardware-accelerated (2026-10-20) | done |
 | 4 | Stage 2 real-webcam checklist (`scripts/facemesh_baseline.md`), then `docs/FACEMESH-DEFECTS.md` | owner's results |
 
 ## P2: performance
 
 | # | Item | Done when |
 |---|---|---|
-| 1 | Measure `seamMs` on the UHD 620 (bench with S13c on/off); tune the 250 ms / 1 s limits from it | numbers in `BENCHMARKS.md` |
-| 2 | Decide whether S13c stays on by default once its real cost is known | owner decision with numbers |
+| 1 | `seamMs` on the UHD 620: measured 2026-10-20 (`BENCHMARKS.md` section 11): about 26 ms, so 250 ms / 1 s leave a wide margin | done |
+| 1b | The one-off 6.5-8.3 s freeze of the first S13c pass: warm the model up before the photo is shown, or accept it | owner decision |
+| 1c | Body-step slowdown: caused by S13c at 5 passes a second (off: 24.2 fps with the body, all steps over 20). S13c off by default since 2026-10-20 | done |
+| 1d | S13c at a lower rate: `bench_facemesh.py --headed --edges-hz 2` and `1` on the laptop; keep the rate that stays over 20 fps, if any | owner's runs |
+| 2 | S13c default: **off** (owner, 2026-10-20) | done |
 | 3 | 10-minute soak, mains and battery | a run with p95 frame time |
 | 4 | Stage 3 20 fps gate (PR #14 stays unmerged until then) | bench with angle photos |
 

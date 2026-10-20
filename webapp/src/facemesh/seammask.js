@@ -64,7 +64,7 @@ export class SeamSegmenter {
 
   constructor(task, canvas) {
     this.task = task; this.canvas = canvas;
-    this.failed = false; this.answers = 0; this.lastTs = 0; this.costMs = 0; this.lastMs = 0; this.gl = null;
+    this.failed = false; this.answers = 0; this.lastTs = 0; this.costMs = 0; this.lastMs = 0; this.passes = 0; this.warmup = false; this.gl = null;
   }
 
   setup() {
@@ -173,7 +173,11 @@ export class SeamSegmenter {
     if (!ok) this.failed = true;
     const took = performance.now() - t0;
     this.lastMs = took;
-    this.costMs = this.costMs ? 0.8 * this.costMs + 0.2 * took : took;
+    // the first pass prepares the model on the graphics card (6.5 to 8.3 s on the UHD 620, then about 26 ms a pass): it is not the cost
+    // of a pass, so it neither sets the running cost (which spaces the passes) nor counts as "too slow" (seams.js seamTooSlow)
+    this.warmup = this.passes === 0;
+    this.passes++;
+    if (!this.warmup) this.costMs = this.costMs ? 0.8 * this.costMs + 0.2 * took : took;
     if (ok) this.answers++;
     return ok;
   }

@@ -20,7 +20,7 @@ import { buildBodyPuppet, easeJoints, jointsFromPose, smoothJoints } from "./pup
 import { gripShapes, handFans, handShapes } from "./handlayer.js";
 import { MaskConfidence, holdFactors } from "./confidence.js";
 import { StainSet, bindToPuppet, stainFans } from "./stains.js";
-import { MotionGate, freshness, headZone, seamDue, seamTooSlow } from "./seams.js";
+import { MotionGate, freshness, headZone, seamDue, seamRate, seamTooSlow } from "./seams.js";
 import { SeamSegmenter } from "./seammask.js";
 import { AnglePicker, SerialLoader, checkAngle, gateVerdict, photoYaw } from "./angles.js";
 
@@ -371,13 +371,15 @@ function stepStains(now, shown) {
   compositor.setStains(stainFans(stains.circles(scale), aspect));
 }
 
-// Step S13c, "Clean the edges" (on by default): a live-frame segmenter runs a few times a second ON THE GRAPHICS CARD (seammask.js; the
+// Step S13c, "Clean the edges" (OFF by default since 2026-10-20: at 5 passes a second it cost about 8 fps on the UHD 620, see
+// docs/BENCHMARKS.md section 11; the rate can be lowered with ?seamHz= in the page address): a live-frame segmenter runs a few times a second ON THE GRAPHICS CARD (seammask.js; the
 // camera picture and the masks never reach this code) and the compositor hides live hair and ears round the photo's head with the photo's
 // own background colour. Off, not loaded, failed, stale or slow: nothing is drawn extra, which is the look before this step.
-let seamOn = true, seamSeg = null, seamLoading = false, seamGaveUp = false, seamAt = -Infinity;
+let seamOn = false, seamSeg = null, seamLoading = false, seamGaveUp = false, seamAt = -Infinity;
 const seamState = { last: -Infinity, cost: 0, slowRuns: 0 };
 const seamMotion = new MotionGate();
-Object.assign(probe, { seam: "on", seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
+const seamHz = seamRate(new URLSearchParams(location.search).get("seamHz"));
+Object.assign(probe, { seam: "off", seamHz, seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
 
 async function loadSeams() {
   if (seamSeg || seamLoading || seamGaveUp) return;
@@ -405,15 +407,16 @@ function stepSeams(now, shown) {
   if (!compositor) return;
   if (!seamOn || !shown) { compositor.setSeamAmount(0, null); seamMotion.update(null, now); probe.seamAmount = 0; return; }
   if (!seamSeg) { loadSeams(); compositor.setSeamAmount(0, null); probe.seamAmount = 0; return; }
-  if (!seamSeg.failed && seamDue(now, seamState, detectMs)) {
+  if (!seamSeg.failed && seamDue(now, seamState, detectMs, seamHz)) {
     seamState.last = now;
     if (seamSeg.run(video)) { compositor.setSeam(seamSeg.canvas); seamAt = now; probe.seamAnswers = seamSeg.answers; }
     seamState.cost = seamSeg.costMs; probe.seamMs = seamSeg.costMs;
     if (seamSeg.failed) { probe.seam = "unavailable"; probe.seamError = String(seamSeg.error || "").slice(0, 160); }
-    else if (seamTooSlow(seamSeg.lastMs, seamState)) { stopSlowSeams(seamSeg.lastMs); return; }
+    else if (seamSeg.warmup) probe.seamWarmMs = Math.round(seamSeg.lastMs);      // the one-off freeze while the model is prepared
+    else if (seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)) { stopSlowSeams(seamSeg.lastMs); return; }
   }
   const box = faceBox(shown.landmarks);
-  const amount = seamSeg.failed ? 0 : freshness(now - seamAt) * seamMotion.update(box, now);
+  const amount = seamSeg.failed ? 0 : freshness(now - seamAt, seamHz) * seamMotion.update(box, now);
   compositor.setSeamAmount(amount, headZone(box));
   probe.seamAmount = amount;
 }

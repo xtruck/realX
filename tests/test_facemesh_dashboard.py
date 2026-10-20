@@ -273,6 +273,8 @@ def test_clean_the_edges_turns_itself_off_when_one_pass_freezes_the_page(stack, 
         first, _second = _write_photos(tmp_path)
         _use_photo(page, first, SLOW)
         _wait(page, "window.__facemesh.drawn > 0", SLOW)
+        assert page.get_attribute("#seamBtn", "aria-pressed") == "false" and page.evaluate("window.__facemesh.seam") == "off", "off by default"
+        page.click("#seamBtn")                                          # the user turns it on
         _wait(page, "window.__facemesh.seam === 'too slow' || window.__facemesh.seamAnswers >= 3", SLOW * 3)
         s = page.evaluate("window.__facemesh")
         if s["seam"] != "too slow":
@@ -289,6 +291,22 @@ def test_clean_the_edges_turns_itself_off_when_one_pass_freezes_the_page(stack, 
         page.click("#seamBtn")                                          # the user may ask for it again
         _wait(page, "window.__facemesh.seam === 'loading' || window.__facemesh.seam === 'on'", SLOW)
         _assert_requests_are_ours(requests, stack[3])
+        assert not errors, errors
+    finally:
+        browser.close()
+
+
+def test_the_page_takes_the_clean_the_edges_rate_from_its_address(stack, tmp_path):  # noqa: F811
+    """?seamHz= lowers how often S13c runs (0.5 to 5 a second); anything else keeps the default of 5. It stays off until asked."""
+    p, exe, clip, srv = stack
+    browser, ctx, page, _unused, requests, errors = _ready_page(stack, tmp_path)
+    try:
+        assert page.evaluate("window.__facemesh.seamHz") == 5 and page.evaluate("window.__facemesh.seam") == "off"
+        for value, expected in (("2", 2), ("0.5", 0.5), ("9", 5), ("abc", 5)):
+            page.goto(f"http://127.0.0.1:{srv.port}/facemesh?seamHz={value}")
+            _wait(page, "window.__facemesh && window.__facemesh.state === 'running'", SLOW)
+            assert page.evaluate("window.__facemesh.seamHz") == expected, value
+            assert page.evaluate("window.__facemesh.seam") == "off"
         assert not errors, errors
     finally:
         browser.close()

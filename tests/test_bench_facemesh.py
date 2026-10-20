@@ -83,3 +83,54 @@ def test_the_hand_polling_rate_comes_from_the_poll_counter_and_the_clock():
     assert b.summarize_step("none", _samples([20, 20]))["hand_hz"] is None, "no counter, no claim"
     one = [{"fps": 20, "t": 1.0, "handPolls": 3}]
     assert b.summarize_step("single", one)["hand_hz"] is None
+
+
+def test_clean_the_edges_has_its_own_column_and_a_note_when_it_stopped_itself():
+    b = _bench()
+    on = [dict(x, seam="on", seamMs=80.0) for x in _samples([20, 21])]
+    off = [dict(x, seam="off", seamMs=None) for x in _samples([24, 25])]
+    s_on, s_off = b.summarize_step("edges on", on), b.summarize_step("edges off", off)
+    assert s_on["seamMs_median"] == 80.0 and s_on["states"]["seam"] == "on"
+    assert s_off["seamMs_median"] is None and s_off["states"]["seam"] == "off"
+    lines = b.format_table(b.build_report({}, {}, {"warning": None}, "Intel UHD", [s_off, s_on])).splitlines()
+    assert "edges ms" in lines[0] and "| 80.0 |" in lines[3]
+    slow = b.summarize_step("slow", [dict(x, seam="too slow", seamSlowMs=12000) for x in _samples([2])])
+    doc = b.build_report({}, {}, {"warning": None}, "Intel UHD", [slow])
+    assert slow["seam_slow_ms"] == 12000 and any("turned itself off as too slow" in n and "12000" in n for n in doc["notes"])
+
+
+def test_a_stopped_option_does_not_report_its_last_pass_time():
+    b = _bench()
+
+    class Page:
+        def evaluate(self, _):
+            return {"fps": 20, "seam": "off", "seamMs": 12000.0}
+
+        def is_visible(self, _):
+            return True
+
+    assert b._sample(Page())["seamMs"] is None
+
+
+def test_the_first_pass_freeze_is_reported_on_its_own():
+    b = _bench()
+    s = b.summarize_step("edges on", [dict(x, seam="on", seamMs=26.0, seamWarmMs=8270) for x in _samples([26])])
+    doc = b.build_report({}, {}, {"warning": None}, "Intel UHD", [s])
+    assert s["seam_warm_ms"] == 8270 and s["seamMs_median"] == 26.0
+    assert any("first pass" in n and "8270" in n for n in doc["notes"])
+    assert not any("too slow" in n for n in doc["notes"]), "a warm-up freeze is not reported as the option stopping"
+
+
+def test_edges_option_is_on_by_default_and_can_be_switched_off():
+    import re
+
+    src = (ROOT / "scripts" / "bench_facemesh.py").read_text(encoding="utf-8")
+    assert re.search(r'add_argument\("--edges", choices=\("on", "off"\), default="on"', src)
+    assert 'if args.edges == "on":' in src, "the edges-on step only runs when asked"
+    assert '"edges": args.edges' in src, "the report records which way it ran"
+
+
+def test_edges_rate_goes_to_the_page_address_and_the_report():
+    src = (ROOT / "scripts" / "bench_facemesh.py").read_text(encoding="utf-8")
+    assert 'add_argument("--edges-hz", type=float' in src
+    assert '?seamHz={args.edges_hz:g}' in src and '"edges_hz": args.edges_hz' in src
