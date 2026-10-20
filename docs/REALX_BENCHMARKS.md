@@ -8,7 +8,7 @@ adds the 2026-10-20 measurement and the list of gaps. Target machine: Intel Core
 | What | Result | Conditions | Trust |
 |---|---|---|---|
 | Face-mesh page, face only, 2026-10-20 (`BENCHMARKS.md` section 11, two quiet runs) | 25.9 to 26.9 fps | real GPU, fake camera, no other Chrome | good: the two runs agree within 2 fps |
-| Face-mesh page, body on / everything on, 2026-10-20 | 15.7-17.4 / about 14 fps | same | good; **slower than run 6 of 2026-10-17 (25.7 / 20.8-25.1): a regression to bisect** |
+| Face-mesh page, body on / everything on, 2026-10-20 | 15.7-17.4 / about 14 fps | same | good; slower than 2026-10-17 because of S13c at 5/s: with it off, 24.2 / 21.9-23.9 fps (`BENCHMARKS.md` section 11). S13c is now off by default |
 | S13c pass on the UHD 620, 2026-10-20 | first pass 6 483 / 8 270 ms (one-off freeze), then about 26 ms | same | good |
 | Face-mesh page, face only (earlier runs) | 20.7 to 28.8 fps | real GPU (ANGLE D3D11, UHD 620), fake camera, headed Chrome; 12 other Chrome processes in most runs | medium: run-to-run spread up to 2.5x |
 | Face-mesh page, all features | 13.2 (loaded) to 20.8-25.7 fps (quiet machine) | same | medium |

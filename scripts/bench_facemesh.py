@@ -166,7 +166,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
                 browser = p.chromium.launch(executable_path=exe, headless=not args.headed, args=flags)
                 try:
                     page = open_authenticated_page(browser, server, viewport={"width": 800, "height": 1800})
-                    page.goto(f"http://127.0.0.1:{server.port}/facemesh")
+                    page.goto(f"http://127.0.0.1:{server.port}/facemesh" + (f"?seamHz={args.edges_hz:g}" if args.edges_hz else ""))
                     _wait(page, "window.__facemesh && window.__facemesh.state === 'running' && window.__facemesh.found >= 5", args.startup_timeout)
                     page.set_input_files("#photoFile", str(photo))
                     _wait(page, "window.__facemesh.photo === 'asking'", args.startup_timeout)
@@ -198,14 +198,15 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
                         return summarize_step(name, samples)
 
                     time.sleep(args.warmup)   # models loading and shaders compiling would otherwise bias the first step; nothing is sampled
-                    # S13c "Clean the edges" is on by default: measure the face alone without it first, then with it, so its own cost shows
+                    # S13c "Clean the edges" (off by default since 2026-10-20): the face alone without it first, then with it, so its own cost shows
                     seam_off = "() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') === 'true') b.click(); }"
                     seam_on = "() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') !== 'true') b.click(); }"
                     steps = [step("face only, Clean the edges off", lambda: page.evaluate(seam_off),
                                   "window.__facemesh.seam === 'off' || window.__facemesh.seam === 'too slow'")]
                     if args.edges == "on":   # --edges off keeps it off for every step: the feature costs without it
-                        steps.append(step("face only (photo on the live face; Clean the edges on, the default)", lambda: page.evaluate(seam_on),
-                                          "['on', 'too slow', 'unavailable'].includes(window.__facemesh.seam)"))   # 'loading' until the model is open
+                        steps.append(step("face only, Clean the edges on", lambda: page.evaluate(seam_on),
+                                          # sampled once its first pass (a one-off freeze while the model is prepared) is over
+                                          "window.__facemesh.seamAnswers > 0 || ['too slow', 'unavailable'].includes(window.__facemesh.seam)"))
                     steps += [
                         step("+ body and clothes", lambda: page.click("#bodyBtn"), "['on','nopose','nomask','error'].includes(window.__facemesh.body)"),
                         step("+ hair that moves", lambda: page.click("#hairBtn"), "['on','nohair','nomask','error'].includes(window.__facemesh.hair)"),
@@ -229,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--startup-timeout", type=float, default=240.0)
     ap.add_argument("--edges", choices=("on", "off"), default="on",
                     help='"Clean the edges" (S13c) for the steps after the first: on (the page default) or off, to see the other features without it')
+    ap.add_argument("--edges-hz", type=float, default=None, metavar="HZ",
+                    help="passes a second for Clean the edges (0.5 to 5; the page default is 5), given to the page as ?seamHz=")
     ap.add_argument("--json", default=None, metavar="PATH")
     args = ap.parse_args(argv)
     from realx import hardware
@@ -237,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = hardware.detect()
     hw = hardware.to_dict(profile, hardware.recommend(profile))
     steps, browser_version, renderer, photo_check = run(args)
-    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "edges": args.edges, "browser": browser_version,
+    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "edges": args.edges, "edges_hz": args.edges_hz, "browser": browser_version,
                         "photo_check": photo_check}, hw, contention, renderer, steps)
     print(f"machine: {hw['cpu']['name']}; renderer: {renderer}; representative: {doc['representative']}")
     for n in doc["notes"]:

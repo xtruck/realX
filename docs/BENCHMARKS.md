@@ -402,3 +402,18 @@ The label was shown in every drawn sample. Findings:
 * **Regression to explain:** run 6 of section 10 (2026-10-17, quiet machine) gave 25.7 fps with body and clothes and 20.8 to 25.1 with
   everything; today's quiet runs give 15.7-17.4 and about 14. Code added since then includes S12a-d, S13b "Match the webcam's look" (about
   80 extra texture taps per face pixel), S13c-e. Not yet bisected.
+
+**Follow-up runs, same day (owner's laptop, same conditions, both "representative").** After the warm-up fix (#23) S13c kept running at its
+full 5 passes a second, and a run with `--edges off` (#24) kept it off for every step:
+
+| Step | S13c on (5/s) | S13c off |
+|---|---|---|
+| face only | 18.4 fps, face model 64 ms | 26.6 fps, 33 ms |
+| + body and clothes | 16.4 | **24.2** |
+| + hair that moves | 14.0 | 21.9 |
+| + hands on top | 14.1 | 23.9 |
+| + a spill | 13.9 | 23.1 |
+
+**S13c explains the whole slowdown** (no commit bisect needed): its passes cost about 27 ms each, but five a second double the face model's
+time on the shared GPU. Without it every step meets the 20 fps gate. Owner's decision (2026-10-20): S13c is now **off by default**, and
+lower rates are to be measured with `scripts/bench_facemesh.py --headed --edges-hz 2` (and `1`), which loads the page as `/facemesh?seamHz=2`.

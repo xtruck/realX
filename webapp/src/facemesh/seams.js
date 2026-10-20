@@ -7,7 +7,8 @@
 // (stepMask, the same rule as the shader in seammask.js) and only a value that has stayed up for a few answers counts (gate).
 
 export const SEAM = Object.freeze({
-  rateHz: 5,          // segmenter runs this often at most (4 to 6 a second)
+  rateHz: 5,          // segmenter runs this often at most (4 to 6 a second); the page may ask for less (?seamHz=, see seamRate)
+  minHz: 0.5,         // the lowest rate the page accepts
   up: 0.3,            // how far the running value moves towards a higher answer per answer
   down: 0.3,          // and towards a lower one: a one-answer flicker reaches 0.3, below `lo`, so it never shows
   lo: 0.35, hi: 0.65, // the gate: nothing below lo, everything above hi, a soft step between
@@ -41,9 +42,9 @@ export function gate(v, lo = SEAM.lo, hi = SEAM.hi) {
 }
 
 /** When the next segmenter pass may start. state: { last, cost } in ms (cost = its measured time); faceMs = the face model's time per frame. */
-export function seamDue(now, state, faceMs = 0) {
+export function seamDue(now, state, faceMs = 0, rateHz = SEAM.rateHz) {
   if (!Number.isFinite(state.last)) return true;
-  let gap = 1000 / SEAM.rateHz;
+  let gap = 1000 / rateHz;
   if (faceMs > SEAM.slowMs) gap *= 2;                                  // the face tracker is struggling: leave it the time
   if (state.cost > 0) gap = Math.max(gap, state.cost / SEAM.maxShare);  // and never use more than maxShare of the time
   return now - state.last >= gap;
@@ -64,11 +65,27 @@ export function seamTooSlow(passMs, state, warmup = false) {
   return state.slowRuns >= 2;
 }
 
+/**
+ * The segmenter rate the page uses, from the `seamHz` value in its address: SEAM.minHz to SEAM.rateHz, anything else gives the default.
+ * Measured 2026-10-20 on the UHD 620: at 5 a second its passes (about 27 ms each) doubled the face model's time and cost about 8 fps, so
+ * lower rates are being measured (scripts/bench_facemesh.py --edges-hz).
+ */
+export function seamRate(value) {
+  const hz = typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isFinite(hz) && hz >= SEAM.minHz && hz <= SEAM.rateHz ? hz : SEAM.rateHz;
+}
+
+/** How old an answer may get before it counts as stale: SEAM.maxAgeMs, or two and a half gaps when the segmenter runs slower than that. */
+export function maxAge(rateHz = SEAM.rateHz) {
+  return Math.max(SEAM.maxAgeMs, 2500 / rateHz);
+}
+
 /** How much of the effect to show for an answer that arrived `ageMs` ago: 1 when fresh, fading to 0 when stale, 0 when there is none. */
-export function freshness(ageMs) {
+export function freshness(ageMs, rateHz = SEAM.rateHz) {
   if (!Number.isFinite(ageMs) || ageMs < 0) return 0;
-  if (ageMs <= SEAM.maxAgeMs) return 1;
-  return clamp01(1 - (ageMs - SEAM.maxAgeMs) / SEAM.fadeMs);
+  const limit = maxAge(rateHz);
+  if (ageMs <= limit) return 1;
+  return clamp01(1 - (ageMs - limit) / SEAM.fadeMs);
 }
 
 /**
