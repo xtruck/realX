@@ -64,6 +64,7 @@ def summarize_step(name: str, samples: list[dict]) -> dict:
     last = samples[-1] if samples else {}
     out["states"] = {k: last.get(k) for k in ("body", "hair", "liveHands", "stains", "seam")}
     out["seam_slow_ms"] = last.get("seamSlowMs")   # set when "Clean the edges" turned itself off as too slow (S13c)
+    out["seam_warm_ms"] = last.get("seamWarmMs")   # its first pass, while the model is prepared: the picture freezes that long once
     drawn = [s for s in samples if (s.get("drawn") or 0) > 0]
     out["drawn_samples"] = len(drawn)
     out["label_visible_while_drawn"] = (all(s.get("badge_visible") for s in drawn) if drawn else None)
@@ -79,6 +80,10 @@ def build_report(config: dict, hardware: dict, contention: dict, renderer: str, 
     if software:
         notes.append("The WebGL renderer is a SOFTWARE renderer, not the GPU: these numbers are not this laptop's real speed. Run with --headed.")
     notes.append("The fake camera shows no hand, so the hand model ran but found none: costs with a real hand are not included.")
+    warm = next((s.get("seam_warm_ms") for s in steps if s.get("seam_warm_ms")), None)
+    if warm:
+        notes.append(f"\"Clean the edges\" first pass (the model being prepared on the graphics card) took {warm} ms: the picture froze that "
+                     "long once; \"edges ms\" is the cost of the passes after it.")
     slow = next((s for s in steps if s.get("states", {}).get("seam") == "too slow"), None)
     if slow:
         notes.append(f"\"Clean the edges\" turned itself off as too slow (one pass took {slow.get('seam_slow_ms')} ms): on this machine it would freeze the "
@@ -126,7 +131,7 @@ def _photo(tmp: Path) -> Path:
 
 def _sample(page) -> dict:
     s = page.evaluate("window.__facemesh") or {}
-    out = {k: s.get(k) for k in (*FIELDS, "drawn", "body", "hair", "liveHands", "stains", "handPolls", "seam", "seamSlowMs")}
+    out = {k: s.get(k) for k in (*FIELDS, "drawn", "body", "hair", "liveHands", "stains", "handPolls", "seam", "seamSlowMs", "seamWarmMs")}
     if out.get("seam") != "on":
         out["seamMs"] = None   # the page keeps its last pass time after the option stops: only count it while it runs
     out["t"] = time.time()

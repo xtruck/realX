@@ -166,10 +166,28 @@ test("seamTooSlow: a pass that freezes the page turns the option off; one slow w
 test("the page stops only the segmenter when it is too slow, says so, and keeps the label and consent untouched", () => {
   const page = readFileSync(new URL("../src/facemesh/page.js", import.meta.url), "utf8");
   const body = page.slice(page.indexOf("function stopSlowSeams"), page.indexOf("}", page.indexOf("setStatus(`Clean the edges was turned off")) + 1);
-  assert.ok(page.includes("seamTooSlow(seamSeg.lastMs, seamState)"), "the page asks the rule after every pass");
+  assert.ok(page.includes("seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)"), "the page asks the rule after every pass");
   assert.match(body, /seamOn = false/);
   assert.match(body, /aria-pressed", "false"/);
   assert.match(body, /closeSeams\(\)/);
   assert.match(body, /probe\.seam = "too slow"/);
   assert.doesNotMatch(body, /label|consent|guard|watermark|stopCamera|revoke/i, "nothing safety-related is touched by this path");
+});
+
+test("seamTooSlow: the first pass (the model being prepared) never stops it; the passes after it are judged", () => {
+  const st = { slowRuns: 0 };
+  assert.equal(seamTooSlow(8270, st, true), false, "UHD 620: the first pass took 6.5 to 8.3 s, then about 26 ms");
+  assert.equal(st.slowRuns, 0, "a warm-up pass is not counted");
+  for (let i = 0; i < 20; i++) assert.equal(seamTooSlow(26, st, false), false);
+  const soft = { slowRuns: 0 };
+  assert.equal(seamTooSlow(12000, soft, true), false, "software renderer: the first 12 s pass is let through ...");
+  assert.equal(seamTooSlow(12000, soft, false), true, "... and the second one stops it");
+});
+
+test("the segmenter leaves its first pass out of the running cost and tells the page which pass was the warm-up", () => {
+  const src = readFileSync(new URL("../src/facemesh/seammask.js", import.meta.url), "utf8");
+  assert.match(src, /this\.warmup = this\.passes === 0;/);
+  assert.match(src, /if \(!this\.warmup\) this\.costMs =/);
+  const page = readFileSync(new URL("../src/facemesh/page.js", import.meta.url), "utf8");
+  assert.ok(page.includes("seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)"));
 });

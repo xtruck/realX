@@ -110,3 +110,12 @@ def test_a_stopped_option_does_not_report_its_last_pass_time():
             return True
 
     assert b._sample(Page())["seamMs"] is None
+
+
+def test_the_first_pass_freeze_is_reported_on_its_own():
+    b = _bench()
+    s = b.summarize_step("edges on", [dict(x, seam="on", seamMs=26.0, seamWarmMs=8270) for x in _samples([26])])
+    doc = b.build_report({}, {}, {"warning": None}, "Intel UHD", [s])
+    assert s["seam_warm_ms"] == 8270 and s["seamMs_median"] == 26.0
+    assert any("first pass" in n and "8270" in n for n in doc["notes"])
+    assert not any("too slow" in n for n in doc["notes"]), "a warm-up freeze is not reported as the option stopping"
