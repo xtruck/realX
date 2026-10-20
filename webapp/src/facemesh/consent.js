@@ -62,6 +62,36 @@ export class ConsentClient {
     }
   }
 
+  /**
+   * Stage 3: checks several photos' records in ONE request (the front photo and its angle photos). Each answer is applied to its own
+   * client exactly as check() would: a confirmation renews it, a refusal of that record ends it for good. When the request itself fails
+   * nothing is final and every client keeps its short grace. Returns one { ok, reason } per client, in order. Never throws.
+   */
+  static async checkMany(clients) {
+    const asked = (clients || []).filter((c) => c && c.record);
+    const out = new Map((clients || []).map((c) => [c, { ok: false, reason: "no consent" }]));
+    if (asked.length === 1) out.set(asked[0], await asked[0].check());
+    else if (asked.length > 1) {
+      let results = null;
+      try {
+        const data = await asked[0].post("/api/facemesh/consent/check-batch", { items: asked.map((c) => ({ record: c.record, sha256: c.sha })) });
+        results = Array.isArray(data.results) && data.results.length === asked.length ? data.results : null;
+      } catch (err) { results = null; }
+      asked.forEach((c, i) => {
+        const r = results && results[i];
+        if (!r) { out.set(c, { ok: false, reason: "the server did not answer" }); return; }   // not final: valid() allows a short grace
+        if (r.ok === true && Number.isFinite(r.seconds)) {
+          c.lastOkMs = c.now(); c.expiresAtMs = c.lastOkMs + r.seconds * 1000;
+          out.set(c, { ok: true, reason: "" });
+        } else {
+          c.endedReason = String((r && r.error) || "the server refused this consent").slice(0, 200);   // the server said no to this record: final
+          out.set(c, { ok: false, reason: c.endedReason });
+        }
+      });
+    }
+    return (clients || []).map((c) => out.get(c));
+  }
+
   /** Ends the record on the server (best effort) and forgets it here. */
   async revoke() {
     const record = this.record;

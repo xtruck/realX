@@ -1145,6 +1145,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     body = self._json_object()
                     left = facemesh_consent.check(body.get("record"), body.get("sha256"))
                     self._json({"ok": True, "seconds": left})
+                elif parsed.path == "/api/facemesh/consent/check-batch":  # Stage 3: the front photo and its angle photos in one request
+                    self._json({"results": facemesh_consent.check_many(self._json_object().get("items"))})
                 elif parsed.path == "/api/facemesh/consent/revoke":
                     facemesh_consent.revoke(self._json_object().get("record"))
                     self._json({"ok": True})
