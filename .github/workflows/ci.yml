@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install -e ".[dev,browser]"
       - run: python -m playwright install --with-deps chromium   # the browser tests skip without a Chromium
       # the browser tests need the MediaPipe models; Google's storage sometimes answers 401 to an anonymous download, so cache
       # them between runs and retry. If they still cannot be fetched, those tests skip and -rs says why.
