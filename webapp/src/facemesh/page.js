@@ -409,7 +409,8 @@ function stepSeams(now, shown) {
     if (seamSeg.run(video)) { compositor.setSeam(seamSeg.canvas); seamAt = now; probe.seamAnswers = seamSeg.answers; }
     seamState.cost = seamSeg.costMs; probe.seamMs = seamSeg.costMs;
     if (seamSeg.failed) { probe.seam = "unavailable"; probe.seamError = String(seamSeg.error || "").slice(0, 160); }
-    else if (seamTooSlow(seamSeg.lastMs, seamState)) { stopSlowSeams(seamSeg.lastMs); return; }
+    else if (seamSeg.warmup) probe.seamWarmMs = Math.round(seamSeg.lastMs);      // the one-off freeze while the model is prepared
+    else if (seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)) { stopSlowSeams(seamSeg.lastMs); return; }
   }
   const box = faceBox(shown.landmarks);
   const amount = seamSeg.failed ? 0 : freshness(now - seamAt) * seamMotion.update(box, now);

@@ -16,7 +16,7 @@ export const SEAM = Object.freeze({
   slowMs: 60,         // the face model slower than this per frame: run the segmenter half as often
   maxShare: 0.15,     // the segmenter may use this share of the time (its own measured cost sets a floor on the gap between runs)
   slowPassMs: 250,    // one pass blocks the page for its whole duration: two passes in a row slower than this turn the option off
-  stopPassMs: 1000,   // ... and one pass slower than this turns it off at once (a software renderer measured about 12 000 ms)
+  stopPassMs: 1000,   // ... and one pass slower than this turns it off at once (software renderer: about 12 000 ms; UHD 620: about 26 ms)
 });
 
 const clamp01 = (v) => (v > 0 ? (v > 1 ? 1 : v) : 0);   // NaN becomes 0
@@ -51,11 +51,13 @@ export function seamDue(now, state, faceMs = 0) {
 
 /**
  * Whether the segmenter is too slow on this computer to keep running. A pass runs on the page's main thread, so the picture freezes
- * for as long as it takes (measured 2026-10-20: about 12 s per pass on a software renderer, SwiftShader). `passMs` is the last pass's
- * own time; `state.slowRuns` counts slow passes in a row (one slow first pass may be the graphics card warming up). The two limits are
- * first guesses, never tuned on the target laptop's GPU.
+ * for as long as it takes. Measured 2026-10-20: on the target laptop (UHD 620) the FIRST pass took 6.5 and 8.3 s (the model being
+ * prepared on the graphics card) and the next ones about 26 ms; on a software renderer (SwiftShader) every pass took about 12 s.
+ * So the first pass (`warmup`) is never judged; after it, one pass over `stopPassMs`, or two in a row over `slowPassMs`, stop it.
+ * `state.slowRuns` counts slow passes in a row.
  */
-export function seamTooSlow(passMs, state) {
+export function seamTooSlow(passMs, state, warmup = false) {
+  if (warmup) return false;
   if (!Number.isFinite(passMs) || passMs < 0) return false;
   if (passMs > SEAM.stopPassMs) return true;
   state.slowRuns = passMs > SEAM.slowPassMs ? (state.slowRuns || 0) + 1 : 0;
