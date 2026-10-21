@@ -27,6 +27,11 @@ so quote-check anything you rely on in the repository itself).
 * Which applications see it. The README names none and does not mention Media Foundation, the Windows Camera app,
   Chrome, Zoom, Teams, WhatsApp Desktop or TikTok Live Studio. A DirectShow-only device may be invisible to
   applications that use Windows' newer camera stack.
+  *Update 2026-10-21 (pyvirtualcam source read with REA):* OBS's own Virtual Camera, which pyvirtualcam writes to, is also a
+  DirectShow filter (CLSID `{A3FCE0F5-3493-419F-958A-ABA1250EC20B}`, frames go through the shared-memory queue `OBSVirtualCamVideo`)
+  and is widely accepted by Zoom and Meet. So a DirectShow-only camera is less likely to be a problem for those apps than this
+  document first feared. The Windows Camera app and other Media Foundation-only programs remain untested. Nothing here is a
+  measurement on this machine: the test table below still decides.
 * Behaviour with two senders, with a sender that stops, and with the camera in use by several applications at once.
 * Antivirus and SmartScreen reactions to an unsigned, self-built DLL and an installer that edits the registry.
 
