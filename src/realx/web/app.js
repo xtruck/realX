@@ -309,7 +309,11 @@ async function poll() {
       : s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
     if (s.error && !inBody && !inPhoto) {
       $("notice").hidden = false;
-      $("notice").textContent = s.error + " Choose a demo source or check your camera.";
+      const info = s.error_info;
+      $("notice").textContent = info
+        ? `${info.title}. ${info.hint}${info.retryable ? " realX is trying again." : ""}`
+        : s.error + " Choose a demo source or check your camera.";
+      $("notice").title = info && info.detail ? `${info.code}: ${info.detail}` : "";
     }
     $("srcLabel").textContent = inBody ? "This computer's camera" : s.config.source === "camera" ? "Camera" : "Demo footage";
     syncControls(s.config);

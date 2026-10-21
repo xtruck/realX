@@ -34,6 +34,7 @@ import numpy as np
 
 from realx import __version__
 from realx.diag import Diagnostics
+from realx.errors import classify, stop_state
 from realx.audio import offline, presets
 from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model
 from realx import ws
@@ -188,6 +189,7 @@ class Engine:
         self._pipe: StudioController | None = None  # read only for per-stage timings and the studio state in stats()
         self._frames_src = None  # the open video source, read only for its capture figures
         self._stats = {"fps": 0.0, "latency_ms": 0.0, "faces": 0, "dropped": 0, "frames": 0, "error": None}
+        self._error_info = None  # classify(self._stats["error"]); set together with it in _set_error
 
     # -- public -------------------------------------------------------------------
     @property
@@ -201,12 +203,25 @@ class Engine:
         self._thread = threading.Thread(target=self._run, name="realx-engine", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self) -> dict:
+        """Ask the engine thread to end and wait up to 5 s. Returns the stop state: `pending` means it has not exited yet."""
         self._stop.set()
         with self._cond:
             self._cond.notify_all()
         if self._thread:
             self._thread.join(timeout=5)
+        status = self.stop_status()
+        if status["state"] == "pending":
+            log.warning("the engine thread did not stop within 5 s; stopping can be retried")
+        return status
+
+    def retry_stop(self) -> dict:
+        """Ask again for a stop that was still pending. Safe to call at any time."""
+        return self.stop()
+
+    def stop_status(self) -> dict:
+        alive = bool(self._thread and self._thread.is_alive())
+        return stop_state(alive, self._stop.is_set())
 
     def config(self) -> dict:
         with self._lock:
@@ -293,6 +308,7 @@ class Engine:
             out = dict(self._stats)
             out["ribbon"] = list(self._ribbon)
             out["config"] = dict(self._config)
+            out["error_info"] = self._error_info.as_dict() if self._error_info else None
             out["version"] = __version__
             out["body"] = {"publishing": self._publishing, "viewers": self._viewers}
             out["dock"] = self.dock_state()
@@ -306,6 +322,7 @@ class Engine:
                 capture = grab()
             except Exception:  # diagnostics must never break a stats request
                 capture = None
+        out["stop"] = self.stop_status()
         out["diag"] = self._diag.snapshot(stage_ms, capture)
         status = getattr(pipe, "status", None)  # a plain Pipeline (tests, custom builds) has no studio state
         out["studio"] = status().as_dict() if callable(status) else None
@@ -456,8 +473,10 @@ class Engine:
                 log.debug("closing the video source failed", exc_info=True)  # best effort: the camera may already be gone
 
     def _set_error(self, message: str | None) -> None:
+        info = classify(message)
         with self._lock:
             self._stats["error"] = message
+            self._error_info = info
 
     def _run(self) -> None:
         import cv2
@@ -552,6 +571,7 @@ class Engine:
                             log.info("video is flowing again after: %s", rlog.clip(s["error"]))
                             self._dedup.forget(("source", s["error"]))  # a later repeat of the same fault is news again
                         s["error"] = None
+                        self._error_info = None
                         self._ribbon.append(state)
                         self._jpeg = None if buf is None else buf.tobytes()
                         self._seq += 1
