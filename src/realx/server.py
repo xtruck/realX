@@ -840,7 +840,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
         def do_GET(self) -> None:
             if not self._local_host():
                 return self._deny(403, "forbidden host")
-            if not self._not_cross_site():
+            if not self._not_cross_site() or not self._same_origin():  # a foreign Origin is refused even where Sec-Fetch-Site is absent
                 return self._deny(403, "cross-site requests are not allowed")
             source = self._auth_source(allow_query=True)
             if source is None:
