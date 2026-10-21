@@ -134,3 +134,24 @@ def test_edges_rate_goes_to_the_page_address_and_the_report():
     src = (ROOT / "scripts" / "bench_facemesh.py").read_text(encoding="utf-8")
     assert 'add_argument("--edges-hz", type=float' in src
     assert '?seamHz={args.edges_hz:g}' in src and '"edges_hz": args.edges_hz' in src
+
+
+def test_the_stage3_step_is_reported_honestly():
+    b = _bench()
+    s = b.summarize_step("angles", [dict(x, angleCount=1) for x in _samples([25])])
+    s["angle_photo"] = {"refused": [], "accepted": "side-30-mirror.png"}
+    notes = b.build_report({}, {}, {"warning": None}, "Intel UHD", [s])["notes"]
+    assert s["states"]["angleCount"] == 1
+    assert any("side photo was added" in n and "crossfade" in n and "not included" in n for n in notes), notes
+    r = b.summarize_step("angles", _samples([25]))
+    r["angle_photo"] = {"refused": ["side-30.png: faces the same way as your front photo"]}
+    notes = b.build_report({}, {}, {"warning": None}, "Intel UHD", [r])["notes"]
+    assert any("no side photo was accepted" in n and "same way" in n for n in notes), notes
+    assert not any("Stage 3" in n for n in b.build_report({}, {}, {"warning": None}, "Intel UHD", [b.summarize_step("x", _samples([25]))])["notes"])
+
+
+def test_side_photos_are_made_from_the_bench_photo(tmp_path):
+    b = _bench()
+    sides = b._side_photos(b._photo(tmp_path))
+    assert len(sides) == 4 and all(p.exists() and p.stat().st_size > 1000 for p in sides)
+    assert len({p.read_bytes() for p in sides}) == 4, "four different pictures"
