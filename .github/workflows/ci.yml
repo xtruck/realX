@@ -60,4 +60,15 @@ jobs:
           cache-dependency-path: webapp/package-lock.json
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Committed bundles match a rebuild
+        run: |
+          npm run build
+          if ! git diff --ignore-cr-at-eol --exit-code -- ../src/realx/web; then
+            echo "::error::src/realx/web is stale: it does not match a rebuild from webapp/src. Run 'cd webapp && npm run build' and commit the result."
+            exit 1
+          fi
+          if [ -n "$(git ls-files --others --exclude-standard -- ../src/realx/web)" ]; then
+            echo "::error::npm run build produced files not committed in src/realx/web. Run 'cd webapp && npm run build' and commit them."
+            exit 1
+          fi
       - run: npm audit

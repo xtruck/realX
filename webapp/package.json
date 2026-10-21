@@ -6,6 +6,7 @@
   "license": "MIT",
   "scripts": {
     "build": "node build.mjs",
+    "check:bundles": "node tools/check-bundles.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

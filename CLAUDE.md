@@ -12,6 +12,7 @@ python -m pytest -q -m "not browser"                        # same, never starts
 pip install -e ".[browser]" && python -m playwright install chromium   # optional: then the ~90 browser tests run too (they fetch the MediaPipe models; ~30 min on a software renderer)
 cd webapp && npm ci --ignore-scripts && npm test            # node tests
 cd webapp && npm run build                                  # rebuild src/realx/web/avatar.bundle.js
+cd webapp && npm run check:bundles                        # fail if the committed bundles in src/realx/web are stale vs webapp/src (CI runs the same check)
 realx serve                                                 # control room on 127.0.0.1:8765
 ```
 
