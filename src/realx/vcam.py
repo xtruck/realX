@@ -4,7 +4,8 @@ Safety, in the order it is applied to every frame that leaves through here
     * Off unless the owner turns it on (`VirtualCameraConfig.enabled`, default False). There is no switch outside the settings object.
     * The visible "DIGITAL HOST" bar and the provenance watermark are drawn on every frame *here*, after resizing and
       immediately before the backend sees the pixels, whatever the engine did before. If either step fails the frame is
-      dropped, never sent bare.
+      dropped, never sent bare. Measured through OBS's camera: the bar survives the YUV conversion, the (least-significant-bit)
+      watermark does not, so the visible bar is what protects this output.
     * Nothing leaves the computer: the backends hand pixels to a camera driver on this PC.
 
 Threading: the engine calls `offer(frame)`, which only stores the newest frame (latest wins) and returns at once. A

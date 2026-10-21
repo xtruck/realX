@@ -18,8 +18,13 @@ Off by default. Nothing leaves the computer: the backends hand pixels to a camer
 
 ## What it guarantees
 
-* Every frame gets the **"DIGITAL HOST" bar and the provenance watermark** drawn at the last step, after resizing, whatever came before.
+* Every frame gets the **"DIGITAL HOST" bar** and the provenance watermark drawn at the last step, after resizing, whatever came before.
   If marking fails the frame is dropped, never sent bare. `tests/test_vcam.py` checks the exact pixels that reach the driver.
+* **What survives the camera path (measured 2026-10-21 through OBS's Virtual Camera, read back with ffmpeg): the visible bar does
+  (80% of its pixels within tolerance 12 of the bar colour, text readable); the watermark does not.** realX's watermark hides in the lowest
+  bit of each colour value (`safety/watermark.py`: "not robust to re-encoding"), and the camera path converts the picture to YUV
+  (NV12), which erases it. So on this output the **visible bar is the protection**, and the watermark is only present up to the driver.
+  A re-encode-robust watermark is roadmap item M4.
 * It only carries the **avatar** mode (the picture realX makes). `original` (raw camera), `boxes`, `character`, `body` and `photoface`
   are not sent; `/api/stats` says so in `vcam.note`.
 * It never slows the engine: a separate thread sends the newest picture and drops older ones (`vcam.dropped`).
@@ -31,3 +36,10 @@ Off by default. Nothing leaves the computer: the backends hand pixels to a camer
 * Only one virtual-camera client at a time for OBS's camera and for Softcam.
 * `vcam.app_connected` is known for Softcam only (pyvirtualcam cannot tell).
 * Softcam takes 24-bit BGR; realX converts. Orientation was checked for byte order in a unit test, not yet seen in a real app.
+
+## Another route worth knowing (seen on this PC, not built)
+
+`ffmpeg -f dshow -list_devices true -i dummy` lists a device named "CALL ME (Windows Virtual Camera)" registered through the Windows
+virtual-camera API (device path `swd#vcamdevapi`, Windows 11's Media Foundation `MFCreateVirtualCamera`). That API needs no custom driver
+and is meant for the newer camera stack that DirectShow-only filters (Softcam, OBS) may not reach. If the test table shows a needed app
+cannot see a DirectShow camera, this is the next backend to look at.
