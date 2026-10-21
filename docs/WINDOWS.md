@@ -11,7 +11,7 @@ the repository (`..\realx-venv`).
 - Chrome or Edge (the control room and the tests use it)
 - Node.js 22 or newer: **optional**. The built browser bundle is committed. Node is only for changing
   files in `webapp\src` and for the JavaScript tests.
-- About 23 MB of model downloads and roughly 0.6 GB of disk for the Python environment (563 MB measured on the
+- About 40 MB of model downloads (six models, 38 MB measured) and roughly 0.6 GB of disk for the Python environment (563 MB measured on the
   maintainer's machine)
 
 ## Install

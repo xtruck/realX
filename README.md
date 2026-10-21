@@ -36,6 +36,9 @@ with **consent, provenance and license checks built in**.
 
 ## Quick start (Windows, Python 3.10+)
 
+If `python` opens the Microsoft Store or says "Python was not found", it is only the Store shortcut: install
+Python from python.org, or use the full path to a real `python.exe` instead.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -e ".[dev]"
@@ -52,6 +55,9 @@ the browser keeps it in an HttpOnly, SameSite=Strict cookie and drops it from th
 `REALX_TOKEN` (16-128 characters of `A-Z a-z 0-9 . _ ~ -`) to keep the same token between runs, which is
 what an OBS source needs. Scripts send it as `Authorization: Bearer <token>`. Keep it private: it is a
 password for your studio. `realx serve --offline` (or `REALX_OFFLINE=1`) forbids every model download.
+If you redirect the output of `realx serve` to a file, Python buffers the link line and the token does not
+appear there; set `PYTHONUNBUFFERED=1` (or `REALX_TOKEN`) first. To check from a script:
+`curl.exe -H "Authorization: Bearer <token>" http://127.0.0.1:8765/` returns 200 with the token and 401 without.
 Choose "Camera" in the control room to use your
 webcam, or use the built-in dancing, jumping, sprinting and spinning demos.
 
