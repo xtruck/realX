@@ -21,6 +21,7 @@ import { gripShapes, handFans, handShapes } from "./handlayer.js";
 import { MaskConfidence, holdFactors } from "./confidence.js";
 import { StainSet, bindToPuppet, stainFans } from "./stains.js";
 import { MotionGate, freshness, headZone, seamDue, seamRate, seamTooSlow } from "./seams.js";
+import { edgeRate } from "./edgefeather.js";
 import { SeamSegmenter } from "./seammask.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
@@ -378,7 +379,10 @@ let seamOn = false, seamSeg = null, seamLoading = false, seamGaveUp = false, sea
 const seamState = { last: -Infinity, cost: 0, slowRuns: 0 };
 const seamMotion = new MotionGate();
 const seamHz = seamRate(new URLSearchParams(location.search).get("seamHz"));
-Object.assign(probe, { seam: "off", seamHz, seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
+// S13f "Soft edges": a model-free feathered band along the mesh outline (edgefeather.js), off by default (unmeasured). With it on, the segmenter
+// above needs to run no more often than edgeRate() allows; `softOn` is the only state, the band is rebuilt from the mesh every frame.
+let softOn = false;
+Object.assign(probe, { soft: "off", seam: "off", seamHz, seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
 
 async function loadSeams() {
   if (seamSeg || seamLoading || seamGaveUp) return;
@@ -406,7 +410,7 @@ function stepSeams(now, shown) {
   if (!compositor) return;
   if (!seamOn || !shown) { compositor.setSeamAmount(0, null); seamMotion.update(null, now); probe.seamAmount = 0; return; }
   if (!seamSeg) { loadSeams(); compositor.setSeamAmount(0, null); probe.seamAmount = 0; return; }
-  if (!seamSeg.failed && seamDue(now, seamState, detectMs, seamHz)) {
+  if (!seamSeg.failed && seamDue(now, seamState, detectMs, edgeRate(seamHz, softOn))) {
     seamState.last = now;
     if (seamSeg.run(video)) { compositor.setSeam(seamSeg.canvas); seamAt = now; probe.seamAnswers = seamSeg.answers; }
     seamState.cost = seamSeg.costMs; probe.seamMs = seamSeg.costMs;
@@ -415,7 +419,7 @@ function stepSeams(now, shown) {
     else if (seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)) { stopSlowSeams(seamSeg.lastMs); return; }
   }
   const box = faceBox(shown.landmarks);
-  const amount = seamSeg.failed ? 0 : freshness(now - seamAt, seamHz) * seamMotion.update(box, now);
+  const amount = seamSeg.failed ? 0 : freshness(now - seamAt, edgeRate(seamHz, softOn)) * seamMotion.update(box, now);
   compositor.setSeamAmount(amount, headZone(box));
   probe.seamAmount = amount;
 }
@@ -896,6 +900,7 @@ function frame() {
         stepStains(now, shown);                    // spills and stains on the shirt (S10g)
         if (bodyOn) stepBody(now, shown);          // the body and dress for this frame (drawn first, behind the hair and the face)
         if (hairOn) stepHair(now, shown);          // the hair sheet for this frame (drawn behind the face by the compositor)
+        compositor.setSoftEdges(softOn ? 1 : 0);   // S13f: model-free soft edge along the mesh outline
         stepSeams(now, shown);                     // S13c: clean the seams between the photo's head and the live one
         // the video goes to the graphics card for colour matching only: see compositor.js
         // S13e: the photo gives way to the live picture where it would not hold (head turned far, mouth very wide, face partly out of frame)
@@ -910,6 +915,7 @@ function frame() {
         probe.liveDrawn = compositor.liveDrawn;
         probe.stainsDrawn = compositor.stainsDrawn;
         probe.seamDrawn = compositor.seamDrawn;
+        probe.softDrawn = compositor.featherDrawn;
       }
     }
     tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
@@ -1058,6 +1064,10 @@ function wireControls() {
   $("skinBtn").addEventListener("click", (e) => {      // S10h: the live hand's skin colour moves towards the photo's, on the graphics card only
     look.skin = !look.skin; e.currentTarget.setAttribute("aria-pressed", String(look.skin)); applyLook();
     setStatus(look.skin ? "Your hands take the photo's skin tone (it shows with \"Show my hands on top\")." : "Your hands keep their own colour.");
+  });
+  $("softBtn").addEventListener("click", (e) => {            // S13f: soft edge along the mesh outline, no model
+    softOn = !softOn; e.currentTarget.setAttribute("aria-pressed", String(softOn)); probe.soft = softOn ? "on" : "off";
+    setStatus(softOn ? "Soft edges is on: a soft band in the photo's background colour hides live hair along the head's outline." : "Soft edges is off.");
   });
   $("seamBtn").addEventListener("click", (e) => {            // S13c: hide the live hair and ears that peek out round the photo's head
     seamOn = !seamOn; e.currentTarget.setAttribute("aria-pressed", String(seamOn));
