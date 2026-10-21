@@ -57,8 +57,8 @@ def test_rebinding_hosts_are_refused_on_every_method(srv, host):
 
 @pytest.mark.parametrize(
     "path",
-    ["/mp/wasm/..%2f..%2fserver.py", "/mp/wasm/..\..\server.py", "/mp/wasm/%2e%2e/server.py", "/mp/models/..%2fserver.py",
-     "/mp/models/%5c..%5cx", "/mp/wasm//etc/passwd", "/mp/wasm/C:\Windows\win.ini", "/..%2f..%2fsrc/realx/server.py", "/../server.py"],
+    ["/mp/wasm/..%2f..%2fserver.py", r"/mp/wasm/..\..\server.py", "/mp/wasm/%2e%2e/server.py", "/mp/models/..%2fserver.py",
+     "/mp/models/%5c..%5cx", "/mp/wasm//etc/passwd", r"/mp/wasm/C:\Windows\win.ini", "/..%2f..%2fsrc/realx/server.py", "/../server.py"],
 )
 def test_traversal_never_reaches_a_file(srv, path):
     status, _, body = req(srv, "GET", path, COOKIE)
