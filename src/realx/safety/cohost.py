@@ -69,6 +69,7 @@ class CohostVault:
         self._store = ConsentStore(self._key)
         # asked on every frame: a revocation made by another process stops a running stream
         self._store.set_revocation_source(self._is_revoked)
+        self._store.set_clock_mark(self._read_seen, self._write_seen)  # an expired record stays expired after a clock reset
 
     # -- storage ---------------------------------------------------------------------
     def _secret(self) -> bytes:
@@ -81,6 +82,15 @@ class CohostVault:
         with os.fdopen(fd, "w") as fh:
             fh.write(key.hex())
         return key
+
+    def _read_seen(self) -> float:
+        try:
+            return float((self.root / "clock.seen").read_text().strip())
+        except FileNotFoundError:
+            return 0.0
+
+    def _write_seen(self, now: float) -> None:
+        self._write_private(self.root / "clock.seen", f"{now:.0f}\n")
 
     def _tombstone(self, record_id: str) -> Path:
         return self.root / f"{record_id}.revoked"
