@@ -57,3 +57,33 @@ Order = honesty and safety first, then reliability, then speed, then tests.
 ## Not covered
 
 Real webcam, real hand, discrete GPU, Python 3.10/3.11, wheel installs, the Windows ACL on the co-host key, a real browser against a hostile page, a load test of the 16-slot limit.
+
+## Test suite, the 90 skipped tests (A3, branch `audit-skipped-tests`)
+
+Baseline in the A3 worktree: 671 passed, 91 skipped (the owner sees 672 / 90; the extra skip is most likely the optional `onnxruntime` test).
+
+| Skips | Reason | Legitimate on this machine? |
+|---|---|---|
+| 87 | no Chromium found (`REALX_CHROMIUM` unset), across 10 browser test files | The code does what it says, but it hides most UI tests on a machine that has Chrome. The lookup does not check Program Files. |
+| 2 | POSIX file permissions (`tests/test_cohost.py`) | Yes, NTFS has no chmod modes. |
+| 1 | `npm install` not run in `webapp/` (the whole Node suite is skipped) | Yes, but a fresh checkout loses that suite silently. |
+| 1 | `onnxruntime` not installed (optional `[onnx]` extra) | Yes. |
+
+With the skips activated (Chrome path set, models fetched, `npm ci`, onnxruntime in a throw-away dir on E): Node tests 389/389, providers and webapp 25/25,
+**browser tests 108 passed, 2 failed** (27 minutes, all 87 formerly skipped tests ran).
+
+The two failures (no application code or test was changed):
+
+1. `tests/test_character.py::test_character_renders_and_follows_the_tracker_in_a_real_browser`: reproducible (failed twice). The page gets 8 rig messages but
+   `__realx.pose.live` stays false after a fixed 3 s sleep. Cause not found (a sleep too short on a software renderer, or `demo:dance` showing no shoulders).
+2. `tests/test_control_room_photoface.py::...leaving_stops_the_camera`: failed once (no `/facemesh` frame within 15 s), passed on a single rerun: timing-sensitive.
+
+Also seen: one unhandled traceback from `server.py:921` (`self._json(engine.stats())`) in the browser log, which did not fail a test (add it to B1-03).
+The browser `room` fixture used Playwright's bundled `chromium-1248` even with `REALX_CHROMIUM` set, so "Chrome" results may be mixed.
+
+Added to the plan, Phase 3: make `find_chromium()` in `tests/conftest.py` also find the installed Chrome or Edge, or warn loudly when it skips;
+investigate the reproducible `test_character` failure before treating the suite as green.
+
+## Status of all audit branches
+
+All 7 front audits (A1 to A7), the 5 backend audits (B1 to B5) and the summary are on GitHub as branches; nothing is merged into `main` and no pull request is open.
