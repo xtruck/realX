@@ -55,6 +55,21 @@ Not legal advice. Have a lawyer review before any commercial release.
   a consented dataset).
 - The codebase is model-agnostic (see ARCHITECTURE.md), so both paths stay open.
 
+## Manifest register
+
+Every key in `MANIFEST` (`realx/models.py`) must have exactly one row here with its pinned sha256 and its
+license; `tests/test_model_licenses.py` fails otherwise, so a new model cannot pass by labelling itself
+`license="MIT"`. Adding a row is the human review step: verify the license against the primary source first.
+
+| Key | sha256 | License |
+|---|---|---|
+| `yunet` | `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4` | MIT |
+| `pphumanseg` | `552d8a984054e59b5d773d24b9b12022b22046ceb2bbc4c9aaeaceb36a9ddf24` | Apache-2.0 |
+| `mp_face` | `64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff` | Apache-2.0 |
+| `mp_pose` | `59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a` | Apache-2.0 |
+| `mp_hand` | `fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1` | Apache-2.0 |
+| `mp_segmenter` | `c6748b1253a99067ef71f7e26ca71096cd449baefa8f101900ea23016507e0e0` | Apache-2.0 |
+
 ## Models currently in use
 
 | Model | License | Commercial use | Notes |

@@ -118,3 +118,28 @@ def test_no_neural_engine_is_registered_and_the_only_engine_is_labelled_test_onl
     assert listed == ["synthetic_warp"]
     assert engines.engine_info("synthetic_warp")["test_only"] is True
     assert "neural" not in (engines.SyntheticWarp.__doc__ or "").lower().replace("not a neural", "")
+
+
+DENIED_FRAGMENTS = ("inswapper", "buffalo", "simswap", "roop", "liveportrait", "xpose", "insightface", "ghost", "sberswap")
+
+
+def _register_rows():
+    """(name, sha256, license) rows of the manifest register in docs/LICENSE-AUDIT.md."""
+    text = (ROOT / "docs" / "LICENSE-AUDIT.md").read_text(encoding="utf-8")
+    return set(re.findall(r"^\|\s*`(\w+)`\s*\|\s*`([0-9a-f]{64})`\s*\|\s*([\w.-]+)\s*\|", text, re.M))
+
+
+def test_every_manifest_entry_is_registered_in_the_license_audit_with_its_hash_and_license():
+    rows = _register_rows()
+    for key, spec in MANIFEST.items():
+        assert (key, spec.sha256, spec.license) in rows, (
+            f"{key}: add `{key}` | `{spec.sha256}` | {spec.license} to the manifest register in docs/LICENSE-AUDIT.md"
+        )
+    assert {r[0] for r in rows} <= set(MANIFEST), "register lists a model that is not in the manifest"
+
+
+def test_no_manifest_entry_looks_like_a_blocked_model():
+    for key, spec in MANIFEST.items():
+        haystack = f"{key} {spec.filename} {spec.url} {' '.join(spec.mirrors)}".lower()
+        for frag in DENIED_FRAGMENTS:
+            assert frag not in haystack, f"{key}: '{frag}' marks a blocked or unverified model family"
