@@ -20,6 +20,8 @@ import json
 import os
 import re
 import secrets
+import select
+import socket
 import threading
 import time
 from collections import deque
@@ -58,6 +60,7 @@ MAX_JSON = 4096
 MAX_AVATAR_BYTES = 32 * 1024 * 1024
 MAX_CONNECTIONS = 16
 SOCKET_TIMEOUT = 15.0
+HEAD_DEADLINE = 10.0  # total seconds to receive a whole request line + headers (slow-trickle clients are cut)
 BODY_MAX_AGE = 1.0            # seconds: an older body message is never (re)sent to a viewer
 PUBLISH_IDLE_SECONDS = 15.0   # a publisher that sends nothing this long is dropped
 PUBLISH_RATE_LIMIT = 200      # messages per second from one publisher before it is cut off
@@ -293,7 +296,7 @@ class Engine:
             out["version"] = __version__
             out["body"] = {"publishing": self._publishing, "viewers": self._viewers}
             out["dock"] = self.dock_state()
-            out["security"] = {"token": "fixed" if self.token_fixed else "per-run", "watermark": True}   # never the token itself
+            out["security"] = {"token": "fixed" if self.token_fixed else "per-run", "watermark": False, "note": "the live MJPEG preview and /avatar carry no watermark stage; only offline voice output is provenance-marked"}   # never the token itself
             pipe, src = self._pipe, self._frames_src
         stage_ms = {name: t.mean_ms for name, t in list(pipe.timings.items())} if pipe is not None else {}
         capture = None
@@ -642,6 +645,22 @@ class _BoundedServer(ThreadingHTTPServer):
             return
         super().process_request(request, client_address)
 
+    if os.name == "nt":
+        allow_reuse_address = False  # on Windows SO_REUSEADDR lets a second socket bind a port in use
+
+        def server_bind(self) -> None:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
+    def handle_error(self, request, client_address) -> None:
+        import sys
+
+        exc = sys.exc_info()[1]
+        if isinstance(exc, OSError):  # a client that left mid-reply is not an error worth a traceback
+            log.debug("client connection ended: %s", type(exc).__name__)
+            return
+        log.error("unhandled error serving a request: %s", rlog.clip(f"{type(exc).__name__}: {exc}"))
+
     def process_request_thread(self, request, client_address) -> None:
         try:
             super().process_request_thread(request, client_address)
@@ -706,6 +725,37 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
         sys_version = ""
         timeout = SOCKET_TIMEOUT
         _body_taken = False  # set per request: has the handler started reading the body itself?
+
+        _head_timer: threading.Timer | None = None
+
+        def _end_head_deadline(self) -> None:
+            timer, self._head_timer = self._head_timer, None
+            if timer is not None:
+                timer.cancel()
+
+        def handle_one_request(self) -> None:
+            """The per-recv timeout alone lets a client trickle bytes forever before authentication."""
+            conn = self.connection
+
+            def cut() -> None:
+                try:
+                    conn.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+            self._head_timer = threading.Timer(HEAD_DEADLINE, cut)
+            self._head_timer.daemon = True
+            self._head_timer.start()
+            try:
+                super().handle_one_request()
+            finally:
+                self._end_head_deadline()
+
+        def parse_request(self) -> bool:
+            try:
+                return super().parse_request()
+            finally:
+                self._end_head_deadline()  # the head is complete (or refused): the deadline has done its job
 
         def log_message(self, *args) -> None:  # quiet
             pass
@@ -838,9 +888,21 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
 
         # routes ---------------------------------------------------------------
         def do_GET(self) -> None:
+            try:
+                self._get()
+            except OSError:  # client went away or stalled: nothing to answer
+                return
+            except Exception:  # keep details out of the response, but not out of the log
+                log.exception("unexpected error handling GET %s", rlog.clip(urlparse(self.path).path, 120))
+                try:
+                    self._deny(500, "internal error")
+                except OSError:
+                    pass
+
+        def _get(self) -> None:
             if not self._local_host():
                 return self._deny(403, "forbidden host")
-            if not self._not_cross_site():
+            if not self._not_cross_site() or not self._same_origin():  # a foreign Origin is refused even where Sec-Fetch-Site is absent
                 return self._deny(403, "cross-site requests are not allowed")
             source = self._auth_source(allow_query=True)
             if source is None:
@@ -979,6 +1041,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             self.end_headers()
             self.wfile.write(data)
 
+        def _client_gone(self) -> bool:
+            """True when the peer closed or reset the connection (EOF or error on a non-blocking peek)."""
+            try:
+                readable, _, _ = select.select([self.connection], [], [], 0)
+                if not readable:
+                    return False
+                return self.connection.recv(1, socket.MSG_PEEK) == b""
+            except (OSError, ValueError):
+                return True
+
         def _stream(self) -> None:
             self.send_response(200)
             self._headers("multipart/x-mixed-replace; boundary=frame")
@@ -987,6 +1059,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             try:
                 while not engine.stopped:
                     jpeg, new = engine.wait_frame(seq)
+                    if self._client_gone():  # modes without a JPEG never write, so a write cannot reveal the exit
+                        return
                     if new == seq:
                         continue
                     seq = new

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import traceback
 from typing import IO
@@ -46,8 +47,13 @@ class Dedup:
     def __init__(self, every_s: float = 300.0) -> None:
         self.every_s = every_s
         self._seen: dict[object, float] = {}
+        self._lock = threading.Lock()
 
     def first(self, key: object) -> bool:
+        with self._lock:
+            return self._first(key)
+
+    def _first(self, key: object) -> bool:
         now = time.monotonic()
         last = self._seen.get(key)
         if last is None or now - last > self.every_s:
@@ -58,7 +64,8 @@ class Dedup:
         return False
 
     def forget(self, key: object) -> None:
-        self._seen.pop(key, None)
+        with self._lock:
+            self._seen.pop(key, None)
 
 
 class _Json(logging.Formatter):
