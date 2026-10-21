@@ -20,7 +20,11 @@ realx serve                                                 # control room on 12
 - Safety is structural: a pipeline that synthesizes a face or voice must have a consent gate before it
   and a watermark after it. Never bypass this; see `docs/SAFETY.md`.
 - Do not add face-swap models or weights; they are license-blocked (`docs/LICENSE-AUDIT.md`,
-  `tests/test_model_licenses.py`).
+  `tests/test_model_licenses.py`). One scoped exception, owner decision of 2026-10-21 (`docs/DECISION-PATH-B.md`): a
+  private, non-distributed build may run such models on a rented GPU the owner controls, fetched by the owner from the
+  original source and never committed. The `BLOCKED` list, its tests and the default package stay as they are.
+- Camera frames leave the machine only through the Path B link and only under the guard rails G1 to G10 of
+  `docs/DECISION-PATH-B.md`; otherwise `docs/REMOTE.md` applies unchanged.
 - Server binds to 127.0.0.1 and every route needs the access token. Keep it that way.
 - Model files (`*.onnx`, `models/`) are never committed; they are fetched hash-verified by `realx models fetch`.
 - Update `docs/PROGRESS.md` when behaviour changes.

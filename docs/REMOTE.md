@@ -20,3 +20,12 @@ data-retention and deletion terms (how long they keep rig numbers, how a deletio
 that no image or video ever leaves (a portrait upload would need its own explicit, per-image opt-in and consent
 record); how redirects, TLS verification and proxies are handled; where the credential is stored; and a test that
 captures the real request bytes. Retention by realX itself: none, the adapter keeps counters only.
+
+## Path B: a rented GPU for a private build (approved 2026-10-21)
+
+The limits above (rig numbers only, no real transport) still describe the default `realx` package and its tests. For the owner's private,
+non-distributed build, `docs/DECISION-PATH-B.md` approves a separate link that may carry JPEG frames or face crops to a rented GPU the owner controls,
+under guard rails G1 to G10 (opt-in, HTTPS only on an allow-listed host, a per-session token, an ephemeral instance with no retention, bounded
+payloads, the label and the watermark drawn locally after the frame returns, fall back to the local picture within one second, immediate stop on
+revocation, no pixels in logs, a test on the real request bytes). Provider and retention terms are **not chosen yet**; they must be written here
+before the first real connection.
