@@ -15,6 +15,7 @@ visible disclosure and watermark after it (see `realx.pipeline.validate_stages`)
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -39,6 +40,9 @@ def vault_dir() -> Path:
 
 def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:32]
+
+
+_GRANT_FILE = re.compile(r"[0-9a-f]{32}\.json")
 
 
 def _revoke_code() -> str:
@@ -69,6 +73,8 @@ class CohostVault:
         self._store = ConsentStore(self._key)
         # asked on every frame: a revocation made by another process stops a running stream
         self._store.set_revocation_source(self._is_revoked)
+        if not self._index_path.exists() and not any(_GRANT_FILE.fullmatch(f.name) for f in self.root.iterdir()):
+            self._save_index(set())  # a fresh vault starts with an empty signed index
         self._store.set_clock_mark(self._read_seen, self._write_seen)  # an expired record stays expired after a clock reset
 
     # -- storage ---------------------------------------------------------------------
@@ -95,18 +101,47 @@ class CohostVault:
     def _tombstone(self, record_id: str) -> Path:
         return self.root / f"{record_id}.revoked"
 
-    def _is_revoked(self, record_id: str) -> bool:
-        """A tombstone file means revoked. Any file there counts, even a damaged or forged one:
-        extra tombstones can only make consent stricter, never looser. Unreadable means revoked.
+    @property
+    def _index_path(self) -> Path:
+        return self.root / "revocations.idx"
 
-        Limit: the vault lives on the streamer's computer, so someone with full control of it
-        can delete the tombstone. Enforcement the streamer cannot undo needs a key they do not
-        hold (roadmap M4).
+    def _index_mac(self, ids: list[str]) -> str:
+        body = json.dumps(ids, separators=(",", ":")).encode()
+        return hmac.new(self._key, b"realx-revocations-v1\0" + body, hashlib.sha256).hexdigest()
+
+    def _save_index(self, ids: set[str]) -> None:
+        ordered = sorted(ids)
+        self._write_private(self._index_path, json.dumps({"ids": ordered, "mac": self._index_mac(ordered)}))
+
+    def _load_index(self) -> set[str] | None:
+        """The signed list of revoked ids, or None when it is missing, unreadable or does not verify."""
+        try:
+            doc = json.loads(self._index_path.read_text())
+            ids, mac = doc["ids"], doc["mac"]
+            if not (isinstance(ids, list) and all(isinstance(i, str) for i in ids) and isinstance(mac, str)):
+                return None
+            if not hmac.compare_digest(self._index_mac(ids), mac):
+                return None
+            return set(ids)
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def _is_revoked(self, record_id: str) -> bool:
+        """Revoked if a tombstone file exists (any file there counts: extra tombstones only make consent
+        stricter) or the id is in the signed revocation index. Deleting the tombstone alone therefore restores
+        nothing, and a missing or tampered index fails closed (everything counts as revoked; re-grant).
+
+        Limit: the vault lives on the streamer's computer, so someone with full control of it can delete the
+        tombstone and also re-sign the index with the key that sits next to it. Enforcement the streamer cannot
+        undo needs a key they do not hold (roadmap M4).
         """
         try:
-            return self._tombstone(record_id).exists()
+            if self._tombstone(record_id).exists():
+                return True
         except OSError:
             return True
+        ids = self._load_index()
+        return ids is None or record_id in ids
 
     def _write_private(self, path: Path, text: str) -> None:
         tmp = path.with_name(path.name + f".{secrets.token_hex(4)}.tmp")
@@ -163,6 +198,9 @@ class CohostVault:
         doc = json.loads(path.read_text())
         if not secrets.compare_digest(doc["revoke_hash"], hashlib.sha256(code.encode()).hexdigest()):
             raise ConsentError("wrong revoke code")
+        ids = self._load_index()
+        if ids is not None:  # a damaged index is left alone: it keeps failing closed
+            self._save_index(ids | {record_id})
         self._write_private(self._tombstone(record_id), f"revoked {time.time():.0f}\n")
         self._store.revoke(record_id)
 
