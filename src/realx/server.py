@@ -20,6 +20,8 @@ import json
 import os
 import re
 import secrets
+import select
+import socket
 import threading
 import time
 from collections import deque
@@ -979,6 +981,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             self.end_headers()
             self.wfile.write(data)
 
+        def _client_gone(self) -> bool:
+            """True when the peer closed or reset the connection (EOF or error on a non-blocking peek)."""
+            try:
+                readable, _, _ = select.select([self.connection], [], [], 0)
+                if not readable:
+                    return False
+                return self.connection.recv(1, socket.MSG_PEEK) == b""
+            except (OSError, ValueError):
+                return True
+
         def _stream(self) -> None:
             self.send_response(200)
             self._headers("multipart/x-mixed-replace; boundary=frame")
@@ -987,6 +999,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             try:
                 while not engine.stopped:
                     jpeg, new = engine.wait_frame(seq)
+                    if self._client_gone():  # modes without a JPEG never write, so a write cannot reveal the exit
+                        return
                     if new == seq:
                         continue
                     seq = new
