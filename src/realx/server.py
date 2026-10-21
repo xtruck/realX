@@ -645,6 +645,13 @@ class _BoundedServer(ThreadingHTTPServer):
             return
         super().process_request(request, client_address)
 
+    if os.name == "nt":
+        allow_reuse_address = False  # on Windows SO_REUSEADDR lets a second socket bind a port in use
+
+        def server_bind(self) -> None:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
     def handle_error(self, request, client_address) -> None:
         import sys
 
