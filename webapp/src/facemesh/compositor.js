@@ -11,7 +11,8 @@
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
 import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, blendShape, edgeDepth, faceBox, flatten, keepMask, mouthKeepWeights, shapeWeights } from "./mesh.js";
 import { HALO, haloAmount, haloScale } from "./hairhalo.js";
-import { HEAD_VERTEX_COUNT, REACH, RING_TRIANGLES, headFade, neckAnchor, ringFlag, ringPoints, ringTriangles } from "./head.js";
+import { featherBand } from "./edgefeather.js";
+import { HEAD_VERTEX_COUNT, OVAL_COUNT, FACE_OVAL, RINGS, REACH, RING_TRIANGLES, headFade, neckAnchor, ringFlag, ringPoints, ringTriangles } from "./head.js";
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
 const RING_MATCH = 0.35;   // how much of the live colour the head ring takes (the face takes the Colour match setting in full)
@@ -332,6 +333,17 @@ void main() {
   gl_FragColor = vec4(fill * a, a);
 }`;
 
+// S13f: Soft edges, the model-free complement to S13c (edgefeather.js). The same photo-background fill, but alpha comes from the vertices of a
+// feathered band built along the mesh outline (three levels, falling), so the fragment shader does no texture taps on any mask. Under the photo.
+const FEATHER_FRAG = `precision mediump float;
+varying float v_alpha; uniform sampler2D u_photo; uniform float u_opacity;
+void main() {
+  float a = v_alpha * u_opacity;
+  vec3 fill = (texture2D(u_photo, vec2(0.04, 0.05)).rgb + texture2D(u_photo, vec2(0.96, 0.05)).rgb + texture2D(u_photo, vec2(0.5, 0.02)).rgb
+             + texture2D(u_photo, vec2(0.04, 0.4)).rgb + texture2D(u_photo, vec2(0.96, 0.4)).rgb) / 5.0;   // same background as SEAM_FRAG
+  gl_FragColor = vec4(fill * a, a);
+}`;
+
 export class MeshCompositor {
   /** canvas: the WebGL canvas; mesh: buildMesh()'s result. Throws when WebGL is not available. */
   constructor(canvas, mesh) {
@@ -399,6 +411,41 @@ export class MeshCompositor {
     this.seamUni = Object.fromEntries(["u_seam", "u_photo", "u_amount", "u_opacity", "u_zone", "u_face", "u_tap"].map((n) => [n, gl.getUniformLocation(this.seamProgram, n)]));
     this.seam = { tex: gl.createTexture(), ready: false, amount: 0, zone: null, posBuffer: filled(gl, new Float32Array([0, 0, 0, 1, 1, 1, 1, 0])), alphaBuffer: filled(gl, new Float32Array([1, 1, 1, 1])) };
     this.seamDrawn = 0;
+    // S13f: Soft edges (off until setSoftEdges(strength > 0))
+    this.featherProgram = link(gl, LIVE_VERT, FEATHER_FRAG);
+    this.featherLoc = { pos: gl.getAttribLocation(this.featherProgram, "a_pos"), alpha: gl.getAttribLocation(this.featherProgram, "a_alpha") };
+    this.featherUni = Object.fromEntries(["u_photo", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.featherProgram, n)]));
+    this.feather = { strength: 0, posBuffer: gl.createBuffer(), alphaBuffer: gl.createBuffer(), indexBuffer: gl.createBuffer() };
+    this.featherDrawn = 0;
+  }
+
+  /** S13f: how strong the model-free soft edge along the mesh outline is, 0..1 (0 = off, nothing drawn). */
+  setSoftEdges(strength) {
+    const s = Number(strength);
+    this.feather.strength = Number.isFinite(s) ? Math.min(1, Math.max(0, s)) : 0;
+  }
+
+  _drawFeather(opacity, box, aspect, head, liveLandmarks) {
+    const gl = this.gl, f = this.feather;
+    if (!(f.strength > 0)) return 0;
+    const outline = new Float32Array(OVAL_COUNT * 2);
+    if (head) {                                         // the photo head's outermost ring: where the photo ends and the live hair may begin
+      const o = (VERTEX_COUNT + (RINGS - 1) * OVAL_COUNT) * 2;
+      outline.set(this.positions.subarray(o, o + OVAL_COUNT * 2));
+    } else FACE_OVAL.forEach((v, i) => { outline[i * 2] = liveLandmarks[v].x; outline[i * 2 + 1] = liveLandmarks[v].y; });
+    const band = featherBand(outline, aspect, box.w * aspect, f.strength);
+    if (!band) return 0;
+    gl.useProgram(this.featherProgram);
+    gl.bindBuffer(gl.ARRAY_BUFFER, f.posBuffer); gl.bufferData(gl.ARRAY_BUFFER, band.positions, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, f.alphaBuffer); gl.bufferData(gl.ARRAY_BUFFER, band.alphas, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, f.indexBuffer); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, band.indices, gl.DYNAMIC_DRAW);
+    this.point(f.posBuffer, this.featherLoc.pos, 2);
+    this.point(f.alphaBuffer, this.featherLoc.alpha, 1);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photo);
+    gl.uniform1i(this.featherUni.u_photo, 0);
+    gl.uniform1f(this.featherUni.u_opacity, Math.min(1, opacity));
+    gl.drawElements(gl.TRIANGLES, band.count, gl.UNSIGNED_SHORT, 0);
+    return band.count / 3;
   }
 
   /** S13c: take the segmenter's answer (its hidden canvas, seammask.js) as the seam mask texture. Done once per answer, a few times a second. */
@@ -764,6 +811,7 @@ export class MeshCompositor {
     this.joinLive = useCamera; this.joinHead = head;                                        // S14: the join's light match needs the live frame
     if (!this.joinSpots) this.joinSpots = new Float32Array(10);
     SPOTS.forEach((v, i) => { this.joinSpots[i * 2] = this.positions[v * 2]; this.joinSpots[i * 2 + 1] = this.positions[v * 2 + 1]; });
+    this.featherDrawn = this._drawFeather(opacity, box, aspect, head, liveLandmarks);      // S13f: model-free soft edge along the outline, under everything
     this.seamDrawn = this._drawSeam(opacity, box, aspect);                                  // S13c: first of all, under the photo's own layers
     if (this.body && this.body.on) this.bodyDrawn = this._drawLayer(this.body, opacity);   // the body and dress go down first,
     if (this.hair && this.hair.on) this.hairDrawn = this._drawLayer(this.hair, opacity);   // then the hair over them, all behind the face
@@ -840,6 +888,7 @@ export class MeshCompositor {
     for (const b of [this.live.posBuffer, this.live.alphaBuffer, this.live.indexBuffer, this.stains.posBuffer, this.stains.alphaBuffer, this.stains.colorBuffer, this.stains.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.stainProgram);
     gl.deleteProgram(this.liveProgram); gl.deleteProgram(this.hairProgram);
+    gl.deleteProgram(this.featherProgram); gl.deleteBuffer(this.feather.posBuffer); gl.deleteBuffer(this.feather.alphaBuffer); gl.deleteBuffer(this.feather.indexBuffer);
     gl.deleteProgram(this.seamProgram); gl.deleteTexture(this.seam.tex); gl.deleteBuffer(this.seam.posBuffer); gl.deleteBuffer(this.seam.alphaBuffer);
     for (const t of [this.photo, this.camera, this.maskTex]) if (t) gl.deleteTexture(t);
     for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.headFadeBuffer, this.ringBuffer, this.indexBuffer]) gl.deleteBuffer(b);
