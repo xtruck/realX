@@ -66,7 +66,7 @@ the pose and hand models our features need); "Remote matches REMOTE.md" (it does
 ## Next, in order (each step: tests, a measurement where it applies, push)
 
 1. Run the benchmark on the real GPU, idle, and record it in `BENCHMARKS.md` (this replaces guesses with numbers).
-2. Hand skin-tone matching in the shader (no CPU read-back), so the live hand does not clash with a different person's photo.
+2. ~~Hand skin-tone matching in the shader~~ built (S10h, 2026-10-16, option off by default; see `PROGRESS.md`). Open: try it with a real hand, because it has only been tested on synthetic textures.
 3. Cadence gating for the pose and hand models, with the numbers from step 1.
 4. Validate the face-mesh page as an OBS source on the owner's machine; then the virtual camera.
 5. Soak test (10 minutes) for thermal droop.
