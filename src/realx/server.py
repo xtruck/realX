@@ -34,7 +34,7 @@ import numpy as np
 
 from realx import __version__
 from realx.diag import Diagnostics
-from realx.errors import classify, stop_state
+from realx.errors import classify, session_state, stop_state
 from realx.audio import offline, presets
 from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model
 from realx import ws
@@ -329,6 +329,7 @@ class Engine:
             except Exception:  # diagnostics must never break a stats request
                 capture = None
         out["stop"] = self.stop_status()
+        out["session"] = session_state(out["stop"]["state"] == "running", out["frames"], self._error_info, out["stop"])
         out["diag"] = self._diag.snapshot(stage_ms, capture)
         status = getattr(pipe, "status", None)  # a plain Pipeline (tests, custom builds) has no studio state
         out["studio"] = status().as_dict() if callable(status) else None

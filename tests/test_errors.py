@@ -118,3 +118,50 @@ def test_a_dead_camera_shows_up_in_stats_over_http(monkeypatch):
         assert info and info["code"] == "camera_unavailable" and info["retryable"] is True
     finally:
         srv.stop()
+
+
+# --- session state ----------------------------------------------------------------------------------------------------
+
+from realx.errors import ErrorInfo, session_state  # noqa: E402
+
+_RETRY = ErrorInfo("camera_stalled", "t", "h", True)
+_FATAL = ErrorInfo("video_unreadable", "t", "h", False)
+_RUN = {"state": "running", "retryable": False}
+_PEND = {"state": "pending", "retryable": True}
+_STOPPED = {"state": "stopped", "retryable": False}
+
+
+@pytest.mark.parametrize(
+    "running, frames, error, stop, expected",
+    [
+        (False, 0, None, _STOPPED, "stopped"),
+        (False, 50, None, _STOPPED, "stopped"),
+        (True, 0, None, _RUN, "connecting"),
+        (True, 1, None, _RUN, "live"),
+        (True, 99, _RETRY, _RUN, "reconnecting"),
+        (True, 0, _RETRY, _RUN, "reconnecting"),
+        (True, 5, _FATAL, _RUN, "failed"),
+        (True, 5, None, _PEND, "stopping"),
+        (True, 5, _RETRY, _PEND, "stopping"),
+    ],
+)
+def test_session_state_table(running, frames, error, stop, expected):
+    assert session_state(running, frames, error, stop) == expected
+
+
+def test_engine_reports_the_session_through_its_life():
+    eng = Engine(fps=10)
+    assert eng.stats()["session"] == "stopped"
+    eng.start()
+    try:
+        deadline = time.monotonic() + 8
+        seen = set()
+        while time.monotonic() < deadline and "live" not in seen:
+            seen.add(eng.stats()["session"])
+            time.sleep(0.05)
+        assert "live" in seen and seen <= {"connecting", "live"}
+        eng._set_error("camera stopped delivering frames")
+        assert eng.stats()["session"] == "reconnecting"
+    finally:
+        eng.stop()
+    assert eng.stats()["session"] == "stopped"

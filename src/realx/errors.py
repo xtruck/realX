@@ -73,3 +73,22 @@ def stop_state(thread_alive: bool, stop_requested: bool) -> dict:
     else:
         state = "running"
     return {"state": state, "retryable": state == "pending"}
+
+
+def session_state(running: bool, frames: int, error: ErrorInfo | None, stop: dict) -> str:
+    """One word for where the live session is, for the control room and for scripts.
+
+    stopped      the engine thread is not running
+    stopping     a stop was asked for and the thread has not exited yet
+    reconnecting a problem was reported and realX is retrying by itself
+    failed       a problem was reported that retrying will not fix
+    connecting   running, nothing reported, no picture yet
+    live         pictures are flowing
+    """
+    if stop.get("state") == "pending":
+        return "stopping"
+    if not running:
+        return "stopped"
+    if error is not None:
+        return "reconnecting" if error.retryable else "failed"
+    return "live" if frames > 0 else "connecting"
