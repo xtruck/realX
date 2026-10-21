@@ -76,3 +76,42 @@ def test_slow_trickle_head_is_cut_by_a_total_deadline(monkeypatch):
         assert _wait(lambda: _slots(s) == before, 3)
     finally:
         s.stop()
+
+
+def test_raising_get_route_returns_json_500_and_no_stderr_traceback(capfd, monkeypatch):
+    eng = Engine(mode="body")
+    s = Server(eng, port=0, token=TOKEN)
+    s.start()
+    try:
+        def boom():
+            raise RuntimeError("secret-internal-detail")
+
+        monkeypatch.setattr(eng, "stats", boom)
+        c = socket.create_connection(("127.0.0.1", s.port), timeout=5)
+        c.sendall(f"GET /api/stats HTTP/1.1\r\nHost: 127.0.0.1:{s.port}\r\nAuthorization: Bearer {TOKEN}\r\n\r\n".encode())
+        data = b""
+        while chunk := c.recv(4096):
+            data += chunk
+        c.close()
+        assert data.startswith(b"HTTP/1.0 500") or data.startswith(b"HTTP/1.1 500")
+        assert b"internal error" in data and b"secret-internal-detail" not in data
+    finally:
+        s.stop()
+    assert "Traceback" not in capfd.readouterr().err
+
+
+def test_client_reset_on_a_get_is_quiet(capfd):
+    import struct
+
+    s = Server(Engine(mode="body"), port=0, token=TOKEN)
+    s.start()
+    try:
+        for _ in range(3):
+            c = socket.create_connection(("127.0.0.1", s.port), timeout=5)
+            c.sendall(f"GET /app.js HTTP/1.1\r\nHost: 127.0.0.1:{s.port}\r\nAuthorization: Bearer {TOKEN}\r\n\r\n".encode())
+            c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            c.close()  # RST
+        time.sleep(0.5)
+    finally:
+        s.stop()
+    assert "Traceback" not in capfd.readouterr().err

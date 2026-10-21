@@ -645,6 +645,15 @@ class _BoundedServer(ThreadingHTTPServer):
             return
         super().process_request(request, client_address)
 
+    def handle_error(self, request, client_address) -> None:
+        import sys
+
+        exc = sys.exc_info()[1]
+        if isinstance(exc, OSError):  # a client that left mid-reply is not an error worth a traceback
+            log.debug("client connection ended: %s", type(exc).__name__)
+            return
+        log.error("unhandled error serving a request: %s", rlog.clip(f"{type(exc).__name__}: {exc}"))
+
     def process_request_thread(self, request, client_address) -> None:
         try:
             super().process_request_thread(request, client_address)
@@ -872,6 +881,18 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
 
         # routes ---------------------------------------------------------------
         def do_GET(self) -> None:
+            try:
+                self._get()
+            except OSError:  # client went away or stalled: nothing to answer
+                return
+            except Exception:  # keep details out of the response, but not out of the log
+                log.exception("unexpected error handling GET %s", rlog.clip(urlparse(self.path).path, 120))
+                try:
+                    self._deny(500, "internal error")
+                except OSError:
+                    pass
+
+        def _get(self) -> None:
             if not self._local_host():
                 return self._deny(403, "forbidden host")
             if not self._not_cross_site() or not self._same_origin():  # a foreign Origin is refused even where Sec-Fetch-Site is absent
