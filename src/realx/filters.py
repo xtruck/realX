@@ -37,7 +37,10 @@ class OneEuroFilter:
             self._x, self._dx, self._t = x.copy(), np.zeros_like(x), t
             return x.copy()
         dt = t - self._t
-        if dt <= 0:  # duplicate or out-of-order timestamp: hold the last value
+        if dt < 0:  # time went backwards (looped clip, clock reset): restart from this sample
+            self._x, self._dx, self._t = x.copy(), np.zeros_like(x), t
+            return x.copy()
+        if dt == 0:  # repeated timestamp: hold the last value
             return self._x.copy()
         dx = (x - self._x) / dt
         a_d = self._alpha(self.d_cutoff, dt)
