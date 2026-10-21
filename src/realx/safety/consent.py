@@ -56,6 +56,9 @@ class ConsentStore:
         self.key_id = key_id
         self._revoked: set[str] = set()
         self._is_revoked_elsewhere = None  # optional callable(record_id) -> bool, asked on every check
+        self._seen = 0.0  # latest time ever observed: expiry is judged against it, so a clock set back cannot revive a record
+        self._load_seen = None  # optional callable() -> float, and _save_seen(float): keep the mark across restarts
+        self._save_seen = None
 
     def __repr__(self) -> str:
         return f"ConsentStore(key_id={self.key_id!r})"
@@ -67,7 +70,7 @@ class ConsentStore:
             raise ValueError(f"scope must be one of {sorted(_VALID_SCOPES)}")
         if not math.isfinite(ttl_seconds) or not 0 < ttl_seconds <= 366 * 86400:
             raise ValueError("ttl_seconds must be finite and between 0 and one year")
-        now = time.time() if now is None else now
+        now = self._advance(time.time() if now is None else now)
         unsigned = ConsentRecord(
             subject_id, scope, now + ttl_seconds, record_id=secrets.token_hex(16), key_id=self.key_id
         )
@@ -85,11 +88,33 @@ class ConsentStore:
         verify, so a revocation made by another process stops a stream that is already running."""
         self._is_revoked_elsewhere = is_revoked
 
+    def set_clock_mark(self, load, save) -> None:
+        """Persist the latest time seen (`load() -> float`, `save(float)`), so setting the wall clock back
+        and restarting does not make an expired record valid again."""
+        self._load_seen, self._save_seen = load, save
+        try:
+            self._seen = max(self._seen, float(load()))
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _advance(self, now: float) -> float:
+        """Return the effective time: never earlier than any time seen before."""
+        if now > self._seen:
+            first = self._seen == 0.0
+            moved = now - self._seen
+            self._seen = now
+            if self._save_seen is not None and (first or moved >= 30.0):  # not on every frame
+                try:
+                    self._save_seen(now)
+                except OSError:
+                    pass
+        return self._seen
+
     def revoke(self, record_id: str) -> None:
         self._revoked.add(record_id)
 
     def verify(self, record: ConsentRecord, scope: str, now: float | None = None) -> None:
-        now = time.time() if now is None else now
+        now = self._advance(time.time() if now is None else now)
         try:
             if not (isinstance(record.subject_id, str) and isinstance(record.scope, str)):
                 raise ConsentError("consent record malformed")

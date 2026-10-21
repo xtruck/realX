@@ -13,6 +13,7 @@ from realx.types import FrameContext
 
 class Plain:
     name = "plain"
+    role = "neutral"  # strict mode: a class realX did not register must declare what it is
 
     def setup(self) -> None: ...
     def process(self, ctx): return ctx

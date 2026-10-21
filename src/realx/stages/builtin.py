@@ -161,8 +161,7 @@ class ConsentGate:
         self.__store.verify(self.__record, self.__scope)
 
     def process(self, ctx: FrameContext) -> FrameContext:
-        self.__store.verify(self.__record, self.__scope)
-        grant(ctx, self.__record.subject_id)
+        grant(ctx, self.__store, self.__record, self.__scope)  # verifies, then vouches
         return ctx
 
     def close(self) -> None: ...
@@ -248,6 +247,7 @@ class Disclosure:
 class Watermark:
     name = "watermark"
     is_watermark = True
+    media = "video"
 
     def __init__(self, payload: bytes, key: bytes | None = None) -> None:
         if not payload or len(payload) > watermark.MAX_PAYLOAD:

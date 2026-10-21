@@ -6,7 +6,7 @@ placed in `ctx.meta`. Stages that synthesize faces call `require_consent`.
 
 from __future__ import annotations
 
-from realx.safety.consent import ConsentError
+from realx.safety.consent import ConsentError, ConsentRecord, ConsentStore
 from realx.types import FrameContext
 
 _TOKEN = object()
@@ -14,7 +14,11 @@ _SUBJECT_KEY = "consent_subject"
 _TOKEN_KEY = "consent_token"
 
 
-def grant(ctx: FrameContext, subject_id: str) -> None:
+def grant(ctx: FrameContext, store: ConsentStore, record: ConsentRecord, scope: str = "live") -> None:
+    """Mint the pass for this frame. The record is verified first (signature, scope, expiry, revocation),
+    so there is no way to get a token without a consent check."""
+    store.verify(record, scope)
+    subject_id = record.subject_id
     ctx.meta[_TOKEN_KEY] = _TOKEN
     ctx.meta[_SUBJECT_KEY] = subject_id
 
