@@ -87,7 +87,13 @@ def _voice(src: str, dst: str, semitones: float, preset: str | None = None) -> i
     from realx.audio import offline
     from realx.audio.wavio import read_wav
 
-    samples, rate = read_wav(src)
+    import wave
+
+    try:
+        samples, rate = read_wav(src)
+    except (OSError, ValueError, EOFError, wave.Error) as exc:
+        print(f"cannot read {src}: {exc}", file=sys.stderr)
+        return 2
     try:
         _, pcm = offline.convert(samples, rate, semitones, preset=preset)
     except ValueError as exc:
