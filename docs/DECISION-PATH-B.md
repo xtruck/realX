@@ -47,6 +47,6 @@ The owner accepts the licence risk of a private build. The project does not clai
 ## Order of work
 
 1. This record, `REMOTE.md` Path B section, `CLAUDE.md` scoped exception (this commit).
-2. A GPU-side server skeleton and a local client that move frames through a neutral GPU-free passthrough over loopback, with G1 to G10 as tests.
+2. A GPU-side server skeleton and a local client that move frames through a neutral GPU-free passthrough over loopback, with G1 to G10 as tests. **Done on branch `gpu-link-impl` (see `docs/GPULINK.md`).**
 3. Measure real latency and throughput on a rented GPU with the passthrough (needs the owner's provider account and a budget cap).
 4. Only then, the model on the rented machine, evaluated against the owner's pass mark.
