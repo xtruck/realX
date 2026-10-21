@@ -113,3 +113,52 @@ def test_one_euro_stage_does_not_freeze_when_timestamps_loop():
     assert second[0] == pytest.approx(0.0)
     assert len(set(round(v, 6) for v in second)) == 6  # not a held constant
     assert second[-1] > 30.0
+
+
+def test_one_euro_filter_recovers_after_a_non_finite_sample():
+    f = OneEuroFilter(min_cutoff=1.0, beta=0.0)
+    f(np.array([1.0, 2.0]), 0.0)
+    f(np.array([np.nan, 2.0]), 1 / 30)
+    out = f(np.array([5.0, 6.0]), 2 / 30)
+    assert np.allclose(out, [5.0, 6.0])  # restarted from the next finite sample
+    assert np.all(np.isfinite(f(np.array([5.0, 6.0]), 3 / 30)))
+    g = OneEuroFilter()
+    g(np.array([1.0]), 0.0)
+    g(np.array([2.0]), float("nan"))
+    assert np.allclose(g(np.array([3.0]), 1.0), [3.0])
+
+
+@pytest.mark.parametrize("name", ["one_euro", "smooth"])
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_smoothing_stages_recover_after_one_non_finite_landmark(name, bad):
+    stage = create(name)
+    stage.setup()
+    lm_ok = np.array([[10.0, 10.0], [20.0, 10.0], [15.0, 20.0]])
+    outs = []
+    for i in range(5):
+        lm = lm_ok.copy()
+        if i == 1:
+            lm[0, 0] = bad
+        face = Face(bbox=np.array([0.0, 0, 50, 50]), landmarks=lm, track_id=1)
+        ctx = FrameContext(pixels=np.zeros((8, 8, 3), np.uint8), index=i, timestamp=(i + 1) / 30, faces=[face])
+        outs.append(stage.process(ctx).faces[0])
+    assert all(np.all(np.isfinite(f.bbox)) for f in outs)
+    for f in outs[2:]:
+        assert f.landmarks is not None and np.all(np.isfinite(f.landmarks))
+    assert outs[1].landmarks is None  # the bad frame's landmarks were dropped
+
+
+def test_tracker_drops_non_finite_or_misshapen_landmarks_but_keeps_the_face():
+    from realx.tracking import FaceTracker
+
+    t = FaceTracker()
+    for i in range(4):
+        lm = np.array([[10.0, 10.0], [20.0, 10.0]])
+        if i == 2:
+            lm[1, 1] = np.nan
+        if i == 3:
+            lm = np.array([1.0, 2.0, 3.0])  # wrong shape
+        out = t.update([Face(bbox=np.array([0.0, 0, 50, 50]), landmarks=lm, score=0.9)])
+        for f in out:
+            assert f.landmarks is None or (f.landmarks.ndim == 2 and np.all(np.isfinite(f.landmarks)))
+    assert len(out) == 1
