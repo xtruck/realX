@@ -23,10 +23,10 @@ export function checkAngle(yaw, frontYaw, count = 0) {
   if (!Number.isFinite(yaw)) return { ok: false, reason: "the head turn could not be measured in this photo" };
   if (count >= MAX_ANGLES) return { ok: false, reason: `you already have ${MAX_ANGLES} side photos: remove one first` };
   if (Math.abs(yaw) > ANGLE_LIMIT) {
-    return { ok: false, reason: `this photo is turned about ${Math.round(Math.abs(yaw))}°; side photos must be turned at most ${ANGLE_LIMIT}°` };
+    return { ok: false, reason: `this photo is turned about ${Math.ceil(Math.abs(yaw))}°; side photos must be turned at most ${ANGLE_LIMIT}°` };   // rounded up: 45.3 reads 46, never "45"
   }
-  if (Number.isFinite(frontYaw) && Math.abs(yaw - frontYaw) < MIN_APART) {
-    return { ok: false, reason: `this photo faces about the same way as your front photo (${Math.round(Math.abs(yaw - frontYaw))}° apart): use one turned 15° to ${ANGLE_LIMIT}° to the side` };
+  if (Number.isFinite(frontYaw) && Math.abs(yaw - frontYaw) < MIN_APART) {   // rounded down below: 7.6 reads 7, never the minimum itself
+    return { ok: false, reason: `this photo faces about the same way as your front photo (${Math.floor(Math.abs(yaw - frontYaw))}° apart): use one turned 15° to ${ANGLE_LIMIT}° to the side` };
   }
   return { ok: true, reason: "" };
 }

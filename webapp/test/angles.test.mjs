@@ -331,3 +331,14 @@ test("angles.js reads no pixels and talks to no network, and page.js checks side
   const html = readFileSync(new URL("../src/facemesh/facemesh.html", import.meta.url), "utf8");
   assert.match(html, /<button id="anglesBtn" type="button" aria-pressed="false"/, "the option is off by default");
 });
+
+test("refusal messages never show a number that looks allowed: rounded away from the limit", () => {
+  const close = checkAngle(7.6, 0);
+  assert.equal(close.ok, false); assert.match(close.reason, /\(7° apart\)/, "7.6 degrees apart reads 7, below the 8 needed");
+  assert.match(checkAngle(-7.99, 0).reason, /\(7° apart\)/);
+  assert.equal(checkAngle(8, 0).ok, true, "exactly the minimum is accepted");
+  const far = checkAngle(45.3, 0);
+  assert.equal(far.ok, false); assert.match(far.reason, /about 46°/, "45.3 degrees reads 46, above the 45 allowed");
+  assert.match(checkAngle(-45.01, 0).reason, /about 46°/);
+  assert.equal(checkAngle(45, 20).ok, true, "exactly the limit is accepted");
+});
