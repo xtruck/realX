@@ -50,23 +50,50 @@ def _cohost(args) -> int:
     try:
         if args.action == "grant":
             g = vault.grant(args.name, days=args.days, agreed=args.friend_agreed)
-            print(f"consent saved: {g.path}")
-            print(f"REVOKE CODE (give it to {g.display_name}, it is shown only once): {g.revoke_code}")
+            # The code is plain ASCII and shown first, before any text that could fail to encode. It is also
+            # saved to a file, so an output problem can never leave a live consent with no way to revoke it.
+            code_file = _save_revoke_code(vault.root, g.record.record_id, g.revoke_code)
+            _say(f"REVOKE CODE (shown only once): {g.revoke_code}")
+            if code_file is not None:
+                _say(f"the code is also saved in {code_file}; give it to {g.display_name}, then delete that file")
+            _say(f"consent saved: {g.path}")
         elif args.action == "list":
             for r in vault.list():
-                print(f"  {r['id']}  {r['name']:20s} {r['state']}")
+                _say(f"  {r['id']}  {r['name']:20s} {r['state']}")
         elif args.action == "check":
             _, name = vault.check(args.file)
-            print(f"valid: {name}")
+            _say(f"valid: {name}")
         elif args.action == "revoke":
             vault.revoke(args.id, args.code)
-            print("revoked: this person's likeness can no longer be used")
+            _say("revoked: this person's likeness can no longer be used")
     except (ConsentError, ValueError) as exc:
-        print(f"{exc}", file=sys.stderr)
+        _say(f"{exc}", sys.stderr)
         if args.action == "grant" and not args.friend_agreed:
-            print(f"Pass --friend-agreed only if true: {AGREEMENT}", file=sys.stderr)
+            _say(f"Pass --friend-agreed only if true: {AGREEMENT}", sys.stderr)
         return 2
     return 0
+
+
+def _say(text: str, stream=None) -> None:
+    """Print text that may hold a person's name; characters the output cannot show become '?', never an error."""
+    stream = stream or sys.stdout
+    try:
+        print(text, file=stream)
+    except UnicodeEncodeError:
+        enc = getattr(stream, "encoding", None) or "ascii"
+        print(text.encode(enc, errors="replace").decode(enc), file=stream)
+
+
+def _save_revoke_code(root, record_id: str, code: str):
+    """Write the revoke code to a private file next to the consent record. None if that is not possible."""
+    path = root / f"{record_id}.revoke-code.txt"
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(code + "\n")
+    except OSError:
+        return None
+    return path
 
 
 def _voices() -> int:
@@ -206,6 +233,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "voice":
         return _voice(args.input, args.output, args.semitones, args.preset)
     if args.command == "cohost":
+        needs = {"grant": ("name",), "check": ("file",), "revoke": ("id", "code")}.get(args.action, ())
+        for opt in needs:
+            if not getattr(args, opt):
+                parser.error(f"cohost {args.action} needs --{opt}")  # a clean usage error, exit 2
         return _cohost(args)
     if args.command == "voices":
         return _voices()
