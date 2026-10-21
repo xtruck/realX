@@ -255,10 +255,14 @@ def portrait_stages(
     expired record fails before anything starts, and again on every frame.
     """
     animate = create("portrait_animate", portrait=portrait_bytes, record=record, store=store, engine=engine)
-    return [
+    from realx.pipeline import validate_built
+
+    stages = [
         *driver,
         create("consent_gate", store=store, record=record, scope=record.scope),
         animate,
         create("disclosure", display_name=display_name),
         create("watermark", payload=f"realx|portrait|{record.record_id[:8]}".encode(), key=watermark_key),
     ]
+    validate_built(stages, allow=tuple(type(d) for d in driver))  # already ordering- and strict-checked on return
+    return stages
