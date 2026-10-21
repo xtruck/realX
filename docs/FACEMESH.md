@@ -297,3 +297,30 @@ stretching one front-on photo. The owner's Stage 2 ranking (`scripts/facemesh_ba
 Also not verified: the real fps. The estimate is no cost in steady state (one face draw, as before) and one extra face draw
 (about 4 ms on the UHD 620, from the 24.6 to 22.4 fps above) during each 200 ms crossfade, not measured. **The 20 fps gate
 applies: if the page shows "20 fps gate: not met" with the option on, leave it off.**
+
+### Fix (2026-10-21): the face now returns to the front photo
+
+Found by new sequence tests in `webapp/test/angles.test.mjs`: once a side photo was drawn, facing the camera again never brought the
+front photo back (the front photo's id is the empty string, and the picker's `best && ...` treated it as "no candidate"). Fixed with
+`best !== null`; a regression test covers it. **Not yet seen on a real webcam.**
+
+### Webcam check (the owner, on the laptop; nothing here has been tried with a real camera yet)
+
+Needs: a front photo of yourself and one side photo, both of you, both consented in the page. The side photo should be turned 15 to 30
+degrees (the page refuses one closer than 8 degrees to the front photo, or turned more than 45). Close other browser windows.
+
+1. `realx serve`, open `/facemesh`, allow the camera, "Choose my photo" with the front photo, give consent.
+2. Click "Photos at several angles", "Add a side photo", choose the side photo, give its own consent. The list shows it with its angle.
+3. Face the camera for 5 s: the front photo is drawn. Note the "frames per second" value (or click "Measure 10 s").
+4. Turn your head slowly towards the side the photo shows, over about 3 s, to about 30 degrees. Expected: one short crossfade
+   (0.2 s) to the side photo past roughly the middle of the two angles; the hair, ears and neck stay from the front photo.
+5. Hold 5 s, then turn slowly back to face the camera. Expected: one crossfade back to the front photo (this is what the 2026-10-21 fix
+   repairs).
+6. Turn the OTHER way: the side photo must not appear. **If it appears when you turn the other way, the side photo file is mirrored**
+   (many phones save front-camera selfies mirrored): note it, it is a defect to fix, not your mistake.
+7. Wobble your head a little around halfway: no flicker between the two photos.
+8. Throughout: the "Virtual face" label stays on screen, and the fps stays at or above 20 (note the lowest value you see during a turn:
+   during the 0.2 s crossfade the face is drawn twice).
+9. Turn "Photos at several angles" off: the side photo's consent ends and the front photo stays.
+
+Send back: for steps 3 to 8, what you saw, the fps, and a screenshot during a turn if something looks wrong.

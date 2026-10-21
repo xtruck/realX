@@ -59,7 +59,8 @@ export class AnglePicker {
     if (!this.fade && Number.isFinite(liveYaw)) {
       const best = nearest(list, liveYaw);
       const gap = (id) => Math.abs(list.find((c) => c.id === id).yaw - liveYaw);
-      if (best && best !== this.current && gap(this.current) - gap(best) > this.hysteresis) this.fade = { from: this.current, to: best, start: now };
+      // best is "" for the front photo, so test for null, not falsiness: `best &&` never let the face fade back to the front photo
+      if (best !== null && best !== this.current && gap(this.current) - gap(best) > this.hysteresis) this.fade = { from: this.current, to: best, start: now };
     }
     if (!this.fade) return { from: this.current, to: this.current, t: 1 };
     const t = Math.min(1, Math.max(0, (now - this.fade.start) / this.fadeMs));

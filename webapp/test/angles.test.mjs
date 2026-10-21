@@ -342,3 +342,82 @@ test("refusal messages never show a number that looks allowed: rounded away from
   assert.match(checkAngle(-45.01, 0).reason, /about 46°/);
   assert.equal(checkAngle(45, 20).ok, true, "exactly the limit is accepted");
 });
+
+// --- webcam-like sequences (2026-10-21): what the owner will do in front of a real camera, played as numbers -------------------
+
+/** Plays a head-turn path through the picker at `fps`; returns one record per frame. */
+function play(path, candidates, fps = 25) {
+  const picker = new AnglePicker();
+  const frames = [];
+  let now = 0;
+  for (const yaw of path) { frames.push({ yaw, now, ...picker.update(yaw, candidates, now) }); now += 1000 / fps; }
+  return frames;
+}
+const ramp = (a, b, steps) => Array.from({ length: steps + 1 }, (_, i) => a + ((b - a) * i) / steps);
+const settledOn = (f) => (f.t === 1 && f.from === f.to ? f.to : null);
+
+test("a slow turn to the side photo and back: one fade each way, ending on the front photo", () => {
+  const cands = [{ id: "", yaw: 0 }, { id: "s1", yaw: 25 }];
+  const path = [...ramp(0, 35, 70), ...Array(10).fill(35), ...ramp(35, 0, 70), ...Array(10).fill(0)];   // ~3 s out, ~3 s back at 25 fps
+  const frames = play(path, cands);
+  const starts = frames.filter((f, i) => i > 0 && f.t < 1 && !(frames[i - 1].t < 1));
+  assert.equal(starts.length, 2, "exactly two crossfades: out and back");
+  assert.deepEqual([starts[0].from, starts[0].to], ["", "s1"]);
+  assert.deepEqual([starts[1].from, starts[1].to], ["s1", ""]);
+  // the rule is "the other photo is HYSTERESIS degrees nearer": halfway (12.5) plus or minus HYSTERESIS / 2
+  assert.ok(starts[0].yaw > 12.5 + HYSTERESIS / 2 && starts[0].yaw < 12.5 + HYSTERESIS / 2 + 1, `out at ${starts[0].yaw.toFixed(1)}°`);
+  assert.ok(starts[1].yaw < 12.5 - HYSTERESIS / 2 && starts[1].yaw > 12.5 - HYSTERESIS / 2 - 1, `back at ${starts[1].yaw.toFixed(1)}°`);
+  assert.equal(settledOn(frames.at(-1)), "", "back on the front photo");
+  assert.equal(settledOn(frames[80]), "s1", "held on the side photo while turned");
+});
+
+test("during a fade the new photo's opacity only rises, and the fade lasts FADE_MS whatever the frame rate", () => {
+  const cands = [{ id: "", yaw: 0 }, { id: "s1", yaw: 25 }];
+  for (const fps of [14, 25, 30]) {
+    const frames = play([0, ...Array(40).fill(30)], cands, fps);
+    const fading = frames.filter((f) => f.to === "s1" && f.from === "");
+    for (let i = 1; i < fading.length; i++) assert.ok(fading[i].t >= fading[i - 1].t, `t never goes back (${fps} fps)`);
+    const first = frames.find((f) => f.to === "s1"), done = frames.find((f) => settledOn(f) === "s1");
+    assert.ok(done.now - first.now >= FADE_MS && done.now - first.now <= FADE_MS + 1000 / fps + 1, `${fps} fps: ${done.now - first.now} ms`);
+  }
+});
+
+test("turning back in the middle of a fade: the fade finishes, then one fade back; no frame draws a third photo", () => {
+  const cands = [{ id: "", yaw: 0 }, { id: "s1", yaw: 25 }];
+  const frames = play([0, 30, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], cands, 25);   // out, then straight back after 80 ms
+  for (const f of frames) assert.ok(["", "s1"].includes(f.from) && ["", "s1"].includes(f.to));
+  assert.equal(settledOn(frames.at(-1)), "", "ends on the front photo");
+  const changes = frames.filter((f, i) => i > 0 && (f.from !== frames[i - 1].from || f.to !== frames[i - 1].to)).length;
+  assert.ok(changes <= 4, `few changes, no flicker (${changes})`);
+});
+
+test("the face is lost in the middle of a fade: the fade completes and the choice stays put until the face is back", () => {
+  const cands = [{ id: "", yaw: 0 }, { id: "s1", yaw: 25 }];
+  const frames = play([0, 30, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, 30, 30], cands, 25);
+  assert.equal(settledOn(frames[9]), "s1", "finished on the side photo with no face in view");
+  assert.equal(settledOn(frames.at(-1)), "s1");
+});
+
+test("a side photo each way: turning from one side to the other goes through the front photo, never straight across", () => {
+  const cands = [{ id: "", yaw: 0 }, { id: "L", yaw: -25 }, { id: "R", yaw: 25 }];
+  const frames = play([...ramp(-30, 30, 120), ...Array(10).fill(30)], cands);
+  const settled = frames.map(settledOn).filter((x) => x !== null).filter((x, i, a) => i === 0 || x !== a[i - 1]);
+  assert.deepEqual(settled, ["L", "", "R"]);
+  for (const f of frames) assert.ok(!(f.from === "L" && f.to === "R") && !(f.from === "R" && f.to === "L"));
+});
+
+test("holding the head near the halfway point does not flicker (small jitter of the live turn)", () => {
+  const cands = [{ id: "", yaw: 0 }, { id: "s1", yaw: 25 }];
+  const jitter = Array.from({ length: 200 }, (_, i) => 12.5 + 2.4 * Math.sin(i * 1.7));   // +-2.4 degrees round the midpoint: inside the 5 degree band
+  const frames = play(jitter, cands);
+  assert.ok(frames.every((f) => f.from === "" && f.to === ""), "stays on the photo it started on");
+});
+
+test("regression: from a side photo the face fades back to the FRONT photo (its id is the empty string)", () => {
+  const p = new AnglePicker();
+  const cands = [{ id: "", yaw: 0 }, { id: "s1", yaw: 25 }];
+  p.update(30, cands, 0); p.update(30, cands, FADE_MS + 1);
+  assert.equal(p.update(30, cands, FADE_MS + 2).to, "s1", "on the side photo");
+  assert.deepEqual(p.update(0, cands, 1000), { from: "s1", to: "", t: 0 }, "facing the camera again starts a fade back to the front photo");
+  assert.deepEqual(p.update(0, cands, 1000 + FADE_MS), { from: "", to: "", t: 1 });
+});

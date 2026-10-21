@@ -435,3 +435,9 @@ head, so the page kept drawing the front photo: the crossfade between two face l
 
 Reading: with the head still, a loaded side photo (its upload, consent and batched checks) costs nothing measurable, and every step met
 the 20 fps gate. Still open for the Stage 3 gate: a quiet-machine run, and the cost while the head actually turns (real webcam).
+
+**Clean rerun: not done (2026-10-21).** The section 12 run must be repeated on the owner's laptop with every other Chrome window closed
+(`scripts/bench_facemesh.py --headed --edges off --json facemesh-stage3.json`, branch `stage3-angle-photos`). It cannot be done from the
+cloud container: no access to the laptop, and the container's Chromium only has a software renderer (SwiftShader), whose numbers say nothing
+about the UHD 620. No estimate replaces it.
+
