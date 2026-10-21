@@ -33,6 +33,9 @@ class OneEuroFilter:
 
     def __call__(self, x: np.ndarray, t: float) -> np.ndarray:
         x = np.asarray(x, dtype=float)
+        if not (np.all(np.isfinite(x)) and math.isfinite(t)):
+            self.reset()  # a bad sample must not poison the state: restart at the next finite one
+            return x.copy()
         if self._x is None or self._x.shape != x.shape or self._t is None:
             self._x, self._dx, self._t = x.copy(), np.zeros_like(x), t
             return x.copy()
