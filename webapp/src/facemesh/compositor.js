@@ -10,6 +10,7 @@
 //    copy) and give them to the photo's detail, so the photo does not look like a sticker. That one method is the only
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
 import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, blendShape, edgeDepth, faceBox, flatten, keepMask, mouthKeepWeights, shapeWeights } from "./mesh.js";
+import { HALO, haloAmount, haloScale } from "./hairhalo.js";
 import { HEAD_VERTEX_COUNT, REACH, RING_TRIANGLES, headFade, neckAnchor, ringFlag, ringPoints, ringTriangles } from "./head.js";
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
@@ -31,7 +32,7 @@ precision mediump float;
 #endif
 varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_keep; varying float v_ring;
 uniform sampler2D u_photo; uniform sampler2D u_cam; uniform sampler2D u_mask;
-uniform float u_head; uniform float u_ringMatch;
+uniform float u_head; uniform float u_ringMatch; uniform float u_halo;   // gap #2: u_halo = hairhalo.js haloScale()
 uniform float u_keepEyes; uniform float u_match; uniform float u_keep; uniform float u_opacity; uniform vec2 u_rl; uniform vec2 u_rp;
 uniform float u_relight; uniform vec2 u_lp[5]; uniform vec2 u_pp[5];   // S11: lighting-only match, see lightOf()
 uniform float u_glasses; uniform vec2 u_eyeA; uniform vec2 u_eyeB; uniform vec2 u_eyeAsp;   // S11: the photo's spectacles (see glassesBand)
@@ -171,6 +172,30 @@ void main() {
   if (u_head > 0.0 && ringW > 0.0) {
     float chroma = max(photo.r, max(photo.g, photo.b)) - min(photo.r, min(photo.g, photo.b));
     head *= 1.0 - ringW * (1.0 - smoothstep(0.06, 0.14, chroma)) * smoothstep(0.38, 0.58, lum(photo));
+  }
+  // Gap #2, the hair halo (hairhalo.js): next to the photo's head silhouette, above the nose line, the photo's hair is widened and softened:
+  // 16 taps of the photo's head mask (inner ring, outer ring at 0.6 weight); the best one gives the cover and its photo colour. Skipped
+  // when u_halo is 0, inside the silhouette and outside the ring. A bright colourless tap (the backdrop) is never used.
+  if (u_halo > 0.0 && u_head > 0.0 && ringW > 0.0 && head < 0.999 && v_uv.y < u_pp[1].y) {
+    float bestS = 0.0; vec3 bestC = colour;
+    for (int k = 0; k < 16; k++) {
+      float fk = float(k < 8 ? k : k - 8);
+      float ang = fk * 0.7853982;
+      vec2 dir = vec2(cos(ang), sin(ang));
+      float rr = u_halo * (k < 8 ? 0.5 : 1.0), wt = k < 8 ? 1.0 : 0.6;
+      vec2 tp = v_uv + dir * rr * u_rp;
+      float inTap = step(0.0, tp.x) * step(tp.x, 1.0) * step(0.0, tp.y) * step(tp.y, 1.0);
+      vec3 tc = texture2D(u_photo, tp).rgb;
+      float tch = max(tc.r, max(tc.g, tc.b)) - min(tc.r, min(tc.g, tc.b));
+      float back = 1.0 - (1.0 - smoothstep(0.06, 0.14, tch)) * smoothstep(0.38, 0.58, lum(tc));
+      float s = smoothstep(0.62, 0.92, texture2D(u_mask, tp).r) * wt * inTap * back;
+      if (s > bestS) { bestS = s; bestC = tc; }
+    }
+    float cover = bestS * ringW;
+    if (cover > head) {
+      colour = mix(bestC, colour, head / max(cover, 1e-4));
+      head = cover;
+    }
   }
   float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - keepAmt) * u_opacity * head;
   // S11i, the neck: below the chin, the live person's own neck (and ear) is wider than the photo's and shows as pale streaks beside it.
@@ -326,12 +351,12 @@ export class MeshCompositor {
     this.mouthShrink = 0.5;           // S12c: how much the live mouth patch pulls in towards the middle of the mouth (0 = the old full patch)
     this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
-    this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
+    this.maskTex = null; this.head = false; this.hairHalo = HALO.defaultAmount;   // gap #2: how far the photo's hair is widened (0..1)   // whole head: the photo's head mask, and whether it is switched on
     this.program = link(gl, VERT, FRAG);
     gl.useProgram(this.program);
     const attr = (name) => gl.getAttribLocation(this.program, name);
     this.loc = { pos: attr("a_pos"), uv: attr("a_uv"), fade: attr("a_fade"), keep: attr("a_keep"), ring: attr("a_ring") };
-    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_keepEyes", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp", "u_webcam", "u_camTexel", "u_seed"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
+    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_halo", "u_match", "u_keep", "u_keepEyes", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp", "u_webcam", "u_camTexel", "u_seed"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
     this.posBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.positions.byteLength, gl.DYNAMIC_DRAW);
@@ -611,6 +636,9 @@ export class MeshCompositor {
   setHead(on) { this.head = !!on; }
 
   /** S12b: how far the head ring reaches above the head, in face widths (0.3 to 1.2). Further out makes the photo's own hair cover more of the live head (a taller live hairstyle); the default is REACH.top. */
+  /** Gap #2: how far the photo's hair is widened and softened past its silhouette, 0..1 (0 = the old picture exactly). */
+  setHairHalo(v) { this.hairHalo = haloAmount(v); }
+
   setHairReach(reach) {
     const v = Number(reach);
     if (Number.isFinite(v)) this.hairReach = Math.min(1.2, Math.max(0.3, v));
@@ -756,6 +784,7 @@ export class MeshCompositor {
     gl.uniform1i(this.uni.u_cam, 1);
     gl.uniform1i(this.uni.u_mask, 2);
     gl.uniform1f(this.uni.u_head, head ? 1 : 0);
+    gl.uniform1f(this.uni.u_halo, head ? haloScale(this.hairHalo) : 0);
     gl.uniform1f(this.uni.u_ringMatch, this.look.relight ? 1 : RING_MATCH);   // S11f: with the lighting-only match the ring takes the same light as the face, or a step shows along the face outline
     gl.uniform1f(this.uni.u_match, useCamera ? this.look.match : 0);
     // S11m: the live mouth interior is only shown while the mouth is OPEN (the gap between the inner lips against the face height); closed, the

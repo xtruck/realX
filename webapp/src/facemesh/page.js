@@ -1074,6 +1074,10 @@ function wireControls() {
     if (compositor) compositor.setHairReach(Number(e.currentTarget.value) / 100);
     $("hairReachValue").textContent = `${e.currentTarget.value}%`;
   });
+  $("hairHalo").addEventListener("input", (e) => {           // gap #2: the photo's hair is widened and softened so less of your own shows round it
+    if (compositor) compositor.setHairHalo(Number(e.currentTarget.value) / 100);
+    $("hairHaloValue").textContent = `${e.currentTarget.value}%`;
+  });
   $("webcamLook").addEventListener("input", (e) => {         // S13b: the photo takes on the webcam's softness, grain and grade (measured on the GPU)
     if (compositor) compositor.setWebcamLook(Number(e.currentTarget.value) / 100);
     $("webcamLookValue").textContent = `${e.currentTarget.value}%`;
