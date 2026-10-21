@@ -35,6 +35,7 @@ import numpy as np
 from realx import __version__
 from realx.diag import Diagnostics
 from realx.errors import classify, session_state, stop_state
+from realx.vcam import VirtualCamera
 from realx.audio import offline, presets
 from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model
 from realx import ws
@@ -54,6 +55,7 @@ log = rlog.get_logger("server")
 # "body": the browser tracks the camera (full body) and publishes it; the Python side releases the camera.
 # "photoface": the /facemesh page runs in the control room and owns the camera; the Python side releases it too
 MODES = ("avatar", "character", "boxes", "original", "body", "photoface")
+VCAM_MODES = ("avatar",)  # the only mode whose finished picture is made here; the others are the raw camera, debug boxes or drawn in the browser
 BACKGROUNDS = ("off", "blur", "photo")
 BACKGROUND_THUMB_PATH = "/avatar/background.png"
 BACKGROUND_THUMB_SIDE = 32  # px on the long edge
@@ -163,7 +165,8 @@ class Update(NamedTuple):
 class Engine:
     """Runs the video pipeline on a background thread and keeps the latest frame."""
 
-    def __init__(self, source: str = "demo:dance", mode: str = "avatar", smoothing: float = 0.35, fps: float = 30.0):
+    def __init__(self, source: str = "demo:dance", mode: str = "avatar", smoothing: float = 0.35, fps: float = 30.0,
+                 vcam: VirtualCamera | None = None):
         self.fps = fps
         self._dedup = rlog.Dedup()  # a fault that repeats on every retry is logged once
         self._lock = threading.Lock()
@@ -192,6 +195,7 @@ class Engine:
         self._open_source: str | None = None
         self._ribbon: deque[int] = deque(maxlen=120)  # 0 lost, 1 detected, 2 predicted
         self._diag = Diagnostics()
+        self._vcam = vcam  # optional virtual camera output; off unless the owner built one with enabled=True
         self._pipe: StudioController | None = None  # read only for per-stage timings and the studio state in stats()
         self._frames_src = None  # the open video source, read only for its capture figures
         self._stats = {"fps": 0.0, "latency_ms": 0.0, "faces": 0, "dropped": 0, "frames": 0, "error": None}
@@ -206,6 +210,8 @@ class Engine:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        if self._vcam is not None:
+            self._vcam.start()
         self._thread = threading.Thread(target=self._run, name="realx-engine", daemon=True)
         self._thread.start()
 
@@ -216,10 +222,21 @@ class Engine:
             self._cond.notify_all()
         if self._thread:
             self._thread.join(timeout=5)
+        if self._vcam is not None:
+            self._vcam.stop()
         status = self.stop_status()
         if status["state"] == "pending":
             log.warning("the engine thread did not stop within 5 s; stopping can be retried")
         return status
+
+    def _vcam_status(self, mode: str) -> dict | None:
+        if self._vcam is None:
+            return None
+        st = self._vcam.status()
+        st["feeding"] = st["state"] == "running" and mode in VCAM_MODES
+        if st["state"] == "running" and not st["feeding"]:
+            st["note"] = "the virtual camera only carries the avatar mode; the current mode is not sent"
+        return st
 
     def retry_stop(self) -> dict:
         """Ask again for a stop that was still pending. Safe to call at any time."""
@@ -329,6 +346,7 @@ class Engine:
             except Exception:  # diagnostics must never break a stats request
                 capture = None
         out["stop"] = self.stop_status()
+        out["vcam"] = self._vcam_status(out["config"]["mode"])
         out["session"] = session_state(out["stop"]["state"] == "running", out["frames"], self._error_info, out["stop"])
         out["diag"] = self._diag.snapshot(stage_ms, capture)
         status = getattr(pipe, "status", None)  # a plain Pipeline (tests, custom builds) has no studio state
@@ -554,6 +572,8 @@ class Engine:
                         )
                         if not ok:
                             raise RuntimeError("could not encode frame")
+                    if self._vcam is not None and cfg["mode"] in VCAM_MODES:
+                        self._vcam.offer(out.pixels)
                     fh, fw = out.pixels.shape[:2]
                     rig_faces = out.meta.get("rig", []) if cfg["mode"] != "original" else []
                     state = 0 if not out.faces else (2 if all(f.predicted for f in out.faces) else 1)
