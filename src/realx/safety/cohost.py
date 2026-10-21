@@ -181,9 +181,13 @@ def cohost_stages(vault: CohostVault, consent_file: str | Path, renderer: Stage,
     starts) and again on every frame by the gate.
     """
     record, name = vault.check(consent_file)
-    return [
+    from realx.pipeline import validate_built
+
+    stages = [
         create("consent_gate", store=vault.store, record=record, scope=record.scope),
         renderer,
         create("disclosure", display_name=name),
         create("watermark", payload=f"realx|cohost|{record.record_id[:8]}".encode(), key=watermark_key),
     ]
+    validate_built(stages, allow=(type(renderer),))  # the returned chain is already ordering- and strict-checked
+    return stages
