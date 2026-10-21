@@ -60,6 +60,7 @@ MAX_JSON = 4096
 MAX_AVATAR_BYTES = 32 * 1024 * 1024
 MAX_CONNECTIONS = 16
 SOCKET_TIMEOUT = 15.0
+HEAD_DEADLINE = 10.0  # total seconds to receive a whole request line + headers (slow-trickle clients are cut)
 BODY_MAX_AGE = 1.0            # seconds: an older body message is never (re)sent to a viewer
 PUBLISH_IDLE_SECONDS = 15.0   # a publisher that sends nothing this long is dropped
 PUBLISH_RATE_LIMIT = 200      # messages per second from one publisher before it is cut off
@@ -708,6 +709,37 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
         sys_version = ""
         timeout = SOCKET_TIMEOUT
         _body_taken = False  # set per request: has the handler started reading the body itself?
+
+        _head_timer: threading.Timer | None = None
+
+        def _end_head_deadline(self) -> None:
+            timer, self._head_timer = self._head_timer, None
+            if timer is not None:
+                timer.cancel()
+
+        def handle_one_request(self) -> None:
+            """The per-recv timeout alone lets a client trickle bytes forever before authentication."""
+            conn = self.connection
+
+            def cut() -> None:
+                try:
+                    conn.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+            self._head_timer = threading.Timer(HEAD_DEADLINE, cut)
+            self._head_timer.daemon = True
+            self._head_timer.start()
+            try:
+                super().handle_one_request()
+            finally:
+                self._end_head_deadline()
+
+        def parse_request(self) -> bool:
+            try:
+                return super().parse_request()
+            finally:
+                self._end_head_deadline()  # the head is complete (or refused): the deadline has done its job
 
         def log_message(self, *args) -> None:  # quiet
             pass

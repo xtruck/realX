@@ -49,3 +49,30 @@ def test_stream_slot_is_released_in_a_mode_without_jpeg():
         assert _wait(lambda: _slots(s) == before, 8), "the stream threads kept their connection slots"
     finally:
         s.stop()
+
+
+def test_slow_trickle_head_is_cut_by_a_total_deadline(monkeypatch):
+    import realx.server as server_mod
+
+    monkeypatch.setattr(server_mod, "HEAD_DEADLINE", 1.0)
+    s = Server(Engine(mode="body"), port=0, token=TOKEN)
+    s.start()
+    try:
+        before = _slots(s)
+        c = socket.create_connection(("127.0.0.1", s.port), timeout=5)
+        c.sendall(b"GET /api/stats HTTP/1.1\r\n")
+        assert _wait(lambda: _slots(s) == before - 1, 2)
+        closed = False
+        end = time.monotonic() + 5
+        while time.monotonic() < end:  # one byte every 0.25 s never trips the per-recv timeout
+            try:
+                c.sendall(b"X")
+            except OSError:
+                closed = True
+                break
+            time.sleep(0.25)
+        assert closed, "the trickling socket was never cut"
+        c.close()
+        assert _wait(lambda: _slots(s) == before, 3)
+    finally:
+        s.stop()
