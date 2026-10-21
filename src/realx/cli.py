@@ -30,15 +30,20 @@ def _models(action: str) -> int:
     from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model, models_dir
 
     print(f"models folder: {models_dir()}")
+    failed: list[str] = []
     for name, spec in MANIFEST.items():
         try:
             path = ensure_model(name, download=(action == "fetch"))
             status = f"ready ({path.name})"
         except ModelError as exc:
-            status = f"missing: {exc}"
-        print(f"  {name:12s} {spec.license:6s} commercial_ok={spec.commercial_ok}  {status}")
+            status = f"{'failed' if action == 'fetch' else 'missing'}: {exc}"
+            failed.append(name)
+        print(f"  {name:12s} {spec.license:10s} commercial_ok={spec.commercial_ok}  {status}")
     for name, why in BLOCKED.items():
         print(f"  {name:12s} BLOCKED  {why}")
+    if action == "fetch" and failed:
+        print(f"fetch incomplete, not ready: {', '.join(failed)}", file=sys.stderr)
+        return 1
     return 0
 
 
