@@ -253,3 +253,57 @@ def test_server_background_flow_validates_and_changes_the_picture(server, photo)
     assert np.abs(frame[corner].astype(int) - backdrop[corner].astype(int)).mean() < 14
     assert server.engine.stats()["config"]["background"] == "photo"
     assert cfg({"background": "off", "mode": "avatar"})[0] == 200
+
+
+# --- B2-07: the cheaper blend and smoothstep must match the old code within one level -------------
+
+
+def _old_smoothstep(x, lo, hi):
+    t = np.clip((x - lo) / (hi - lo), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _old_blend(rgb, alpha2d, backdrop):
+    alpha = alpha2d[..., None]
+    out = rgb.astype(np.float32) * alpha + backdrop.astype(np.float32) * (1.0 - alpha)
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+def test_smoothstep_matches_the_old_formula():
+    from realx.stages.background import smoothstep
+
+    x = np.random.default_rng(3).uniform(-0.2, 1.2, (64, 64)).astype(np.float32)
+    new, old = smoothstep(x, 0.35, 0.65), _old_smoothstep(x, 0.35, 0.65)
+    assert new.dtype == old.dtype
+    assert np.abs(new - old).max() < 1e-5
+    assert np.array_equal(x, x.copy())  # the input is not modified in place
+
+
+def test_bg_replace_blend_matches_the_old_code_within_one_level():
+    from realx.stages.background import BackgroundReplace
+    from realx.types import FrameContext
+
+    rng = np.random.default_rng(7)
+    h, w = 120, 160
+    rgb = rng.integers(0, 256, (h, w, 3), dtype=np.uint8)
+    yy, xx = np.mgrid[0:h, 0:w]
+    alpha = _old_smoothstep(np.clip(1.0 - np.hypot(xx - 80, yy - 60) / 50.0, 0, 1).astype(np.float32), 0.2, 0.8)
+    alpha = alpha.astype(np.float32)  # exact 0 and 1 regions plus a soft edge
+
+    class FakeSeg:
+        def matte(self, _rgb):
+            return alpha
+
+        def setup(self): ...
+        def close(self): ...
+
+    stage = BackgroundReplace(mode="color", color=(20, 200, 90))
+    stage._seg = FakeSeg()
+    backdrop = np.full_like(rgb, (20, 200, 90))
+    original = rgb.copy()
+    ctx = stage.process(FrameContext(pixels=rgb, index=0))
+    expected = _old_blend(original, alpha, backdrop)
+    assert ctx.pixels.dtype == np.uint8 and ctx.pixels.shape == rgb.shape
+    assert np.abs(ctx.pixels.astype(int) - expected.astype(int)).max() <= 1
+    assert np.array_equal(rgb, original)  # the camera buffer is never edited
+    assert ctx.meta["background"]["person_fraction"] == pytest.approx(float(alpha.mean()))

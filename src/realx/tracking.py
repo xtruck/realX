@@ -11,7 +11,7 @@ out, the track coasts on its (fading) velocity for a few frames (`predicted=True
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -136,6 +136,14 @@ class FaceTracker:
             and d.bbox[2] > d.bbox[0]
             and d.bbox[3] > d.bbox[1]
             and np.isfinite(d.score)
+        ]
+        # landmarks must be a finite (N, 2) array; otherwise drop them and keep the box
+        detections = [
+            d
+            if d.landmarks is None
+            or (np.ndim(d.landmarks) == 2 and np.shape(d.landmarks)[1] == 2 and np.all(np.isfinite(d.landmarks)))
+            else replace(d, landmarks=None)
+            for d in detections
         ]
         pairs = []
         for ti, track in enumerate(self._tracks):
