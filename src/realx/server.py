@@ -293,7 +293,7 @@ class Engine:
             out["version"] = __version__
             out["body"] = {"publishing": self._publishing, "viewers": self._viewers}
             out["dock"] = self.dock_state()
-            out["security"] = {"token": "fixed" if self.token_fixed else "per-run", "watermark": True}   # never the token itself
+            out["security"] = {"token": "fixed" if self.token_fixed else "per-run", "watermark": False, "note": "the live MJPEG preview and /avatar carry no watermark stage; only offline voice output is provenance-marked"}   # never the token itself
             pipe, src = self._pipe, self._frames_src
         stage_ms = {name: t.mean_ms for name, t in list(pipe.timings.items())} if pipe is not None else {}
         capture = None
