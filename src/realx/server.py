@@ -100,6 +100,12 @@ CSP = (
 )
 
 
+PREVIEW_CSP = (
+    "default-src 'none'; img-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'; "
+    "base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'"
+)
+
+
 def dock_csp(port: int) -> str:
     """The OBS dock: its own script and styles, this server's API, one read-only WebSocket. Nothing else, and no framing."""
     sockets = f"ws://127.0.0.1:{port} ws://localhost:{port}"
@@ -928,7 +934,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             if source is None:
                 return self._deny(401, "access token required")
             path = urlparse(self.path).path
-            if source == "query" and path in ("/", "/avatar", "/dock", "/facemesh"):  # first visit from a link (browser or OBS): token into a cookie
+            if source == "query" and path in ("/", "/avatar", "/dock", "/facemesh", "/preview"):  # first visit from a link (browser or OBS): token into a cookie
                 return self._adopt_token(path)
             if path == "/":
                 self._static(
@@ -970,6 +976,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     "text/html; charset=utf-8",
                     (("Content-Security-Policy", dock_csp(port_getter())), ("X-Frame-Options", "DENY")),
                 )
+            elif path == "/preview":
+                self._static(
+                    "preview.html",
+                    "text/html; charset=utf-8",
+                    (("Content-Security-Policy", PREVIEW_CSP), ("X-Frame-Options", "DENY")),
+                )
+            elif path == "/preview.js":
+                self._static("preview.js", "text/javascript; charset=utf-8")
+            elif path == "/preview.css":
+                self._static("preview.css", "text/css; charset=utf-8")
             elif path == "/dock.js":
                 self._static("dock.js", "text/javascript; charset=utf-8")
             elif path == "/dock.css":

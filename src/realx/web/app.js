@@ -251,6 +251,11 @@ function bodyStatusText(s) {
 }
 document.querySelectorAll(".emote").forEach((b) => b.addEventListener("click", () =>
   api("/api/emote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: b.dataset.emote }) }).catch(() => {})));
+$("previewOpen").addEventListener("click", () => {
+  // same origin, so the cookie carries the access token; noopener keeps the new window from reaching this page
+  const w = window.open("/preview", "realx-output-preview", "popup,width=960,height=540,noopener");
+  if (!w) { $("notice").hidden = false; $("notice").textContent = "The browser blocked the preview window. Allow pop-ups for this page and try again."; }
+});
 $("obsCopy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("obsUrl").value); $("obsCopy").textContent = "Copied"; }
   catch (e) { $("obsUrl").select(); $("obsCopy").textContent = "Press Ctrl+C"; }
