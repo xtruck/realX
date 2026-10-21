@@ -115,3 +115,34 @@ def test_client_reset_on_a_get_is_quiet(capfd):
     finally:
         s.stop()
     assert "Traceback" not in capfd.readouterr().err
+
+
+def test_second_server_cannot_bind_a_port_already_held():
+    a = Server(Engine(mode="body"), port=0, token=TOKEN)
+    a.start()
+    try:
+        with pytest.raises(OSError):
+            Server(Engine(mode="body"), port=a.port, token="other-token-0123456789abcdef")
+    finally:
+        a.stop()
+
+
+def test_dedup_is_thread_safe():
+    from realx.log import Dedup
+
+    d = Dedup(every_s=1000.0)
+    errors: list[BaseException] = []
+
+    def work(base: int) -> None:
+        try:
+            for i in range(20000):
+                d.first((base, i))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work, args=(b,)) for b in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors[:1]
