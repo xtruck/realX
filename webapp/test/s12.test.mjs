@@ -134,7 +134,7 @@ test("a yawed head's neck stops swinging: the lower ring pulls back toward the b
 });
 
 test("the live shoulders drag the neck further than the face's own middle does, and an anchor above the head is ignored", () => {
-  const lm = round(0.45, 0.4, 0.2, 0.5), ring = ringPoints(lm, 1), flat = flatten(lm);
+  const lm = round(0.45, 0.4, 0.2, 0.5), ring = ringPoints(lm, 1, { bottom: 0.7 }), flat = flatten(lm);   // S14a: fixture built at the old 0.7 reach: with 0.9 the sheared chin point already overshoots the 0.6 anchor
   const k = OVAL_COUNT / 2;
   const alone = neckAnchor(ring, flat, 1, null, 1)[at(ring, 2, k)];
   const shouldered = neckAnchor(ring, flat, 1, [0.6, 0.9], 1)[at(ring, 2, k)];
