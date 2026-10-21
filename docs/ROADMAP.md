@@ -1,5 +1,14 @@
 # Roadmap
 
+> **Status banner (docs audit A5, 2026-10-21).** The milestone table below (M0 to M7) is the original long-term plan, not a description of
+> what runs. **Built:** M0 Foundation; the CPU avatar tier (M0.5); the consent, watermark and disclosure parts of M4; the camera source
+> and bounded stream runner of M2; and, outside this table, the browser face-mesh page (`/facemesh`: a consented photo drawn on the live
+> face, with hair, body and hand layers), which is the current main line of work. **Aspirational, no code:** M1 neural ONNX swap
+> stages (license-blocked), M2 virtual camera and GPU pipeline, M3, M5 installer, M6 cloud GPU and WebRTC (no WebRTC code exists in
+> `src/` or `webapp/src/`), M7. The "Verified status" section below is dated 2026-10-14 and was not refreshed; later progress is in
+> `PROGRESS.md`. For what the code does today read `REALX_ARCHITECTURE.md`; for the working order `REALX_ROADMAP.md`; for numbers
+> `REALX_BENCHMARKS.md`; for open findings `REALX_AUDIT.md`. Nothing below was deleted.
+
 > Long-term milestones. The working order by priority (P0-P5) is `REALX_ROADMAP.md` (2026-10-20).
 
 | Milestone | Scope | Exit criteria |

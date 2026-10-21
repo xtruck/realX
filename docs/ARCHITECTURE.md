@@ -1,5 +1,16 @@
 # Architecture
 
+> **Status banner (docs audit A5, 2026-10-21).** Everything on this page is the long-term target, not the design in use. **Built**
+> (registered stages in `src/realx/stages/` and `src/realx/audio/stages.py`): `detect_yunet`, `track`, `smooth`, `one_euro`,
+> `consent_gate`, `swap_stub` (a stub, not a swap), `disclosure`, `watermark`, `bg_replace`, `portrait_animate` (no engine enabled),
+> `avatar`, `rig`, the `voice_*` stages and `audio_watermark`; the consent-before and watermark-after build check; signed consent; the
+> MJPEG preview and the OBS Browser Source; provider selection with a session cache (`src/realx/runtime/providers.py`).
+> **Aspirational, not built:** the GPU backend and the WebRTC link in the topology diagram (no WebRTC code exists), real ONNX
+> swap and `restore` models (license-blocked), the `source`, `align`, `mask` and `composite` stages as listed (no such registered
+> stage), a virtual camera sink, auto quality, device buffers. The live photo path today is the browser: the `/avatar` and `/facemesh`
+> pages track and draw in WebGL. Read `REALX_ARCHITECTURE.md` for the code as it is, `REALX_ROADMAP.md` for priorities,
+> `REALX_BENCHMARKS.md` for measurements and `REALX_AUDIT.md` for open findings. Nothing below was deleted.
+
 > This page is the long-term target design. For what the code on `main` actually does, see `REALX_ARCHITECTURE.md` (2026-10-20).
 
 ## Goals

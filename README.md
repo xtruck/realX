@@ -25,6 +25,10 @@ with **consent, provenance and license checks built in**.
   well visible) your legs and feet. It works seated, with hands or legs out of view. MediaPipe
   (Apache-2.0) runs in the control-room tab, so your camera picture never leaves that page; the
   OBS Browser Source receives only joint angles. The character is always labelled as virtual.
+- **Photo on your live face (face-mesh page)**: `http://127.0.0.1:8765/facemesh` (needs the token) draws a
+  photo you have consented to onto your tracked face, with optional hair, body and hand layers. It is a browser-side
+  texture mesh, not a neural face swap, always labelled "Virtual face", and has been tested with a fake camera and on the
+  integrated GPU of one laptop, not judged on a real person (see [Benchmarks](docs/BENCHMARKS.md), [Progress log](docs/PROGRESS.md)).
 - **Background replacement**: cut yourself out of your own camera picture and put a
   photo, a blur or a colour behind you (PP-HumanSeg, Apache-2.0). Nothing is generated.
 - **Character voices**: `realx voices` lists presets (pip, bear, imp, robot, radio).

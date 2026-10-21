@@ -65,9 +65,28 @@ the pose and hand models our features need); "Remote matches REMOTE.md" (it does
 
 ## Next, in order (each step: tests, a measurement where it applies, push)
 
-1. Run the benchmark on the real GPU, idle, and record it in `BENCHMARKS.md` (this replaces guesses with numbers).
-2. Hand skin-tone matching in the shader (no CPU read-back), so the live hand does not clash with a different person's photo.
-3. Cadence gating for the pose and hand models, with the numbers from step 1.
-4. Validate the face-mesh page as an OBS source on the owner's machine; then the virtual camera.
-5. Soak test (10 minutes) for thermal droop.
-6. Only if the numbers say it is needed: the Path B design decision, and per-identity training on consented data.
+Status of each step as checked against the code on 2026-10-21 (docs audit A5; log in `docs/audit/A5-docs-drift.md`).
+
+1. Run the benchmark on the real GPU, idle, and record it in `BENCHMARKS.md`. **Done, for the integrated Intel UHD 620 only.** No
+   discrete GPU exists on the machine, so none was or can be measured. Proof: `BENCHMARKS.md` sections 9, 10 and 11 (section 11, owner's
+   laptop, 2026-10-20: renderer `ANGLE (Intel ... UHD Graphics 620 ... Direct3D11)`, no other Chrome processes, tool verdict
+   "representative", two runs per step; with Clean the edges off every step is over 20 fps). Limits: fake camera with no hand, no p95
+   frame time, no soak. (`BENCHMARKS.md` has no section dated 2026-10-21; section 11 is the latest.)
+2. Hand skin-tone matching in the shader (no CPU read-back). **Done (S10h), tested on synthetic textures only.** Proof:
+   `docs/PROGRESS.md` entry "S10h hand skin-tone matching (2026-10-16)" and `tests/test_facemesh_skin.py`; option off by default;
+   never tried with a real hand.
+3. Cadence gating for the pose and hand models. **Partly done.** Built: the face-mesh page asks the pose model 4 times a second
+   (`POSE_EVERY_MS = 250`, `webapp/src/facemesh/page.js`, PROGRESS S11k, `BENCHMARKS.md` section 10: body step 9.4 to 17.6 fps); the
+   hand model looks every 100 ms with a hand in view, every 50 ms while hands are drawn on top, and every 500 ms (`HAND_IDLE_MS`,
+   `page.js`) when none has been seen and the cover option is off; the avatar tracker uses the `Stagger` scheduler
+   (`webapp/src/body.js`, used in `webapp/src/tracker.js`). Open: `Stagger` is not used by the face-mesh page, the constants were set
+   from a few runs, the effect of `HAND_IDLE_MS` has not been measured with a real hand, and the 20 fps gate with the body on was
+   met only with Clean the edges off (section 11).
+4. Validate the face-mesh page as an OBS source on the owner's machine; then the virtual camera. **Open.** No PROGRESS entry or
+   benchmark records an OBS run of `/facemesh`; `docs/OBS.md` and `scripts/windows/obs-check.ps1` cover the avatar route; no
+   virtual-camera code exists in `src/` (`pyvirtualcam` is not used).
+5. Soak test (10 minutes) for thermal droop. **Open.** No soak code exists in `scripts/` or `webapp/src/`; `BENCHMARKS.md` runs last
+   about 12 seconds a step.
+6. Only if the numbers say it is needed: the Path B design decision, and per-identity training on consented data. **Open, and
+   deliberately not started.** No remote transport and no training code exist (`src/realx/remote.py` carries head-rig numbers only,
+   per `docs/REMOTE.md`).
