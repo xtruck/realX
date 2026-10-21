@@ -417,3 +417,23 @@ full 5 passes a second, and a run with `--edges off` (#24) kept it off for every
 **S13c explains the whole slowdown** (no commit bisect needed): its passes cost about 27 ms each, but five a second double the face model's
 time on the shared GPU. Without it every step meets the 20 fps gate. Owner's decision (2026-10-20): S13c is now **off by default**, and
 lower rates are to be measured with `scripts/bench_facemesh.py --headed --edges-hz 2` (and `1`), which loads the page as `/facemesh?seamHz=2`.
+
+## 2026-10-21 idle-machine run (Intel UHD 620, no discrete GPU)
+
+Machine: i5-8365U, 8 threads, Intel UHD 620 (integrated, 1 GB), Windows 11 10.0.26300, Python 3.12.15, OpenCV 5.0.0, no onnxruntime.
+Conditions: Chrome closed, CPU load under 20% for three checks in a row before each run, no `WARNING` printed. A first run
+taken while Windows Defender was scanning (CPU 82% busy) gave about half these numbers and was discarded.
+
+`realx bench` (detect > track > one_euro > rig), face found in 100% of frames:
+
+| Resolution | One frame at a time | At 30 fps offered | Lost | Stream frame mean / p95 |
+|---|---|---|---|---|
+| 320x240 | 116.0 fps | 180/180 | 0 | 9.5 / 13.4 ms |
+| 640x480 | 37.8 fps | 180/180 | 0 | 20.9 / 28.9 ms |
+| 1280x720 | 29.4 fps | 177/180 | 3 | 31.6 / 39.1 ms |
+
+Browser tracker (`scripts/bench_tracking.py`, 640x480, windowed Chrome 155, 20 s): tracker 30.0 fps median; delegates pose/hands/face all
+GPU (the integrated one); per model median pose 25.7 ms, face 23.5 ms, hands 31.1 ms; models ran per second pose 15.0, face 7.5, hands 7.0;
+character rendered at 46.5 fps while tracking. Hands: no hand was in view, so the hand figures are not a real-hand measurement.
+
+Not covered: a discrete GPU (CUDA/TensorRT), a real hand, a thermal soak. Raw output: `bench.json`, `tracking.json` (kept outside the repo).
