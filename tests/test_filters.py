@@ -90,3 +90,26 @@ def test_one_euro_stage_smooths_per_track_and_evicts_stale():
 
 def test_one_euro_stage_is_marked_stateful():
     assert create("one_euro").stateful is True
+
+
+def test_one_euro_backwards_timestamp_restarts_from_the_new_sample():
+    f = OneEuroFilter(min_cutoff=1.0, beta=0.0)
+    for i in range(5):
+        f(np.array([float(i * 10)]), 1.0 + i)
+    assert np.allclose(f(np.array([100.0]), 0.0), [100.0])  # clock restarted: new sample, no hold
+    assert f(np.array([110.0]), 1.0)[0] > 100.0  # and it keeps filtering afterwards
+
+
+def test_one_euro_stage_does_not_freeze_when_timestamps_loop():
+    stage = create("one_euro", min_cutoff=2.0, beta=0.5)
+    stage.setup()
+    outs = []
+    for _loop in range(2):
+        for i in range(6):
+            face = Face(bbox=np.array([i * 10.0, 0, i * 10.0 + 50, 50]), track_id=1)
+            ctx = FrameContext(pixels=np.zeros((8, 8, 3), np.uint8), index=i, timestamp=(i + 1) / 30, faces=[face])
+            outs.append(float(stage.process(ctx).faces[0].bbox[0]))
+    second = outs[6:]
+    assert second[0] == pytest.approx(0.0)
+    assert len(set(round(v, 6) for v in second)) == 6  # not a held constant
+    assert second[-1] > 30.0
