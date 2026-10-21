@@ -180,7 +180,13 @@ void main() {
     vec3 cam = texture2D(u_cam, v_scr).rgb;
     // S13a: the skin test runs on a blurred live picture. On the raw pixel the camera's own 8x8 compression blocks flipped it from pixel to pixel
     // and the neck showed as a checkerboard (seen on a real webcam); the colour itself stays the live pixel.
-    float w = skinWeight(soften(u_cam, v_scr, u_rl)) * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
+    float liveSkin = skinWeight(soften(u_cam, v_scr, u_rl));   // one blurred read, used for both the collar guard and the recolour below
+    // S14a, the collar guard: below the chin the photo's neck is drawn only where the live pixel is skin. Where the live picture is the collar or
+    // a shirt (not skin) the photo's neck fades out to a small remainder over a soft band, so the live clothes are never painted over and the neck
+    // melts into the collar instead of ending in a hard line. Same blurred read, no extra pass.
+    float below = smoothstep(u_pp[4].y - 0.02, u_pp[4].y + 0.05, v_uv.y) * smoothstep(0.0, 0.25, v_ring);
+    alpha *= 1.0 - below * (1.0 - smoothstep(0.15, 0.75, liveSkin / max(u_relight, 1e-3))) * 0.9;
+    float w = liveSkin * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
     if (w > 0.0) {
       float a = max(alpha, w);
       colour = mix(liveKept(cam), colour, alpha / max(a, 1e-4));

@@ -20,7 +20,7 @@ export const HEAD_VERTEX_COUNT = VERTEX_COUNT + RING_VERTICES;
 export const RING_TRIANGLES = OVAL_COUNT * (RINGS) * 2;
 
 // How far the outermost ring lies from the oval, in face widths: above the head (hair), at the sides (ears), below (neck).
-export const REACH = { top: 0.55, side: 0.3, bottom: 0.7 };   // S11c: the neck reaches further down, so the photo's neck runs on towards the collar
+export const REACH = { top: 0.55, side: 0.3, bottom: 0.9 };   // S11c: 0.7; S14a: 0.9, so the photo's neck runs on to the collar and fades out over the longer band (the shader's collar guard keeps live clothes unpainted)
 const REACH_LIMITS = { top: [0.15, 1.2], side: [0.1, 0.8], bottom: [0.2, 1.2] };   // S12b: sane bounds for a reach the user can tune
 
 /** S12b: a validated reach (top / side / bottom, each in its sane bounds): a number means "a new top" (hair), a partial object fills the rest from REACH, and anything odd falls back to REACH untouched. */
