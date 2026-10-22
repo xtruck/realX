@@ -121,8 +121,40 @@ def _powershell_json(command: str) -> str:
     return run.stdout
 
 
+def _windows_cpu_fast() -> dict:
+    """CPU name from the registry, threads from os.cpu_count, physical cores from kernel32: no process is started."""
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+        name = str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip()
+    if not name:
+        raise OSError("empty processor name")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetLogicalProcessorInformationEx.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel.GetLogicalProcessorInformationEx.restype = ctypes.c_int
+    size = ctypes.c_ulong(0)
+    kernel.GetLogicalProcessorInformationEx(0, None, ctypes.byref(size))  # 0 = RelationProcessorCore; learn the size
+    if size.value == 0:
+        raise OSError("GetLogicalProcessorInformationEx gave no size")
+    buf = ctypes.create_string_buffer(size.value)
+    if not kernel.GetLogicalProcessorInformationEx(0, buf, ctypes.byref(size)):
+        raise OSError("GetLogicalProcessorInformationEx failed")
+    cores, offset = 0, 0
+    while offset + 8 <= size.value:  # each record: DWORD relationship, DWORD size, ...
+        record_size = int.from_bytes(buf.raw[offset + 4:offset + 8], "little")
+        if record_size <= 0:
+            break
+        cores += 1
+        offset += record_size
+    return {"name": name, "cores": cores or None, "threads": os.cpu_count()}
+
+
 def _cpu() -> dict:
     if sys.platform == "win32":
+        try:
+            return _windows_cpu_fast()
+        except Exception as exc:  # fall back to PowerShell, the slow last resort
+            log.debug("fast CPU probe failed, using PowerShell: %s", rlog.clip(exc))
         text = _powershell_json(
             "Get-CimInstance Win32_Processor | Select-Object -First 1 Name,NumberOfCores,NumberOfLogicalProcessors | ConvertTo-Json -Compress"
         )

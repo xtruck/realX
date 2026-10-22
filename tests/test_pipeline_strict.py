@@ -98,3 +98,13 @@ def test_a_strict_pipeline_still_processes_frames():
     with Pipeline(real_chain(), strict=True) as p:
         out = p.process(FrameContext(pixels=np.zeros((120, 160, 3), np.uint8), index=0, timestamp=0.0))
     assert "disclosure" in out.meta
+
+
+def test_yunet_detector_is_stateful_so_run_stream_refuses_multiple_workers():
+    from realx.pipeline import Pipeline, PipelineConfigError, run_stream
+    from realx.stages import create
+
+    det = create("detect_yunet")  # no model is loaded until setup()
+    assert getattr(det, "stateful", False) is True
+    with pytest.raises(PipelineConfigError):
+        list(run_stream(Pipeline([det]), iter(()), workers=2))

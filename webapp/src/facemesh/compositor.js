@@ -10,7 +10,9 @@
 //    copy) and give them to the photo's detail, so the photo does not look like a sticker. That one method is the only
 //    place the video is named; facemesh.test.mjs checks it, and a browser test counts real read-back calls (must be 0).
 import { LEFT_EYE, RIGHT_EYE, TRIANGLE_COUNT, VERTEX_COUNT, blendShape, edgeDepth, faceBox, flatten, keepMask, mouthKeepWeights, shapeWeights } from "./mesh.js";
-import { HEAD_VERTEX_COUNT, REACH, RING_TRIANGLES, headFade, neckAnchor, ringFlag, ringPoints, ringTriangles } from "./head.js";
+import { HALO, haloAmount, haloScale } from "./hairhalo.js";
+import { featherBand } from "./edgefeather.js";
+import { HEAD_VERTEX_COUNT, OVAL_COUNT, FACE_OVAL, RINGS, REACH, RING_TRIANGLES, headFade, neckAnchor, ringFlag, ringPoints, ringTriangles } from "./head.js";
 
 const FADE_STEPS = 3;   // the picture fades in over this many rings of triangles from the edge of the face
 const RING_MATCH = 0.35;   // how much of the live colour the head ring takes (the face takes the Colour match setting in full)
@@ -31,7 +33,7 @@ precision mediump float;
 #endif
 varying vec2 v_uv; varying vec2 v_scr; varying float v_fade; varying float v_keep; varying float v_ring;
 uniform sampler2D u_photo; uniform sampler2D u_cam; uniform sampler2D u_mask;
-uniform float u_head; uniform float u_ringMatch;
+uniform float u_head; uniform float u_ringMatch; uniform float u_halo;   // gap #2: u_halo = hairhalo.js haloScale()
 uniform float u_keepEyes; uniform float u_match; uniform float u_keep; uniform float u_opacity; uniform vec2 u_rl; uniform vec2 u_rp;
 uniform float u_relight; uniform vec2 u_lp[5]; uniform vec2 u_pp[5];   // S11: lighting-only match, see lightOf()
 uniform float u_glasses; uniform vec2 u_eyeA; uniform vec2 u_eyeB; uniform vec2 u_eyeAsp;   // S11: the photo's spectacles (see glassesBand)
@@ -172,6 +174,30 @@ void main() {
     float chroma = max(photo.r, max(photo.g, photo.b)) - min(photo.r, min(photo.g, photo.b));
     head *= 1.0 - ringW * (1.0 - smoothstep(0.06, 0.14, chroma)) * smoothstep(0.38, 0.58, lum(photo));
   }
+  // Gap #2, the hair halo (hairhalo.js): next to the photo's head silhouette, above the nose line, the photo's hair is widened and softened:
+  // 16 taps of the photo's head mask (inner ring, outer ring at 0.6 weight); the best one gives the cover and its photo colour. Skipped
+  // when u_halo is 0, inside the silhouette and outside the ring. A bright colourless tap (the backdrop) is never used.
+  if (u_halo > 0.0 && u_head > 0.0 && ringW > 0.0 && head < 0.999 && v_uv.y < u_pp[1].y) {
+    float bestS = 0.0; vec3 bestC = colour;
+    for (int k = 0; k < 16; k++) {
+      float fk = float(k < 8 ? k : k - 8);
+      float ang = fk * 0.7853982;
+      vec2 dir = vec2(cos(ang), sin(ang));
+      float rr = u_halo * (k < 8 ? 0.5 : 1.0), wt = k < 8 ? 1.0 : 0.6;
+      vec2 tp = v_uv + dir * rr * u_rp;
+      float inTap = step(0.0, tp.x) * step(tp.x, 1.0) * step(0.0, tp.y) * step(tp.y, 1.0);
+      vec3 tc = texture2D(u_photo, tp).rgb;
+      float tch = max(tc.r, max(tc.g, tc.b)) - min(tc.r, min(tc.g, tc.b));
+      float back = 1.0 - (1.0 - smoothstep(0.06, 0.14, tch)) * smoothstep(0.38, 0.58, lum(tc));
+      float s = smoothstep(0.62, 0.92, texture2D(u_mask, tp).r) * wt * inTap * back;
+      if (s > bestS) { bestS = s; bestC = tc; }
+    }
+    float cover = bestS * ringW;
+    if (cover > head) {
+      colour = mix(bestC, colour, head / max(cover, 1e-4));
+      head = cover;
+    }
+  }
   float alpha = smoothstep(0.0, 1.0, v_fade) * (1.0 - keepAmt) * u_opacity * head;
   // S11i, the neck: below the chin, the live person's own neck (and ear) is wider than the photo's and shows as pale streaks beside it.
   // Where the live pixel is SKIN (near the live cheek's chroma; walls and clothes are not) and the photo has no neck, it is drawn in the photo's skin tone.
@@ -180,7 +206,13 @@ void main() {
     vec3 cam = texture2D(u_cam, v_scr).rgb;
     // S13a: the skin test runs on a blurred live picture. On the raw pixel the camera's own 8x8 compression blocks flipped it from pixel to pixel
     // and the neck showed as a checkerboard (seen on a real webcam); the colour itself stays the live pixel.
-    float w = skinWeight(soften(u_cam, v_scr, u_rl)) * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
+    float liveSkin = skinWeight(soften(u_cam, v_scr, u_rl));   // one blurred read, used for both the collar guard and the recolour below
+    // S14a, the collar guard: below the chin the photo's neck is drawn only where the live pixel is skin. Where the live picture is the collar or
+    // a shirt (not skin) the photo's neck fades out to a small remainder over a soft band, so the live clothes are never painted over and the neck
+    // melts into the collar instead of ending in a hard line. Same blurred read, no extra pass.
+    float below = smoothstep(u_pp[4].y - 0.02, u_pp[4].y + 0.05, v_uv.y) * smoothstep(0.0, 0.25, v_ring);
+    alpha *= 1.0 - below * (1.0 - smoothstep(0.15, 0.75, liveSkin / max(u_relight, 1e-3))) * 0.9;
+    float w = liveSkin * neckX * (1.0 - head) * v_ring * smoothstep(0.0, 0.5, v_fade + 0.5) * u_opacity;
     if (w > 0.0) {
       float a = max(alpha, w);
       colour = mix(liveKept(cam), colour, alpha / max(a, 1e-4));
@@ -200,10 +232,35 @@ precision highp float;
 precision mediump float;
 #endif
 varying vec2 v_uv; uniform sampler2D u_photo; uniform sampler2D u_hair; uniform float u_opacity;
+// S14, the join between the body puppet and the head: u_join (0 = off, exactly the old picture; the hair layer always passes 0).
+uniform sampler2D u_cam; uniform float u_join; uniform float u_headOn; uniform vec2 u_texel; uniform vec2 u_lp[5]; uniform vec2 u_pp[5]; uniform vec2 u_jr;
+float lumJ(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+float spotJ(sampler2D t, vec2 c, vec2 r) { return (lumJ(texture2D(t, c).rgb) + lumJ(texture2D(t, c + r).rgb) + lumJ(texture2D(t, c - r).rgb)) / 3.0; }
 void main() {
   float inside = step(0.0, v_uv.x) * step(v_uv.x, 1.0) * step(0.0, v_uv.y) * step(v_uv.y, 1.0);
-  float a = smoothstep(0.35, 0.65, texture2D(u_hair, v_uv).r) * inside * u_opacity;
-  gl_FragColor = vec4(texture2D(u_photo, v_uv).rgb * a, a);
+  float m = texture2D(u_hair, v_uv).r;
+  float a = smoothstep(0.35, 0.65, m);
+  vec3 col = texture2D(u_photo, v_uv).rgb;
+  // ---- S14 join: feather + light match ----
+  if (u_join > 0.0) {
+    // 1. feathered edge: a 5-tap blur of the mask read through a wider ramp, so sleeve, shoulder and neck edges fall off over ~4 mask texels instead of a hard step
+    vec2 e = u_texel * 2.0;
+    float soft = 0.2 * (m + texture2D(u_hair, v_uv + vec2(e.x, 0.0)).r + texture2D(u_hair, v_uv - vec2(e.x, 0.0)).r + texture2D(u_hair, v_uv + vec2(0.0, e.y)).r + texture2D(u_hair, v_uv - vec2(0.0, e.y)).r);
+    a = mix(a, smoothstep(0.1, 0.9, soft), u_join);
+    // 2. neck line: with the head drawn, the puppet thins a little just under the chin, where the head's own neck takes over (never below 60%)
+    float chinY = u_pp[4].y, fh = max(abs(u_pp[4].y - u_pp[0].y), 0.02);
+    float nf = smoothstep(chinY + 0.05 * fh, chinY + 0.4 * fh, v_uv.y);
+    a *= mix(1.0, mix(0.6, 1.0, nf), u_headOn * u_join);
+    // 3. light match: how much brighter the live face's chin is than its cheeks, against the photo's; the puppet takes that ratio (clamped 0.85-1.15),
+    // strongest at the chin and gone 1.2 face heights lower, so it meets the live-lit head without a step. Measured on the GPU, on the head's own spots.
+    float live = spotJ(u_cam, u_lp[4], u_jr) / max(0.5 * (spotJ(u_cam, u_lp[2], u_jr) + spotJ(u_cam, u_lp[3], u_jr)), 0.03);
+    float ref = spotJ(u_photo, u_pp[4], u_jr) / max(0.5 * (spotJ(u_photo, u_pp[2], u_jr) + spotJ(u_photo, u_pp[3], u_jr)), 0.03);
+    float nearChin = 1.0 - smoothstep(chinY, chinY + 1.2 * fh, v_uv.y);
+    col = clamp(col * mix(1.0, clamp(live / max(ref, 0.05), 0.85, 1.15), nearChin * u_join), 0.0, 1.0);
+  }
+  // ---- end S14 join ----
+  a *= inside * u_opacity;
+  gl_FragColor = vec4(col * a, a);
 }`;
 
 // Step S10c, your hands on top: the live picture drawn only inside the soft shapes around the tracked hands (handlayer.js), so the
@@ -276,6 +333,17 @@ void main() {
   gl_FragColor = vec4(fill * a, a);
 }`;
 
+// S13f: Soft edges, the model-free complement to S13c (edgefeather.js). The same photo-background fill, but alpha comes from the vertices of a
+// feathered band built along the mesh outline (three levels, falling), so the fragment shader does no texture taps on any mask. Under the photo.
+const FEATHER_FRAG = `precision mediump float;
+varying float v_alpha; uniform sampler2D u_photo; uniform float u_opacity;
+void main() {
+  float a = v_alpha * u_opacity;
+  vec3 fill = (texture2D(u_photo, vec2(0.04, 0.05)).rgb + texture2D(u_photo, vec2(0.96, 0.05)).rgb + texture2D(u_photo, vec2(0.5, 0.02)).rgb
+             + texture2D(u_photo, vec2(0.04, 0.4)).rgb + texture2D(u_photo, vec2(0.96, 0.4)).rgb) / 5.0;   // same background as SEAM_FRAG
+  gl_FragColor = vec4(fill * a, a);
+}`;
+
 export class MeshCompositor {
   /** canvas: the WebGL canvas; mesh: buildMesh()'s result. Throws when WebGL is not available. */
   constructor(canvas, mesh) {
@@ -290,16 +358,18 @@ export class MeshCompositor {
     this.frameNo = 0; this.camTexel = [1 / 640, 1 / 480];   // S13b: one camera pixel, noted in uploadCamera
     this.hairReach = REACH.top;       // S12b: how far the head ring reaches above the head (the photo's UV ring stays at the default, which is what makes the photo's hair grow with it)
     this.neck = { anchor: null, amount: 0.6 };   // S12a: where the photo's neck hangs from; null = the face's own middle
+    this.bodyJoin = 0.7;              // S14: how much the body puppet's edges are feathered and its light matched to the head (0 = the old hard join)
+    this.joinLive = false; this.joinHead = false; this.joinSpots = null;   // set each frame in draw()
     this.mouthShrink = 0.5;           // S12c: how much the live mouth patch pulls in towards the middle of the mouth (0 = the old full patch)
     this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
-    this.maskTex = null; this.head = false;   // whole head: the photo's head mask, and whether it is switched on
+    this.maskTex = null; this.head = false; this.hairHalo = HALO.defaultAmount;   // whole head: the photo's head mask, and whether it is switched on; gap #2: how far the photo's hair is widened (0..1)
     this.angles = new Map(); this.angleCounter = 0; this.faceMix = null;   // Stage 3: angle photos (off unless the page adds some)
     this.program = link(gl, VERT, FRAG);
     gl.useProgram(this.program);
     const attr = (name) => gl.getAttribLocation(this.program, name);
     this.loc = { pos: attr("a_pos"), uv: attr("a_uv"), fade: attr("a_fade"), keep: attr("a_keep"), ring: attr("a_ring") };
-    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_match", "u_keep", "u_keepEyes", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp", "u_webcam", "u_camTexel", "u_seed"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
+    this.uni = Object.fromEntries(["u_photo", "u_cam", "u_mask", "u_head", "u_ringMatch", "u_halo", "u_match", "u_keep", "u_keepEyes", "u_opacity", "u_rl", "u_rp", "u_glasses", "u_eyeA", "u_eyeB", "u_eyeAsp", "u_relight", "u_lp", "u_pp", "u_webcam", "u_camTexel", "u_seed"].map((n) => [n, gl.getUniformLocation(this.program, n)]));
     this.posBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.positions.byteLength, gl.DYNAMIC_DRAW);
@@ -323,7 +393,7 @@ export class MeshCompositor {
     this.hair = null;               // S9: { count, triangles, uvBuffer, posBuffer, indexBuffer, maskTex, positions, on }
     this.hairProgram = link(gl, HAIR_VERT, HAIR_FRAG);
     this.hairLoc = { pos: gl.getAttribLocation(this.hairProgram, "a_pos"), uv: gl.getAttribLocation(this.hairProgram, "a_uv") };
-    this.hairUni = Object.fromEntries(["u_photo", "u_hair", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.hairProgram, n)]));
+    this.hairUni = Object.fromEntries(["u_photo", "u_hair", "u_opacity", "u_cam", "u_join", "u_headOn", "u_texel", "u_lp", "u_pp", "u_jr"].map((n) => [n, gl.getUniformLocation(this.hairProgram, n)]));
     this.hairDrawn = 0;
     this.body = null; this.bodyDrawn = 0;      // S10: the body and dress layer
     this.liveProgram = link(gl, LIVE_VERT, LIVE_FRAG);                  // S10c: your hands on top
@@ -342,6 +412,41 @@ export class MeshCompositor {
     this.seamUni = Object.fromEntries(["u_seam", "u_photo", "u_amount", "u_opacity", "u_zone", "u_face", "u_tap"].map((n) => [n, gl.getUniformLocation(this.seamProgram, n)]));
     this.seam = { tex: gl.createTexture(), ready: false, amount: 0, zone: null, posBuffer: filled(gl, new Float32Array([0, 0, 0, 1, 1, 1, 1, 0])), alphaBuffer: filled(gl, new Float32Array([1, 1, 1, 1])) };
     this.seamDrawn = 0;
+    // S13f: Soft edges (off until setSoftEdges(strength > 0))
+    this.featherProgram = link(gl, LIVE_VERT, FEATHER_FRAG);
+    this.featherLoc = { pos: gl.getAttribLocation(this.featherProgram, "a_pos"), alpha: gl.getAttribLocation(this.featherProgram, "a_alpha") };
+    this.featherUni = Object.fromEntries(["u_photo", "u_opacity"].map((n) => [n, gl.getUniformLocation(this.featherProgram, n)]));
+    this.feather = { strength: 0, posBuffer: gl.createBuffer(), alphaBuffer: gl.createBuffer(), indexBuffer: gl.createBuffer() };
+    this.featherDrawn = 0;
+  }
+
+  /** S13f: how strong the model-free soft edge along the mesh outline is, 0..1 (0 = off, nothing drawn). */
+  setSoftEdges(strength) {
+    const s = Number(strength);
+    this.feather.strength = Number.isFinite(s) ? Math.min(1, Math.max(0, s)) : 0;
+  }
+
+  _drawFeather(opacity, box, aspect, head, liveLandmarks) {
+    const gl = this.gl, f = this.feather;
+    if (!(f.strength > 0)) return 0;
+    const outline = new Float32Array(OVAL_COUNT * 2);
+    if (head) {                                         // the photo head's outermost ring: where the photo ends and the live hair may begin
+      const o = (VERTEX_COUNT + (RINGS - 1) * OVAL_COUNT) * 2;
+      outline.set(this.positions.subarray(o, o + OVAL_COUNT * 2));
+    } else FACE_OVAL.forEach((v, i) => { outline[i * 2] = liveLandmarks[v].x; outline[i * 2 + 1] = liveLandmarks[v].y; });
+    const band = featherBand(outline, aspect, box.w * aspect, f.strength);
+    if (!band) return 0;
+    gl.useProgram(this.featherProgram);
+    gl.bindBuffer(gl.ARRAY_BUFFER, f.posBuffer); gl.bufferData(gl.ARRAY_BUFFER, band.positions, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, f.alphaBuffer); gl.bufferData(gl.ARRAY_BUFFER, band.alphas, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, f.indexBuffer); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, band.indices, gl.DYNAMIC_DRAW);
+    this.point(f.posBuffer, this.featherLoc.pos, 2);
+    this.point(f.alphaBuffer, this.featherLoc.alpha, 1);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.photo);
+    gl.uniform1i(this.featherUni.u_photo, 0);
+    gl.uniform1f(this.featherUni.u_opacity, Math.min(1, opacity));
+    gl.drawElements(gl.TRIANGLES, band.count, gl.UNSIGNED_SHORT, 0);
+    return band.count / 3;
   }
 
   /** S13c: take the segmenter's answer (its hidden canvas, seammask.js) as the seam mask texture. Done once per answer, a few times a second. */
@@ -467,7 +572,7 @@ export class MeshCompositor {
     const indexBuffer = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geometry.triangles, gl.STATIC_DRAW);
-    return { count, unit, triangles: geometry.triangles.length / 3, uvBuffer: filled(gl, geometry.uv), posBuffer, indexBuffer, maskTex, positions: new Float32Array(count * 2), on: false, halo: new Float32Array(count * 2), haloOn: false };
+    return { count, unit, texel: [1 / Math.max(1, mask.width), 1 / Math.max(1, mask.height)], triangles: geometry.triangles.length / 3, uvBuffer: filled(gl, geometry.uv), posBuffer, indexBuffer, maskTex, positions: new Float32Array(count * 2), on: false, halo: new Float32Array(count * 2), haloOn: false };
   }
 
   _freeLayer(layer) {
@@ -496,6 +601,15 @@ export class MeshCompositor {
     gl.uniform1i(this.hairUni.u_photo, 0);
     gl.uniform1i(this.hairUni.u_hair, layer.unit);
     gl.uniform1f(this.hairUni.u_opacity, Math.min(1, opacity));
+    const join = layer === this.body && this.joinLive && this.joinSpots ? this.bodyJoin : 0;   // S14: only the body, only with a live frame uploaded and a face placed
+    gl.uniform1f(this.hairUni.u_join, join);
+    if (join > 0) {
+      gl.uniform1i(this.hairUni.u_cam, 1);          // the live frame stays bound to unit 1 from uploadCamera; the shader only samples it
+      gl.uniform1f(this.hairUni.u_headOn, this.joinHead ? 1 : 0);
+      gl.uniform2f(this.hairUni.u_texel, layer.texel[0], layer.texel[1]);
+      gl.uniform2fv(this.hairUni.u_lp, this.joinSpots); gl.uniform2fv(this.hairUni.u_pp, this.photoSpots);
+      gl.uniform2f(this.hairUni.u_jr, this.cheekR[0] * 0.5, this.cheekR[1] * 0.5);
+    }
     let drawn = 0;
     for (const [positions, wanted] of [[layer.halo, layer.haloOn], [layer.positions, true]]) {   // the cover (S10e) first, then the layer itself
       if (!wanted) continue;
@@ -570,10 +684,16 @@ export class MeshCompositor {
   setHead(on) { this.head = !!on; }
 
   /** S12b: how far the head ring reaches above the head, in face widths (0.3 to 1.2). Further out makes the photo's own hair cover more of the live head (a taller live hairstyle); the default is REACH.top. */
+  /** Gap #2: how far the photo's hair is widened and softened past its silhouette, 0..1 (0 = the old picture exactly). */
+  setHairHalo(v) { this.hairHalo = haloAmount(v); }
+
   setHairReach(reach) {
     const v = Number(reach);
     if (Number.isFinite(v)) this.hairReach = Math.min(1.2, Math.max(0.3, v));
   }
+
+  /** S14: how much the body puppet's edges are feathered and its light matched to the head, 0 (the old hard join) to 1. */
+  setBodyJoin(v) { this.bodyJoin = lookStrength(v); }
 
   /** S13b: how much the photo looks filmed by the live webcam, 0 (off, the old picture) to 1. */
   setWebcamLook(v) { this.webcamLook = lookStrength(v); }
@@ -764,6 +884,10 @@ export class MeshCompositor {
       } else head = false;
     }
     this.hairDrawn = 0; this.bodyDrawn = 0;
+    this.joinLive = useCamera; this.joinHead = head;                                        // S14: the join's light match needs the live frame
+    if (!this.joinSpots) this.joinSpots = new Float32Array(10);
+    SPOTS.forEach((v, i) => { this.joinSpots[i * 2] = this.positions[v * 2]; this.joinSpots[i * 2 + 1] = this.positions[v * 2 + 1]; });
+    this.featherDrawn = this._drawFeather(opacity, box, aspect, head, liveLandmarks);      // S13f: model-free soft edge along the outline, under everything
     this.seamDrawn = this._drawSeam(opacity, box, aspect);                                  // S13c: first of all, under the photo's own layers
     if (this.body && this.body.on) this.bodyDrawn = this._drawLayer(this.body, opacity);   // the body and dress go down first,
     if (this.hair && this.hair.on) this.hairDrawn = this._drawLayer(this.hair, opacity);   // then the hair over them, all behind the face
@@ -784,6 +908,7 @@ export class MeshCompositor {
     gl.uniform1i(this.uni.u_cam, 1);
     gl.uniform1i(this.uni.u_mask, 2);
     gl.uniform1f(this.uni.u_head, head ? 1 : 0);
+    gl.uniform1f(this.uni.u_halo, head ? haloScale(this.hairHalo) : 0);
     gl.uniform1f(this.uni.u_ringMatch, this.look.relight ? 1 : RING_MATCH);   // S11f: with the lighting-only match the ring takes the same light as the face, or a step shows along the face outline
     gl.uniform1f(this.uni.u_match, useCamera ? this.look.match : 0);
     // S11m: the live mouth interior is only shown while the mouth is OPEN (the gap between the inner lips against the face height); closed, the
@@ -861,6 +986,7 @@ export class MeshCompositor {
     for (const b of [this.live.posBuffer, this.live.alphaBuffer, this.live.indexBuffer, this.stains.posBuffer, this.stains.alphaBuffer, this.stains.colorBuffer, this.stains.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.stainProgram);
     gl.deleteProgram(this.liveProgram); gl.deleteProgram(this.hairProgram);
+    gl.deleteProgram(this.featherProgram); gl.deleteBuffer(this.feather.posBuffer); gl.deleteBuffer(this.feather.alphaBuffer); gl.deleteBuffer(this.feather.indexBuffer);
     gl.deleteProgram(this.seamProgram); gl.deleteTexture(this.seam.tex); gl.deleteBuffer(this.seam.posBuffer); gl.deleteBuffer(this.seam.alphaBuffer);
     for (const t of [this.photo, this.camera, this.maskTex]) if (t) gl.deleteTexture(t);
     for (const b of [this.posBuffer, this.uvBuffer, this.fadeBuffer, this.keepBuffer, this.headFadeBuffer, this.ringBuffer, this.indexBuffer]) gl.deleteBuffer(b);

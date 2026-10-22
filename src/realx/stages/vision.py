@@ -27,6 +27,7 @@ class YuNetDetector:
     """
 
     name = "detect"
+    stateful = True  # shares one FaceDetectorYN and its input size across calls
 
     def __init__(
         self,

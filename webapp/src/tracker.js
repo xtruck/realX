@@ -4,6 +4,7 @@
 // read back, encoded or sent anywhere; what leaves this module is the numbers from packBody().
 // test_tracker_never_reads_camera_pixels (tests/test_tracking_browser.py) checks this file for the
 // calls that would break that.
+import { openCameraStream } from "./camera.js";
 import { FaceLandmarker, FilesetResolver, HandLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
 import { assignHands } from "./assign.js";
 import { mouthCover } from "./utils/audioLipSync.js";
@@ -35,13 +36,7 @@ export async function startTracker({ solver, mirror = true, legs = "auto", desk 
   // Opens the camera. The supervisor calls it again, with growing pauses, when the camera is unplugged or taken
   // by another app, so tracking resumes by itself.
   const openCamera = async () => {
-    const s = await navigator.mediaDevices.getUserMedia({
-      video: {
-        ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" }),
-        width: { ideal: preset.width }, height: { ideal: preset.height }, frameRate: { ideal: 30 },
-      },
-      audio: false,
-    });
+    const s = await openCameraStream({ deviceId, width: preset.width, height: preset.height, frameRate: 30 });
     video.srcObject = s;
     await video.play();
     restarted = true;                 // the camera's own frame counter starts over

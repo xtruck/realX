@@ -20,6 +20,8 @@ import json
 import os
 import re
 import secrets
+import select
+import socket
 import threading
 import time
 from collections import deque
@@ -32,6 +34,8 @@ import numpy as np
 
 from realx import __version__
 from realx.diag import Diagnostics
+from realx.errors import classify, session_state, stop_state
+from realx.vcam import VirtualCamera
 from realx.audio import offline, presets
 from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model
 from realx import ws
@@ -51,6 +55,7 @@ log = rlog.get_logger("server")
 # "body": the browser tracks the camera (full body) and publishes it; the Python side releases the camera.
 # "photoface": the /facemesh page runs in the control room and owns the camera; the Python side releases it too
 MODES = ("avatar", "character", "boxes", "original", "body", "photoface")
+VCAM_MODES = ("avatar",)  # the only mode whose finished picture is made here; the others are the raw camera, debug boxes or drawn in the browser
 BACKGROUNDS = ("off", "blur", "photo")
 BACKGROUND_THUMB_PATH = "/avatar/background.png"
 BACKGROUND_THUMB_SIDE = 32  # px on the long edge
@@ -58,6 +63,7 @@ MAX_JSON = 4096
 MAX_AVATAR_BYTES = 32 * 1024 * 1024
 MAX_CONNECTIONS = 16
 SOCKET_TIMEOUT = 15.0
+HEAD_DEADLINE = 10.0  # total seconds to receive a whole request line + headers (slow-trickle clients are cut)
 BODY_MAX_AGE = 1.0            # seconds: an older body message is never (re)sent to a viewer
 PUBLISH_IDLE_SECONDS = 15.0   # a publisher that sends nothing this long is dropped
 PUBLISH_RATE_LIMIT = 200      # messages per second from one publisher before it is cut off
@@ -93,6 +99,12 @@ CSP = (
     "default-src 'none'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; "
     "style-src 'self' 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'none'; "
     "object-src 'none'; frame-ancestors 'none'"
+)
+
+
+PREVIEW_CSP = (
+    "default-src 'none'; img-src 'self'; connect-src 'self'; style-src 'self'; script-src 'self'; "
+    "base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'"
 )
 
 
@@ -153,7 +165,8 @@ class Update(NamedTuple):
 class Engine:
     """Runs the video pipeline on a background thread and keeps the latest frame."""
 
-    def __init__(self, source: str = "demo:dance", mode: str = "avatar", smoothing: float = 0.35, fps: float = 30.0):
+    def __init__(self, source: str = "demo:dance", mode: str = "avatar", smoothing: float = 0.35, fps: float = 30.0,
+                 vcam: VirtualCamera | None = None):
         self.fps = fps
         self._dedup = rlog.Dedup()  # a fault that repeats on every retry is logged once
         self._lock = threading.Lock()
@@ -182,9 +195,11 @@ class Engine:
         self._open_source: str | None = None
         self._ribbon: deque[int] = deque(maxlen=120)  # 0 lost, 1 detected, 2 predicted
         self._diag = Diagnostics()
+        self._vcam = vcam  # optional virtual camera output; off unless the owner built one with enabled=True
         self._pipe: StudioController | None = None  # read only for per-stage timings and the studio state in stats()
         self._frames_src = None  # the open video source, read only for its capture figures
         self._stats = {"fps": 0.0, "latency_ms": 0.0, "faces": 0, "dropped": 0, "frames": 0, "error": None}
+        self._error_info = None  # classify(self._stats["error"]); set together with it in _set_error
 
     # -- public -------------------------------------------------------------------
     @property
@@ -195,15 +210,41 @@ class Engine:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        if self._vcam is not None:
+            self._vcam.start()
         self._thread = threading.Thread(target=self._run, name="realx-engine", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self) -> dict:
+        """Ask the engine thread to end and wait up to 5 s. Returns the stop state: `pending` means it has not exited yet."""
         self._stop.set()
         with self._cond:
             self._cond.notify_all()
         if self._thread:
             self._thread.join(timeout=5)
+        if self._vcam is not None:
+            self._vcam.stop()
+        status = self.stop_status()
+        if status["state"] == "pending":
+            log.warning("the engine thread did not stop within 5 s; stopping can be retried")
+        return status
+
+    def _vcam_status(self, mode: str) -> dict | None:
+        if self._vcam is None:
+            return None
+        st = self._vcam.status()
+        st["feeding"] = st["state"] == "running" and mode in VCAM_MODES
+        if st["state"] == "running" and not st["feeding"]:
+            st["note"] = "the virtual camera only carries the avatar mode; the current mode is not sent"
+        return st
+
+    def retry_stop(self) -> dict:
+        """Ask again for a stop that was still pending. Safe to call at any time."""
+        return self.stop()
+
+    def stop_status(self) -> dict:
+        alive = bool(self._thread and self._thread.is_alive())
+        return stop_state(alive, self._stop.is_set())
 
     def config(self) -> dict:
         with self._lock:
@@ -290,10 +331,11 @@ class Engine:
             out = dict(self._stats)
             out["ribbon"] = list(self._ribbon)
             out["config"] = dict(self._config)
+            out["error_info"] = self._error_info.as_dict() if self._error_info else None
             out["version"] = __version__
             out["body"] = {"publishing": self._publishing, "viewers": self._viewers}
             out["dock"] = self.dock_state()
-            out["security"] = {"token": "fixed" if self.token_fixed else "per-run", "watermark": True}   # never the token itself
+            out["security"] = {"token": "fixed" if self.token_fixed else "per-run", "watermark": False, "note": "the live MJPEG preview and /avatar carry no watermark stage; only offline voice output is provenance-marked"}   # never the token itself
             pipe, src = self._pipe, self._frames_src
         stage_ms = {name: t.mean_ms for name, t in list(pipe.timings.items())} if pipe is not None else {}
         capture = None
@@ -303,6 +345,9 @@ class Engine:
                 capture = grab()
             except Exception:  # diagnostics must never break a stats request
                 capture = None
+        out["stop"] = self.stop_status()
+        out["vcam"] = self._vcam_status(out["config"]["mode"])
+        out["session"] = session_state(out["stop"]["state"] == "running", out["frames"], self._error_info, out["stop"])
         out["diag"] = self._diag.snapshot(stage_ms, capture)
         status = getattr(pipe, "status", None)  # a plain Pipeline (tests, custom builds) has no studio state
         out["studio"] = status().as_dict() if callable(status) else None
@@ -453,8 +498,10 @@ class Engine:
                 log.debug("closing the video source failed", exc_info=True)  # best effort: the camera may already be gone
 
     def _set_error(self, message: str | None) -> None:
+        info = classify(message)
         with self._lock:
             self._stats["error"] = message
+            self._error_info = info
 
     def _run(self) -> None:
         import cv2
@@ -525,6 +572,8 @@ class Engine:
                         )
                         if not ok:
                             raise RuntimeError("could not encode frame")
+                    if self._vcam is not None and cfg["mode"] in VCAM_MODES:
+                        self._vcam.offer(out.pixels)
                     fh, fw = out.pixels.shape[:2]
                     rig_faces = out.meta.get("rig", []) if cfg["mode"] != "original" else []
                     state = 0 if not out.faces else (2 if all(f.predicted for f in out.faces) else 1)
@@ -549,6 +598,7 @@ class Engine:
                             log.info("video is flowing again after: %s", rlog.clip(s["error"]))
                             self._dedup.forget(("source", s["error"]))  # a later repeat of the same fault is news again
                         s["error"] = None
+                        self._error_info = None
                         self._ribbon.append(state)
                         self._jpeg = None if buf is None else buf.tobytes()
                         self._seq += 1
@@ -642,6 +692,22 @@ class _BoundedServer(ThreadingHTTPServer):
             return
         super().process_request(request, client_address)
 
+    if os.name == "nt":
+        allow_reuse_address = False  # on Windows SO_REUSEADDR lets a second socket bind a port in use
+
+        def server_bind(self) -> None:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
+    def handle_error(self, request, client_address) -> None:
+        import sys
+
+        exc = sys.exc_info()[1]
+        if isinstance(exc, OSError):  # a client that left mid-reply is not an error worth a traceback
+            log.debug("client connection ended: %s", type(exc).__name__)
+            return
+        log.error("unhandled error serving a request: %s", rlog.clip(f"{type(exc).__name__}: {exc}"))
+
     def process_request_thread(self, request, client_address) -> None:
         try:
             super().process_request_thread(request, client_address)
@@ -706,6 +772,37 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
         sys_version = ""
         timeout = SOCKET_TIMEOUT
         _body_taken = False  # set per request: has the handler started reading the body itself?
+
+        _head_timer: threading.Timer | None = None
+
+        def _end_head_deadline(self) -> None:
+            timer, self._head_timer = self._head_timer, None
+            if timer is not None:
+                timer.cancel()
+
+        def handle_one_request(self) -> None:
+            """The per-recv timeout alone lets a client trickle bytes forever before authentication."""
+            conn = self.connection
+
+            def cut() -> None:
+                try:
+                    conn.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+            self._head_timer = threading.Timer(HEAD_DEADLINE, cut)
+            self._head_timer.daemon = True
+            self._head_timer.start()
+            try:
+                super().handle_one_request()
+            finally:
+                self._end_head_deadline()
+
+        def parse_request(self) -> bool:
+            try:
+                return super().parse_request()
+            finally:
+                self._end_head_deadline()  # the head is complete (or refused): the deadline has done its job
 
         def log_message(self, *args) -> None:  # quiet
             pass
@@ -838,15 +935,27 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
 
         # routes ---------------------------------------------------------------
         def do_GET(self) -> None:
+            try:
+                self._get()
+            except OSError:  # client went away or stalled: nothing to answer
+                return
+            except Exception:  # keep details out of the response, but not out of the log
+                log.exception("unexpected error handling GET %s", rlog.clip(urlparse(self.path).path, 120))
+                try:
+                    self._deny(500, "internal error")
+                except OSError:
+                    pass
+
+        def _get(self) -> None:
             if not self._local_host():
                 return self._deny(403, "forbidden host")
-            if not self._not_cross_site():
+            if not self._not_cross_site() or not self._same_origin():  # a foreign Origin is refused even where Sec-Fetch-Site is absent
                 return self._deny(403, "cross-site requests are not allowed")
             source = self._auth_source(allow_query=True)
             if source is None:
                 return self._deny(401, "access token required")
             path = urlparse(self.path).path
-            if source == "query" and path in ("/", "/avatar", "/dock", "/facemesh"):  # first visit from a link (browser or OBS): token into a cookie
+            if source == "query" and path in ("/", "/avatar", "/dock", "/facemesh", "/preview"):  # first visit from a link (browser or OBS): token into a cookie
                 return self._adopt_token(path)
             if path == "/":
                 self._static(
@@ -888,6 +997,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     "text/html; charset=utf-8",
                     (("Content-Security-Policy", dock_csp(port_getter())), ("X-Frame-Options", "DENY")),
                 )
+            elif path == "/preview":
+                self._static(
+                    "preview.html",
+                    "text/html; charset=utf-8",
+                    (("Content-Security-Policy", PREVIEW_CSP), ("X-Frame-Options", "DENY")),
+                )
+            elif path == "/preview.js":
+                self._static("preview.js", "text/javascript; charset=utf-8")
+            elif path == "/preview.css":
+                self._static("preview.css", "text/css; charset=utf-8")
             elif path == "/dock.js":
                 self._static("dock.js", "text/javascript; charset=utf-8")
             elif path == "/dock.css":
@@ -979,6 +1098,16 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             self.end_headers()
             self.wfile.write(data)
 
+        def _client_gone(self) -> bool:
+            """True when the peer closed or reset the connection (EOF or error on a non-blocking peek)."""
+            try:
+                readable, _, _ = select.select([self.connection], [], [], 0)
+                if not readable:
+                    return False
+                return self.connection.recv(1, socket.MSG_PEEK) == b""
+            except (OSError, ValueError):
+                return True
+
         def _stream(self) -> None:
             self.send_response(200)
             self._headers("multipart/x-mixed-replace; boundary=frame")
@@ -987,6 +1116,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             try:
                 while not engine.stopped:
                     jpeg, new = engine.wait_frame(seq)
+                    if self._client_gone():  # modes without a JPEG never write, so a write cannot reveal the exit
+                        return
                     if new == seq:
                         continue
                     seq = new

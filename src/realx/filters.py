@@ -33,11 +33,17 @@ class OneEuroFilter:
 
     def __call__(self, x: np.ndarray, t: float) -> np.ndarray:
         x = np.asarray(x, dtype=float)
+        if not (np.all(np.isfinite(x)) and math.isfinite(t)):
+            self.reset()  # a bad sample must not poison the state: restart at the next finite one
+            return x.copy()
         if self._x is None or self._x.shape != x.shape or self._t is None:
             self._x, self._dx, self._t = x.copy(), np.zeros_like(x), t
             return x.copy()
         dt = t - self._t
-        if dt <= 0:  # duplicate or out-of-order timestamp: hold the last value
+        if dt < 0:  # time went backwards (looped clip, clock reset): restart from this sample
+            self._x, self._dx, self._t = x.copy(), np.zeros_like(x), t
+            return x.copy()
+        if dt == 0:  # repeated timestamp: hold the last value
             return self._x.copy()
         dx = (x - self._x) / dt
         a_d = self._alpha(self.d_cutoff, dt)

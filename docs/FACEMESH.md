@@ -218,6 +218,8 @@ took 6.5-8.3 s once (the model being prepared on the GPU), then about 26 ms a pa
 
 The live-frame segmenter keeps the privacy rule: the camera goes to MediaPipe as the video element itself, MediaPipe answers with WebGL textures, one small shader folds them into a running value inside MediaPipe's own context, and the compositor uploads that mask canvas (`MeshCompositor.setSeam`, a sixth texture upload, of values and not of the camera). `seammask.js` and `seams.js` may not call `getAsUint8Array`, `getAsFloat32Array`, `readPixels` or any other read-back (a Node test checks it); there is no CPU delegate for this reason.
 
+**Soft edges (S13f, 2026-10-21, off by default, unmeasured).** A cheaper complement: a feathered band in the photo's background colour built from the mesh outline (`edgefeather.js`), with no model and no mask. With it on, "Clean the edges" runs at most 1.5 times a second. It cannot see hair, so it softens a thin strip all round the head. Whether it saves frames or looks right is not yet measured (`BENCHMARKS.md` section 11 has the baseline to compare against).
+
 ## Photos at several angles (Stage 3)
 
 **Status: built and tested on synthetic numbers and in Chromium with a fake camera; not seen on a real webcam; fps not measured on

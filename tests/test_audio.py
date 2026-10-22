@@ -248,3 +248,33 @@ def test_full_voice_chain_gate_normalize_pitch_runs_chunked():
     y = np.concatenate(outs)
     assert y.size == x.size
     assert peak_hz(y[SR // 4 : -SR // 8]) == pytest.approx(250 * 2 ** (4 / 12), rel=0.04)
+
+
+def test_read_wav_stereo_is_averaged_to_mono(tmp_path):
+    import wave
+
+    path = str(tmp_path / "st.wav")
+    left = np.array([16384, -16384, 0, 32767], dtype="<i2")
+    right = np.array([0, -16384, 16384, -32768], dtype="<i2")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(np.column_stack([left, right]).astype("<i2").tobytes())
+    y, rate = read_wav(path)
+    assert rate == 16000 and y.dtype == np.float32 and y.shape == (4,)
+    assert np.allclose(y, (left.astype(np.float32) + right) / 2 / 32768.0)
+
+
+@pytest.mark.parametrize("width", [1, 3])
+def test_read_wav_refuses_8_and_24_bit(tmp_path, width):
+    import wave
+
+    path = str(tmp_path / f"w{width}.wav")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(width)
+        w.setframerate(8000)
+        w.writeframes(bytes(width * 10))
+    with pytest.raises(ValueError, match="16-bit"):
+        read_wav(path)

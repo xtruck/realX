@@ -6,6 +6,7 @@
 // drawn to a canvas, read back, recorded, stored or sent; only numbers (landmarks) are drawn on top.
 // facemesh.test.mjs checks this file for the calls that would break that.
 import { FaceLandmarker, FilesetResolver, HandLandmarker, ImageSegmenter, PoseLandmarker } from "@mediapipe/tasks-vision";
+import { cameraList, openCameraStream } from "../camera.js";
 import { MeshCompositor } from "./compositor.js";
 import { RollingStats, buildMesh, checkPhotoFaces, extrapolateLandmarks, faceBox, fillSegments } from "./mesh.js";
 import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
@@ -21,6 +22,7 @@ import { gripShapes, handFans, handShapes } from "./handlayer.js";
 import { MaskConfidence, holdFactors } from "./confidence.js";
 import { StainSet, bindToPuppet, stainFans } from "./stains.js";
 import { MotionGate, freshness, headZone, seamDue, seamRate, seamTooSlow } from "./seams.js";
+import { edgeRate } from "./edgefeather.js";
 import { SeamSegmenter } from "./seammask.js";
 import { AnglePicker, SerialLoader, checkAngle, gateVerdict, photoYaw } from "./angles.js";
 
@@ -379,7 +381,10 @@ let seamOn = false, seamSeg = null, seamLoading = false, seamGaveUp = false, sea
 const seamState = { last: -Infinity, cost: 0, slowRuns: 0 };
 const seamMotion = new MotionGate();
 const seamHz = seamRate(new URLSearchParams(location.search).get("seamHz"));
-Object.assign(probe, { seam: "off", seamHz, seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
+// S13f "Soft edges": a model-free feathered band along the mesh outline (edgefeather.js), off by default (unmeasured). With it on, the segmenter
+// above needs to run no more often than edgeRate() allows; `softOn` is the only state, the band is rebuilt from the mesh every frame.
+let softOn = false;
+Object.assign(probe, { soft: "off", seam: "off", seamHz, seamMs: 0, seamAnswers: 0, seamAmount: 0, seamDrawn: 0 });
 
 async function loadSeams() {
   if (seamSeg || seamLoading || seamGaveUp) return;
@@ -407,7 +412,7 @@ function stepSeams(now, shown) {
   if (!compositor) return;
   if (!seamOn || !shown) { compositor.setSeamAmount(0, null); seamMotion.update(null, now); probe.seamAmount = 0; return; }
   if (!seamSeg) { loadSeams(); compositor.setSeamAmount(0, null); probe.seamAmount = 0; return; }
-  if (!seamSeg.failed && seamDue(now, seamState, detectMs, seamHz)) {
+  if (!seamSeg.failed && seamDue(now, seamState, detectMs, edgeRate(seamHz, softOn))) {
     seamState.last = now;
     if (seamSeg.run(video)) { compositor.setSeam(seamSeg.canvas); seamAt = now; probe.seamAnswers = seamSeg.answers; }
     seamState.cost = seamSeg.costMs; probe.seamMs = seamSeg.costMs;
@@ -416,7 +421,7 @@ function stepSeams(now, shown) {
     else if (seamTooSlow(seamSeg.lastMs, seamState, seamSeg.warmup)) { stopSlowSeams(seamSeg.lastMs); return; }
   }
   const box = faceBox(shown.landmarks);
-  const amount = seamSeg.failed ? 0 : freshness(now - seamAt, seamHz) * seamMotion.update(box, now);
+  const amount = seamSeg.failed ? 0 : freshness(now - seamAt, edgeRate(seamHz, softOn)) * seamMotion.update(box, now);
   compositor.setSeamAmount(amount, headZone(box));
   probe.seamAmount = amount;
 }
@@ -551,14 +556,24 @@ function explain(err) {
   return `Could not start: ${err && err.message ? err.message : err}`;
 }
 
+// The control room can pass the camera it chose as ?cam=<deviceId>; without one, the first camera that is not infrared (see camera.js).
+const chosenCamera = (() => { const v = new URLSearchParams(location.search).get("cam"); return v && v.length <= 256 ? v : null; })();
+
 async function openCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
-    audio: false,
-  });
+  const stream = await openCameraStream({ deviceId: chosenCamera, width: 640, height: 480, frameRate: 30 });
   video.srcObject = stream;
   await video.play();
+  announceCameras();
   return stream;
+}
+
+// Tell the control room (same origin only) which cameras exist, so it can offer a choice. Labels are only known after the
+// camera permission, which is why this runs after the camera opened. A convenience: nothing depends on it.
+async function announceCameras() {
+  if (window.parent === window || !navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    window.parent.postMessage({ type: "realx-devices", cameras: cameraList(await navigator.mediaDevices.enumerateDevices()) }, location.origin);
+  } catch (e) { /* the list is a convenience */ }
 }
 
 async function openLandmarker(runningMode = "VIDEO", numFaces = 1) {
@@ -1033,6 +1048,7 @@ function frame() {
         stepStains(now, shown);                    // spills and stains on the shirt (S10g)
         if (bodyOn) stepBody(now, shown);          // the body and dress for this frame (drawn first, behind the hair and the face)
         if (hairOn) stepHair(now, shown);          // the hair sheet for this frame (drawn behind the face by the compositor)
+        compositor.setSoftEdges(softOn ? 1 : 0);   // S13f: model-free soft edge along the mesh outline
         stepSeams(now, shown);                     // S13c: clean the seams between the photo's head and the live one
         // the video goes to the graphics card for colour matching only: see compositor.js
         // S13e: the photo gives way to the live picture where it would not hold (head turned far, mouth very wide, face partly out of frame)
@@ -1048,6 +1064,7 @@ function frame() {
         probe.liveDrawn = compositor.liveDrawn;
         probe.stainsDrawn = compositor.stainsDrawn;
         probe.seamDrawn = compositor.seamDrawn;
+        probe.softDrawn = compositor.featherDrawn;
       }
     }
     tickLive(now, probe.drawn > 0);                // LIVE counts the time a photo is really drawn
@@ -1197,6 +1214,10 @@ function wireControls() {
     look.skin = !look.skin; e.currentTarget.setAttribute("aria-pressed", String(look.skin)); applyLook();
     setStatus(look.skin ? "Your hands take the photo's skin tone (it shows with \"Show my hands on top\")." : "Your hands keep their own colour.");
   });
+  $("softBtn").addEventListener("click", (e) => {            // S13f: soft edge along the mesh outline, no model
+    softOn = !softOn; e.currentTarget.setAttribute("aria-pressed", String(softOn)); probe.soft = softOn ? "on" : "off";
+    setStatus(softOn ? "Soft edges is on: a soft band in the photo's background colour hides live hair along the head's outline." : "Soft edges is off.");
+  });
   $("seamBtn").addEventListener("click", (e) => {            // S13c: hide the live hair and ears that peek out round the photo's head
     seamOn = !seamOn; e.currentTarget.setAttribute("aria-pressed", String(seamOn));
     probe.seam = seamOn ? (seamSeg ? "on" : "loading") : "off";
@@ -1236,6 +1257,10 @@ function wireControls() {
   $("hairReach").addEventListener("input", (e) => {          // S12b: the photo's hair grows to cover more of your own
     if (compositor) compositor.setHairReach(Number(e.currentTarget.value) / 100);
     $("hairReachValue").textContent = `${e.currentTarget.value}%`;
+  });
+  $("hairHalo").addEventListener("input", (e) => {           // gap #2: the photo's hair is widened and softened so less of your own shows round it
+    if (compositor) compositor.setHairHalo(Number(e.currentTarget.value) / 100);
+    $("hairHaloValue").textContent = `${e.currentTarget.value}%`;
   });
   $("webcamLook").addEventListener("input", (e) => {         // S13b: the photo takes on the webcam's softness, grain and grade (measured on the GPU)
     if (compositor) compositor.setWebcamLook(Number(e.currentTarget.value) / 100);

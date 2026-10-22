@@ -146,3 +146,11 @@ It has four lights (server, character stream, access token, provenance mark), th
 - **Blur** and **photo** apply to the camera picture modes, not to the 3D character (that background is transparent).
 - Commands travel over the same token-protected `/api` routes as the control room. `/ws/rig` only shows the dock
   that the character stream is alive. The token is never shown in the dock.
+
+## The output preview window (`/preview`)
+
+The control room's "Open output preview" button opens `/preview`: the live picture alone in a window, for a second screen or an OBS
+**Window Capture**. It carries a dark bar along the bottom with the same words as the virtual camera's bar, **DIGITAL HOST | realX avatar |
+shown with permission**, drawn by the page itself. There is no setting or address parameter that hides it. It is hidden only while the
+control room is in **Original** mode (the plain camera picture, which is not a virtual picture), and it comes back if the page cannot read
+the mode. For a transparent character use the Browser Source on `/avatar` instead; it has its own "Virtual character" label.
