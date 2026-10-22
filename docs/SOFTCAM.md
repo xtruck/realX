@@ -54,6 +54,7 @@ badge readable (yes/no), frame rate seen, any restart needed.
 
 | Application | In list | Picture | Badge | Notes |
 |---|---|---|---|---|
+| ffmpeg (DirectShow client, 2026-10-22) | yes ("DirectShow Softcam") | yes | yes | one frame read back at 640x480; colours and orientation correct; registered with softcam_installer (UAC) on the owner's PC |
 | OBS Studio (Video Capture Device) | | | | |
 | Google Meet in Chrome | | | | |
 | Google Meet in Edge | | | | |

@@ -20,11 +20,17 @@ Off by default. Nothing leaves the computer: the backends hand pixels to a camer
 
 * Every frame gets the **"DIGITAL HOST" bar** and the provenance watermark drawn at the last step, after resizing, whatever came before.
   If marking fails the frame is dropped, never sent bare. `tests/test_vcam.py` checks the exact pixels that reach the driver.
-* **What survives the camera path (measured 2026-10-21 through OBS's Virtual Camera, read back with ffmpeg): the visible bar does
-  (80% of its pixels within tolerance 12 of the bar colour, text readable); the watermark does not.** realX's watermark hides in the lowest
-  bit of each colour value (`safety/watermark.py`: "not robust to re-encoding"), and the camera path converts the picture to YUV
-  (NV12), which erases it. So on this output the **visible bar is the protection**, and the watermark is only present up to the driver.
-  A re-encode-robust watermark is roadmap item M4.
+* **What survives the camera path (measured 2026-10-21/22, one frame read back with ffmpeg through each camera, lossless PNG):**
+
+  | Route | Visible bar | Watermark |
+  |---|---|---|
+  | Softcam (DirectShow, 24-bit colour in shared memory) | intact (85% of bar pixels within tolerance 12) | **survives** (`realx-vcam-1` extracted) |
+  | OBS Virtual Camera via pyvirtualcam (converted to NV12 / YUV) | intact (80%) | **lost** |
+
+  realX's watermark hides in the lowest bit of each colour value (`safety/watermark.py`: "not robust to re-encoding"). The Softcam
+  path does not convert the picture, so the mark reaches a reader that takes raw pixels; the OBS path converts to YUV and erases it.
+  **Any app that compresses the video (Zoom, Meet, WhatsApp, a recording) will erase it on either route**, so the visible bar is the
+  protection that always arrives. A re-encode-robust watermark is roadmap item M4.
 * It only carries the **avatar** mode (the picture realX makes). `original` (raw camera), `boxes`, `character`, `body` and `photoface`
   are not sent; `/api/stats` says so in `vcam.note`.
 * It never slows the engine: a separate thread sends the newest picture and drops older ones (`vcam.dropped`).
@@ -35,7 +41,7 @@ Off by default. Nothing leaves the computer: the backends hand pixels to a camer
 
 * Only one virtual-camera client at a time for OBS's camera and for Softcam.
 * `vcam.app_connected` is known for Softcam only (pyvirtualcam cannot tell).
-* Softcam takes 24-bit BGR; realX converts. Orientation was checked for byte order in a unit test, not yet seen in a real app.
+* Softcam takes 24-bit BGR; realX converts. Channel order and orientation were confirmed by reading a frame back with ffmpeg (red grows to the right, green downward, text readable, not mirrored).
 
 ## Another route worth knowing (seen on this PC, not built)
 
