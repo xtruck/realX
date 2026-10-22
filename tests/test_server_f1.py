@@ -146,3 +146,65 @@ def test_dedup_is_thread_safe():
     for t in threads:
         t.join()
     assert not errors, errors[:1]
+
+
+# --- an oversized body must still get its 400, not a connection reset --------------------------------------------------
+
+
+@pytest.mark.parametrize("size", [5000, 40_000, 60_000])
+def test_oversized_json_gets_a_clean_400_every_time(size):
+    """Closing a socket that still holds unread request bytes makes the OS send a reset, and a client can then lose the reply.
+    The size check used to mark the body as taken before it refused it, so `_drain` skipped it (flaky on Windows)."""
+    s = Server(Engine(mode="body"), port=0, token=TOKEN)
+    s.start()
+    try:
+        body = b"{" + b" " * size + b"}"
+        for _ in range(25):
+            c = socket.create_connection(("127.0.0.1", s.port), timeout=5)
+            try:
+                c.sendall(
+                    (f"POST /api/config HTTP/1.1\r\nHost: 127.0.0.1:{s.port}\r\nAuthorization: Bearer {TOKEN}\r\n"
+                     f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n").encode() + body)
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = c.recv(4096)
+                    assert chunk, "the server closed without answering"
+                    data += chunk
+                assert data.split(b"\r\n")[0].split()[1] == b"400", data[:80]
+                # the server closes after the reply; with the body drained that is a clean end, not a reset
+                end = time.monotonic() + 3
+                while time.monotonic() < end:
+                    if not c.recv(4096):
+                        break
+            finally:
+                c.close()
+    finally:
+        s.stop()
+
+
+def test_a_refused_oversized_body_is_read_before_the_reply():
+    """Deterministic form of the above: the server drains the (bounded) body first, so with half the body sent it has not answered yet,
+    and it answers 400 as soon as the rest arrives. Before the fix it answered at once and left the bytes unread."""
+    s = Server(Engine(mode="body"), port=0, token=TOKEN)
+    s.start()
+    try:
+        body = b"{" + b" " * 20_000 + b"}"
+        c = socket.create_connection(("127.0.0.1", s.port), timeout=5)
+        try:
+            c.sendall((f"POST /api/config HTTP/1.1\r\nHost: 127.0.0.1:{s.port}\r\nAuthorization: Bearer {TOKEN}\r\n"
+                       f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n").encode() + body[:10_000])
+            c.settimeout(0.8)
+            with pytest.raises(socket.timeout):
+                c.recv(4096)  # nothing yet: the server is still reading the body it is about to refuse
+            c.settimeout(5)
+            c.sendall(body[10_000:])
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = c.recv(4096)
+                assert chunk
+                data += chunk
+            assert data.split(b"\r\n")[0].split()[1] == b"400"
+        finally:
+            c.close()
+    finally:
+        s.stop()

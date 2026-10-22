@@ -883,6 +883,11 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             except ValueError:
                 raise ValueError("invalid Content-Length") from None
             if n < 0 or n > limit:
+                if 0 < n <= DRAIN_LIMIT:
+                    # a refused body that is small enough to read is still read (by _deny's _drain) before the reply: closing a
+                    # socket with unread bytes makes Windows reset the connection and the client can lose the 400. A body that
+                    # claims more than DRAIN_LIMIT is refused at once, unread, so a client cannot make the server wait for it.
+                    self._body_taken = False
                 raise ValueError("request body too large")
             return self.rfile.read(n)
 
