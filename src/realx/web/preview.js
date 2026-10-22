@@ -4,6 +4,7 @@
   const out = document.getElementById("out");
   const wait = document.getElementById("wait");
   const msg = document.getElementById("msg");
+  const badge = document.getElementById("badge");
   let live = false;
 
   function show(on, text) {
@@ -25,11 +26,14 @@
       const res = await fetch("/api/stats", { cache: "no-store" });
       if (!res.ok) throw new Error(String(res.status));
       const s = await res.json();
+      // the label stays on whenever the picture is realX's: only the plain camera ("original" mode) is not labelled
+      badge.hidden = !!s.config && s.config.mode === "original";
       const info = s.error_info;
       if (info) show(false, `${info.title}. ${info.hint}`);
       else if (!live && s.frames > 0) connect();
       else if (!live) msg.textContent = "Waiting for the live picture…";
     } catch (e) {
+      badge.hidden = false;  // when the mode cannot be read, show the label
       show(false, "Cannot reach realX. Is the control room still running?");
     }
   }

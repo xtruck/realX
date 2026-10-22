@@ -6,6 +6,7 @@
 // drawn to a canvas, read back, recorded, stored or sent; only numbers (landmarks) are drawn on top.
 // facemesh.test.mjs checks this file for the calls that would break that.
 import { FaceLandmarker, FilesetResolver, HandLandmarker, ImageSegmenter, PoseLandmarker } from "@mediapipe/tasks-vision";
+import { cameraList, openCameraStream } from "../camera.js";
 import { MeshCompositor } from "./compositor.js";
 import { RollingStats, buildMesh, checkPhotoFaces, extrapolateLandmarks, faceBox, fillSegments } from "./mesh.js";
 import { FacePresence, JitterMeter, handCover } from "./stabilize.js";
@@ -555,14 +556,24 @@ function explain(err) {
   return `Could not start: ${err && err.message ? err.message : err}`;
 }
 
+// The control room can pass the camera it chose as ?cam=<deviceId>; without one, the first camera that is not infrared (see camera.js).
+const chosenCamera = (() => { const v = new URLSearchParams(location.search).get("cam"); return v && v.length <= 256 ? v : null; })();
+
 async function openCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } },
-    audio: false,
-  });
+  const stream = await openCameraStream({ deviceId: chosenCamera, width: 640, height: 480, frameRate: 30 });
   video.srcObject = stream;
   await video.play();
+  announceCameras();
   return stream;
+}
+
+// Tell the control room (same origin only) which cameras exist, so it can offer a choice. Labels are only known after the
+// camera permission, which is why this runs after the camera opened. A convenience: nothing depends on it.
+async function announceCameras() {
+  if (window.parent === window || !navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    window.parent.postMessage({ type: "realx-devices", cameras: cameraList(await navigator.mediaDevices.enumerateDevices()) }, location.origin);
+  } catch (e) { /* the list is a convenience */ }
 }
 
 async function openLandmarker(runningMode = "VIDEO", numFaces = 1) {
