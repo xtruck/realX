@@ -178,3 +178,51 @@ def test_issue_check_and_end_a_record_over_http(srv):
     assert call(srv, "POST", "/api/facemesh/consent/revoke", {"record": record})[0] == 200
     status, refused = call(srv, "POST", "/api/facemesh/consent/check", {"record": record, "sha256": PHOTO})
     assert status == 403 and "revoked" in refused["error"], "an ended record stops verifying at once"
+
+
+# --- Stage 3: the front photo and its side photos checked in one request --------------------------------------------------
+
+def test_check_many_answers_each_record_on_its_own():
+    c = FaceMeshConsent()
+    a, b = c.issue(PHOTO, True, 1, now=1000.0), c.issue(OTHER, True, 1, now=1000.0)
+    out = c.check_many([{"record": a, "sha256": PHOTO}, {"record": b, "sha256": PHOTO}, {"record": {"x": 1}, "sha256": PHOTO}], now=1100.0)
+    assert out[0] == {"ok": True, "seconds": pytest.approx(3500.0)}
+    assert out[1]["ok"] is False and "scope" in out[1]["error"], "a record for another photo fails only its own entry"
+    assert out[2]["ok"] is False and "fields" in out[2]["error"], "a malformed record fails only its own entry"
+    live = c.issue(PHOTO, True, 1)                      # in real time, so it can be ended now
+    c.revoke(live)
+    ended = c.check_many([{"record": live, "sha256": PHOTO}])[0]
+    assert ended["ok"] is False and "revoked" in ended["error"]
+
+
+def test_check_many_refuses_a_malformed_batch_as_a_whole():
+    from realx.safety.facemesh_consent import MAX_BATCH
+    c = FaceMeshConsent()
+    rec = c.issue(PHOTO, True, 1)
+    item = {"record": rec, "sha256": PHOTO}
+    for bad in (None, {}, "x", [], [item] * (MAX_BATCH + 1), [item, "x"], [{"record": rec}], [{**item, "extra": 1}]):
+        with pytest.raises(ValueError):
+            c.check_many(bad)
+    assert len(c.check_many([item] * MAX_BATCH)) == MAX_BATCH
+
+
+@pytest.mark.raw_http
+def test_the_batched_check_route_needs_the_token_and_fits_a_full_batch(srv):
+    from realx.safety.facemesh_consent import MAX_BATCH
+    records = []
+    for i in range(MAX_BATCH):
+        sha = hashlib.sha256(f"photo {i}".encode()).hexdigest()
+        status, issued = call(srv, "POST", "/api/facemesh/consent", {"sha256": sha, "attested": True, "hours": 1})
+        assert status == 200
+        records.append({"record": issued["record"], "sha256": sha})
+    body = {"items": records}
+    assert len(json.dumps(body)) < 4096, "a full batch must fit the server's 4 KiB JSON limit"
+    assert call(srv, "POST", "/api/facemesh/consent/check-batch", body, token=False)[0] == 401
+    status, out = call(srv, "POST", "/api/facemesh/consent/check-batch", body)
+    assert status == 200 and [r["ok"] for r in out["results"]] == [True] * MAX_BATCH
+    assert call(srv, "POST", "/api/facemesh/consent/revoke", {"record": records[2]["record"]})[0] == 200
+    status, out = call(srv, "POST", "/api/facemesh/consent/check-batch", body)
+    assert status == 200 and [r["ok"] for r in out["results"]] == [True, True, False, True, True]
+    assert "revoked" in out["results"][2]["error"]
+    assert call(srv, "POST", "/api/facemesh/consent/check-batch", {"items": []})[0] == 400
+    assert call(srv, "POST", "/api/facemesh/consent/check-batch", {"items": records * 2})[0] == 400

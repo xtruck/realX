@@ -41,6 +41,21 @@ export function headAngles(lm, aspect = 1) {
   return [yaw, pitch, roll].every(Number.isFinite) ? { yaw, pitch, roll } : null;
 }
 
+/**
+ * Stage 3: the head's left-right turn in degrees WITH its sign (headAngles() gives only the size), or null when unusable. Positive when the
+ * face's image-right cheek (454) is further from the camera than its image-left cheek (234). The same function measures a photo and the live
+ * face, both in image coordinates (the page's mirror is only CSS), so their signs agree.
+ */
+export function signedYaw(lm, aspect = 1) {
+  if (!lm || !(lm.length >= 468) || !ok(lm[234]) || !ok(lm[454])) return null;
+  const a = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const z = (p) => (Number.isFinite(p.z) ? p.z : 0) * a;
+  const dx = (lm[454].x - lm[234].x) * a;
+  if (!(dx > 1e-9)) return null;                                    // x order flipped or degenerate: not a usable face
+  const yaw = Math.atan2(z(lm[454]) - z(lm[234]), dx) * RAD;
+  return Number.isFinite(yaw) ? yaw : null;
+}
+
 /** Inner-lip gap over face height (0 closed, about 0.1 wide open), or 0 when unusable. */
 export function mouthOpening(lm) {
   if (!lm || !ok(lm[13]) || !ok(lm[14]) || !ok(lm[10]) || !ok(lm[152])) return 0;
@@ -71,8 +86,12 @@ export class MaskConfidence {
     this.reset();
   }
   reset() { this.value = 0; this.ring = 0; this.prevShape = null; this.info = { yaw: 0, pitch: 0, roll: 0, mouth: 0, outside: 1, jump: 0 }; }
-  /** One frame. Returns { confidence, ring } in 0..1; never throws and never returns NaN. Missing or broken landmarks give 0 at once. */
-  update(lm, aspect = 1) {
+  /**
+   * One frame. Returns { confidence, ring } in 0..1; never throws and never returns NaN. Missing or broken landmarks give 0 at once.
+   * Stage 3: `yawRef` (degrees, signed) is the head turn of the photo being drawn. Given, the yaw that fades the photo is measured from it,
+   * so a photo taken at 30° is not faded at 30°. Left out (or not a number), the turn is measured from facing the camera, as before.
+   */
+  update(lm, aspect = 1, yawRef = null) {
     let tc = 0, tr = 0;
     try {
       const ang = headAngles(lm, aspect);
@@ -82,7 +101,9 @@ export class MaskConfidence {
         let jump = 0;
         if (shape && this.prevShape) { let s = 0; for (let i = 0; i < shape.length; i++) s += Math.abs(shape[i] - this.prevShape[i]); jump = s / shape.length; }
         this.prevShape = shape;
-        const turn = Math.max(ang.yaw, ang.pitch);
+        const signed = Number.isFinite(yawRef) ? signedYaw(lm, aspect) : null;
+        const yaw = signed === null ? ang.yaw : Math.abs(signed - yawRef);
+        const turn = Math.max(yaw, ang.pitch);
         const others = fade(outside, L.outFrom, L.outTo) * fade(jump, L.jumpFrom, L.jumpTo)
           * (L.mouthFloor + (1 - L.mouthFloor) * fade(mouth, L.mouthFrom, L.mouthTo));
         tc = fade(turn, L.full, L.none) * others;
