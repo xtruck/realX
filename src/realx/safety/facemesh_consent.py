@@ -26,6 +26,7 @@ from realx.safety.portrait_consent import check_scope, issue_portrait_consent_fo
 SELF = "self"          # the subject: the person using the page
 DEFAULT_HOURS = 2.0
 MAX_HOURS = 12.0
+MAX_BATCH = 5          # Stage 3: a front photo and at most four angle photos, checked in one request
 
 TERMS = (
     "This photo is of you, the person using this camera. You will not present the result as a real, unlabelled "
@@ -84,6 +85,25 @@ class FaceMeshConsent:
             raise ConsentError("this record is not for the person using the page")
         check_scope(self.store, record, scope_for_hash(sha256_hex), now)
         return record.expires_at - (time.time() if now is None else now)
+
+    def check_many(self, items, now: float | None = None) -> list[dict]:
+        """Stage 3: several records in one request (a front photo and its angle photos), each checked on its own.
+
+        `items` is a list of {"record": ..., "sha256": ...}. The answer has one entry per item, in order: {"ok": True, "seconds": left}
+        or {"ok": False, "error": why}. One bad record fails only its own entry. A list that is not a list, is empty, is longer than
+        MAX_BATCH or holds a non-object raises ValueError (the whole request is malformed).
+        """
+        if not isinstance(items, list) or not 1 <= len(items) <= MAX_BATCH:
+            raise ValueError(f"items must be a list of 1 to {MAX_BATCH} records")
+        out: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict) or set(item) != {"record", "sha256"}:
+                raise ValueError("each item has exactly the fields record and sha256")
+            try:
+                out.append({"ok": True, "seconds": self.check(item["record"], item["sha256"], now)})
+            except (ConsentError, ValueError) as exc:
+                out.append({"ok": False, "error": str(exc)[:200]})
+        return out
 
     def revoke(self, data) -> None:
         """End a record now. It must be a record this run signed: an unknown or forged one is refused."""

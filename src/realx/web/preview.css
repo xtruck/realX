@@ -1,0 +1,14 @@
+html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+#out { width: 100vw; height: 100vh; object-fit: contain; display: block; }
+#out[hidden] { display: none; }
+#wait { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: #fff; font: 16px system-ui, sans-serif; text-align: center; padding: 0 24px; }
+#wait[hidden] { display: none; }
+#wait h1 { font-size: 28px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 12px; }
+#wait p { color: #a1a1aa; max-width: 28em; margin: 0; }
+/* the label that says this is a virtual picture: part of the page, drawn over the picture, never offered as a setting.
+   Same words and colours as the virtual camera's bar (realx.stages.builtin.Disclosure). */
+#badge { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; box-sizing: border-box; padding: 6px 12px;
+  text-align: center; background: #0e141b; color: #fff; font: 600 clamp(12px, 2.4vmin, 22px)/1.3 system-ui, sans-serif;
+  pointer-events: none; }
+#badge[hidden] { display: none; }
