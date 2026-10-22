@@ -186,6 +186,7 @@ class VoiceConvert:
     name = "voice_convert"
     alters_media = True
     requires_consent = True
+    media = "audio"
 
     def __init__(self, target: str, backend: str = "pitch_morph") -> None:
         if backend not in _BACKENDS:
@@ -223,6 +224,7 @@ class AudioWatermark:
 
     name = "audio_watermark"
     is_watermark = True
+    media = "audio"
 
     def __init__(self, payload: bytes, key: bytes | None = None) -> None:
         if not payload or len(payload) > watermark.MAX_PAYLOAD:
