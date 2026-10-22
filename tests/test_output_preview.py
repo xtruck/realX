@@ -76,3 +76,33 @@ def test_control_room_has_the_button_and_opens_a_same_origin_popup():
     assert 'id="previewOpen"' in web.joinpath("index.html").read_text(encoding="utf-8")
     js = web.joinpath("app.js").read_text(encoding="utf-8")
     assert 'window.open("/preview"' in js and "noopener" in js
+
+
+# --- the "virtual" label on the preview page ---------------------------------------------------------------------------
+
+
+def test_preview_label_uses_the_same_words_as_the_virtual_camera_bar():
+    """The page cannot import Disclosure, so the wording is checked here: the two must not drift apart."""
+    import html as html_lib
+
+    from realx.stages.builtin import Disclosure
+
+    page = resources.files("realx.web").joinpath("preview.html").read_text(encoding="utf-8")
+    text = html_lib.unescape(re.search(r'<div id="badge"[^>]*>(.*?)</div>', page, re.S).group(1)).replace("\xa0", " ")
+    parts = [p.strip() for p in text.split("|")]
+    assert parts[0] == Disclosure.PREFIX and parts[-1] == "shown with permission", parts
+    assert "realX avatar" in parts
+
+
+def test_preview_label_is_on_in_the_html_and_has_no_off_switch():
+    web = resources.files("realx.web")
+    page = web.joinpath("preview.html").read_text(encoding="utf-8")
+    js = web.joinpath("preview.js").read_text(encoding="utf-8")
+    css = web.joinpath("preview.css").read_text(encoding="utf-8")
+    tag = re.search(r'<div id="badge"[^>]*>', page).group(0)
+    assert "hidden" not in tag and "style=" not in tag, "the label must be visible from the first byte"
+    assert "location" not in js and "URLSearchParams" not in js and "?badge" not in js, "no query parameter may switch it off"
+    # the only thing that hides it is the plain camera picture ('original' mode); an unreadable mode shows it
+    assert js.count("badge.hidden") == 2 and 'mode === "original"' in js
+    assert "badge.hidden = false;  // when the mode cannot be read" in js
+    assert "#badge" in css and "z-index" in css and "pointer-events: none" in css
