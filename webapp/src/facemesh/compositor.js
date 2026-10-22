@@ -363,7 +363,8 @@ export class MeshCompositor {
     this.mouthShrink = 0.5;           // S12c: how much the live mouth patch pulls in towards the middle of the mouth (0 = the old full patch)
     this.photoEyes = [0.4, 0.45, 0.6, 0.45, 1, 1]; this.photoSpots = new Float32Array(10).fill(0.5);   // the photo's two eye centres and the aspect, for the glasses band (S11)
     this.photoCheek = [0.5, 0.5]; this.cheekR = [0.03, 0.03];   // where the photo's cheek is, in the photo (S10h)
-    this.maskTex = null; this.head = false; this.hairHalo = HALO.defaultAmount;   // gap #2: how far the photo's hair is widened (0..1)   // whole head: the photo's head mask, and whether it is switched on
+    this.maskTex = null; this.head = false; this.hairHalo = HALO.defaultAmount;   // whole head: the photo's head mask, and whether it is switched on; gap #2: how far the photo's hair is widened (0..1)
+    this.angles = new Map(); this.angleCounter = 0; this.faceMix = null;   // Stage 3: angle photos (off unless the page adds some)
     this.program = link(gl, VERT, FRAG);
     gl.useProgram(this.program);
     const attr = (name) => gl.getAttribLocation(this.program, name);
@@ -735,41 +736,114 @@ export class MeshCompositor {
    */
   setPhoto(image, photoLandmarks) {
     const gl = this.gl;
-    const flat = flatten(photoLandmarks);
-    const box = faceBox(photoLandmarks);
-    if (!flat || !box) throw new Error("the photo has no complete face");
-    const w = image.naturalWidth || image.width, h = image.naturalHeight || image.height;
+    const p = this._measurePhoto(image, photoLandmarks);   // throws (and changes nothing) for a photo without a complete face or too large
     // texture coordinates: the face's 468 points, then the same ring around the PHOTO's face that is built around the live one
-    const ring = (w > 0 && h > 0) ? ringPoints(photoLandmarks, w / h) : null;
+    const ring = ringPoints(photoLandmarks, p.aspect);
     const uv = new Float32Array(HEAD_VERTEX_COUNT * 2);
-    uv.set(flat); if (ring) uv.set(ring, VERTEX_COUNT * 2);
-    const max = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-    if (!(w > 0 && h > 0) || w > max || h > max) throw new Error("this photo is too large for this graphics card: use a smaller one");
+    uv.set(p.flat); if (ring) uv.set(ring, VERTEX_COUNT * 2);
+    this.clearAngles();                             // Stage 3: angle photos belong to the front photo they were added to
     if (this.photo) gl.deleteTexture(this.photo);
-    this.photo = gl.createTexture();
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.photo);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);   // the photo
-    setSampling(gl);
+    this.photo = this._uploadPhoto(image);
     this.photoRing = ring;
-    this.photoFlat = flat; this.photoAspect = w / h; this.shapeW = this.shapeW || shapeWeights();   // S11l: the photo's own face shape
+    this.photoFlat = p.flat; this.photoAspect = p.aspect; this.shapeW = this.shapeW || shapeWeights();   // S11l: the photo's own face shape
     this._uploadKeep();                             // S12c: the mouth patch is measured on this photo's own mouth
-    const eye = (a, b) => [(flat[a * 2] + flat[b * 2]) / 2, (flat[a * 2 + 1] + flat[b * 2 + 1]) / 2];   // the eye corners 33/133 and 362/263 of the face mesh
-    const ea = eye(33, 133), eb = eye(362, 263);
-    this.photoEyes = [ea[0], ea[1], eb[0], eb[1], w / h];
-    this.photoSpots = Float32Array.from(SPOTS.flatMap((i) => [flat[i * 2], flat[i * 2 + 1]]));
-    this.photoCheek = [(flat[50 * 2] + flat[280 * 2]) / 2, (flat[50 * 2 + 1] + flat[280 * 2 + 1]) / 2];
+    this.photoEyes = p.eyes; this.photoSpots = p.spots;
+    this.photoCheek = [(p.flat[50 * 2] + p.flat[280 * 2]) / 2, (p.flat[50 * 2 + 1] + p.flat[280 * 2 + 1]) / 2];
     this.setHeadMask(null);                         // a new photo has no mask until it has been cut
     this.clearHair();                               // and no moving hair
     this.clearBody();                               // and no body layer
-    this.photoRadius = [BLUR * box.w, BLUR * box.w * (w / h)];
+    this.photoRadius = p.radius;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.uvBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
   }
 
+  /** What the shader needs to know about a photo, from its landmarks alone. Throws for an unusable or too large photo. */
+  _measurePhoto(image, photoLandmarks) {
+    const flat = flatten(photoLandmarks);
+    const box = faceBox(photoLandmarks);
+    if (!flat || !box) throw new Error("the photo has no complete face");
+    const w = image.naturalWidth || image.width, h = image.naturalHeight || image.height;
+    const max = this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE);
+    if (!(w > 0 && h > 0) || w > max || h > max) throw new Error("this photo is too large for this graphics card: use a smaller one");
+    const eye = (a, b) => [(flat[a * 2] + flat[b * 2]) / 2, (flat[a * 2 + 1] + flat[b * 2 + 1]) / 2];   // the eye corners 33/133 and 362/263 of the face mesh
+    const ea = eye(33, 133), eb = eye(362, 263);
+    return {
+      flat, aspect: w / h, eyes: [ea[0], ea[1], eb[0], eb[1], w / h],
+      spots: Float32Array.from(SPOTS.flatMap((i) => [flat[i * 2], flat[i * 2 + 1]])), radius: [BLUR * box.w, BLUR * box.w * (w / h)],
+    };
+  }
+
+  /** A new texture holding a PHOTO the user chose (front or angle photo). The camera never comes through here. */
+  _uploadPhoto(image) {
+    const gl = this.gl;
+    const texture = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);   // the photo
+    setSampling(gl);
+    return texture;
+  }
+
+  // --- Stage 3: photos at several angles. Only the FACE layer is drawn from an angle photo; the head ring, hair and body keep the
+  // front photo. Each angle photo keeps its texture on the graphics card, so switching between them uploads nothing. -------------------
+
+  /** Adds an angle photo (an image and its face landmarks) and returns its id. Throws, changing nothing, for an unusable photo. */
+  addAngle(image, photoLandmarks) {
+    if (!this.photo) throw new Error("choose a front photo first");
+    const p = this._measurePhoto(image, photoLandmarks);
+    const gl = this.gl;
+    const uv = new Float32Array(HEAD_VERTEX_COUNT * 2);   // the face's 468 points; the ring is never drawn from an angle photo
+    uv.set(p.flat);
+    const uvBuffer = filled(gl, uv);
+    const id = `a${++this.angleCounter}`;
+    this.angles.set(id, { ...p, texture: this._uploadPhoto(image), uvBuffer });
+    return id;
+  }
+
+  /** Forgets one angle photo (its texture and texture coordinates). An unknown id does nothing. */
+  removeAngle(id) {
+    const a = this.angles.get(id);
+    if (!a) return;
+    this.gl.deleteTexture(a.texture); this.gl.deleteBuffer(a.uvBuffer);
+    this.angles.delete(id);
+    if (this.faceMix && (this.faceMix.from === id || this.faceMix.to === id)) this.faceMix = null;
+  }
+
+  clearAngles() { for (const id of [...this.angles.keys()]) this.removeAngle(id); this.faceMix = null; }
+
+  get angleCount() { return this.angles.size; }
+
+  /**
+   * Which photo the face is drawn from this frame: `from` fully, then `to` over it at opacity `t` (angles.js AnglePicker's answer).
+   * "" is the front photo. null, or ids that are not known, draw the front photo only: exactly the picture without this option.
+   */
+  setFaceMix(mix) {
+    const known = (id) => id === "" || this.angles.has(id);
+    if (!mix || !known(mix.from) || !known(mix.to)) { this.faceMix = null; return; }
+    const t = Number(mix.t);
+    this.faceMix = { from: mix.from, to: mix.to, t: Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 1 };
+    if (this.faceMix.from === "" && this.faceMix.to === "") this.faceMix = null;
+  }
+
+  /** The texture coordinates and the photo-side shader inputs of one photo: "" is the front photo. */
+  _side(id) {
+    if (id && this.angles.has(id)) return this.angles.get(id);
+    return { texture: this.photo, uvBuffer: this.uvBuffer, flat: this.photoFlat, aspect: this.photoAspect, eyes: this.photoEyes, spots: this.photoSpots, radius: this.photoRadius };
+  }
+
+  _bindSide(side) {
+    const gl = this.gl;
+    this.point(side.uvBuffer, this.loc.uv, 2);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, side.texture);
+    gl.uniform2f(this.uni.u_rp, side.radius[0], side.radius[1]);
+    gl.uniform2fv(this.uni.u_pp, side.spots);
+    gl.uniform2f(this.uni.u_eyeA, side.eyes[0], side.eyes[1]); gl.uniform2f(this.uni.u_eyeB, side.eyes[2], side.eyes[3]); gl.uniform2f(this.uni.u_eyeAsp, side.eyes[4], 1);
+  }
+
   /** Forget the photo (the picture and its texture coordinates). */
   clearPhoto() {
+    this.clearAngles();
     if (this.photo) this.gl.deleteTexture(this.photo);
     this.photo = null; this.photoRing = null;
     this.setHeadMask(null);
@@ -797,7 +871,9 @@ export class MeshCompositor {
     const liveNow = this.live.on && camera !== null;                    // your hands on top
     if (useCamera || liveNow) this.uploadCamera(camera);
     const aspect = this.canvas.width / Math.max(1, this.canvas.height);
-    if (this.photoFlat && this.look.shape > 0) this.shapeUsed = blendShape(this.positions, this.photoFlat, aspect, this.photoAspect, this.look.shape, this.shapeW);   // the face takes part of the photo's shape
+    const mix = this.faceMix;                                            // Stage 3: null unless angle photos are in use
+    const shapeFrom = mix ? this._side(mix.to) : null;                   // the face takes the shape of the photo it is turning towards
+    if (this.photoFlat && this.look.shape > 0) this.shapeUsed = blendShape(this.positions, shapeFrom ? shapeFrom.flat : this.photoFlat, aspect, shapeFrom ? shapeFrom.aspect : this.photoAspect, this.look.shape, this.shapeW);   // the face takes part of the photo's shape
     this.cheekR = [0.5 * BLUR * box.w, 0.5 * BLUR * box.w * aspect];
     let head = this.headActive;
     if (head) {                                     // the ring around the live face; if the face is degenerate, the face alone
@@ -855,7 +931,29 @@ export class MeshCompositor {
     gl.uniform2fv(this.uni.u_lp, lp); gl.uniform2fv(this.uni.u_pp, this.photoSpots);
     gl.uniform2f(this.uni.u_eyeA, pe[0], pe[1]); gl.uniform2f(this.uni.u_eyeB, pe[2], pe[3]); gl.uniform2f(this.uni.u_eyeAsp, pe[4], 1);
     const triangles = TRIANGLE_COUNT + (head ? RING_TRIANGLES : 0);
-    if (head && ringFactor < 1) {                  // S13e: on a turned head the ring (hair, ear, neck) fades before the face: two draws, the ring with its own opacity
+    if (mix) {                                     // Stage 3: the ring from the front photo, the face from one or two photos
+      if (head) {
+        const ringOpacity = Math.min(1, opacity) * (ringFactor < 1 ? Math.max(0, ringFactor) : 1);
+        if (ringOpacity > 0.002) {
+          this._bindSide(this._side(""));
+          gl.uniform1f(this.uni.u_opacity, ringOpacity);
+          gl.drawElements(gl.TRIANGLES, RING_TRIANGLES * 3, gl.UNSIGNED_SHORT, TRIANGLE_COUNT * 6);
+        }
+      }
+      const faceOpacity = Math.min(1, opacity);
+      const fading = mix.from !== mix.to && mix.t < 1;
+      if (fading) {                                // the photo it leaves, fully...
+        this._bindSide(this._side(mix.from));
+        gl.uniform1f(this.uni.u_opacity, faceOpacity);
+        gl.drawElements(gl.TRIANGLES, TRIANGLE_COUNT * 3, gl.UNSIGNED_SHORT, 0);
+      }
+      const over = fading ? faceOpacity * mix.t : faceOpacity;   // ...and the photo it turns to over it, at t
+      if (over > 0.002) {
+        this._bindSide(this._side(mix.to));
+        gl.uniform1f(this.uni.u_opacity, over);
+        gl.drawElements(gl.TRIANGLES, TRIANGLE_COUNT * 3, gl.UNSIGNED_SHORT, 0);
+      }
+    } else if (head && ringFactor < 1) {                  // S13e: on a turned head the ring (hair, ear, neck) fades before the face: two draws, the ring with its own opacity
       gl.drawElements(gl.TRIANGLES, TRIANGLE_COUNT * 3, gl.UNSIGNED_SHORT, 0);
       const ringOpacity = Math.min(1, opacity) * Math.max(0, ringFactor);
       if (ringOpacity > 0.002) { gl.uniform1f(this.uni.u_opacity, ringOpacity); gl.drawElements(gl.TRIANGLES, RING_TRIANGLES * 3, gl.UNSIGNED_SHORT, TRIANGLE_COUNT * 6); }
@@ -884,7 +982,7 @@ export class MeshCompositor {
 
   dispose() {
     const gl = this.gl;
-    this.clearHair(); this.clearBody();
+    this.clearHair(); this.clearBody(); this.clearAngles();
     for (const b of [this.live.posBuffer, this.live.alphaBuffer, this.live.indexBuffer, this.stains.posBuffer, this.stains.alphaBuffer, this.stains.colorBuffer, this.stains.indexBuffer]) gl.deleteBuffer(b);
     gl.deleteProgram(this.stainProgram);
     gl.deleteProgram(this.liveProgram); gl.deleteProgram(this.hairProgram);

@@ -186,7 +186,7 @@ test("the compositor names the video only inside uploadCamera, which makes exact
 });
 
 test("nothing else in the face-mesh page may read back, keep or send the camera picture", () => {
-  for (const file of ["page.js", "mesh.js", "stabilize.js", "head.js"]) {
+  for (const file of ["page.js", "mesh.js", "stabilize.js", "head.js", "angles.js"]) {
     const src = code(file);
     for (const call of [...FORBIDDEN.filter((c) => c !== "getUserMedia"), "texImage2D"]) assert.ok(!src.includes(call), `${file} must not use ${call}`);   // the page itself opens the camera
   }
