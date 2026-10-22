@@ -134,7 +134,7 @@ def _voice(src: str, dst: str, semitones: float, preset: str | None = None) -> i
     return 0
 
 
-def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None) -> int:
+def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None, vcam=None) -> int:
     from realx.models import ModelError, ensure_model
     from realx.server import Engine, Server
 
@@ -144,7 +144,7 @@ def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None
         print(f"cannot start: {exc}", file=sys.stderr)
         return 2
     try:
-        server = Server(Engine(source=source), port=port, avatar_path=avatar)
+        server = Server(Engine(source=source, vcam=vcam), port=port, avatar_path=avatar)
     except (OSError, ValueError) as exc:
         print(f"cannot start: {exc}", file=sys.stderr)
         return 2
@@ -220,6 +220,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--avatar", default=None, help="your own .vrm character (default: the bundled original, Pip)")
     s.add_argument("--no-browser", action="store_true")
     s.add_argument("--offline", action="store_true", help="never download models (same as REALX_OFFLINE=1)")
+    s.add_argument("--virtual-camera", choices=("pyvirtualcam", "softcam"), default=None,
+                   help="also send the avatar picture, with its label and watermark, to a virtual camera on this PC (off by default)")
+    s.add_argument("--softcam-dll", default=None, help="absolute path to softcam.dll (for --virtual-camera softcam)")
+    s.add_argument("--vcam-size", default="1280x720", help="virtual camera size WxH, multiples of four (default 1280x720)")
 
     args = parser.parse_args(argv)
     try:
@@ -262,7 +266,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         if args.offline:
             os.environ["REALX_OFFLINE"] = "1"
-        return _serve(args.port, args.source, not args.no_browser, args.avatar)
+        vcam = None
+        if args.virtual_camera:
+            from realx.vcam import VirtualCamera, VirtualCameraConfig
+
+            try:
+                w, h = (int(v) for v in args.vcam_size.lower().split("x"))
+                vcam = VirtualCamera(VirtualCameraConfig(enabled=True, backend=args.virtual_camera, width=w, height=h,
+                                                         softcam_dll=args.softcam_dll))
+            except ValueError as exc:
+                parser.error(f"virtual camera: {exc}")
+        return _serve(args.port, args.source, not args.no_browser, args.avatar, vcam)
     return _selftest()
 
 
