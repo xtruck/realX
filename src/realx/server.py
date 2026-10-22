@@ -179,6 +179,7 @@ class Engine:
         self._body_time = 0.0
         self._publishing = False
         self._viewers = 0
+        self._stream_viewers = 0  # open /stream.mjpg connections: the preview is JPEG-encoded only while this is above zero
         self._rig = json.dumps(rig_message(0, 0.0, (0, 0), []))
         self._emote: tuple[str, int, float] | None = None  # name, id, time pressed
         self._epoch = secrets.token_hex(4)  # changes on every server start, so ids never collide across restarts
@@ -398,6 +399,14 @@ class Engine:
         with self._lock:
             self._viewers = max(0, self._viewers - 1)
 
+    def stream_joined(self) -> None:
+        with self._lock:
+            self._stream_viewers += 1
+
+    def stream_left(self) -> None:
+        with self._lock:
+            self._stream_viewers = max(0, self._stream_viewers - 1)
+
     def wait_frame(self, last_seq: int, timeout: float = 2.0) -> tuple[bytes | None, int]:
         with self._cond:
             if self._seq == last_seq and not self._stop.is_set():
@@ -566,7 +575,8 @@ class Engine:
                     out = pipe.process(ctx)
                     latency = (time.perf_counter() - t0) * 1000
                     buf = None
-                    if cfg["mode"] != "character":  # the browser draws the character itself
+                    # the browser draws the character itself; and with nobody on /stream.mjpg the JPEG would only be thrown away
+                    if cfg["mode"] != "character" and self._stream_viewers > 0:
                         ok, buf = cv2.imencode(
                             ".jpg", cv2.cvtColor(out.pixels, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82]
                         )
@@ -1113,6 +1123,7 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
             self._headers("multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
             seq = -1
+            engine.stream_joined()
             try:
                 while not engine.stopped:
                     jpeg, new = engine.wait_frame(seq)
@@ -1128,6 +1139,8 @@ def make_handler(engine: Engine, port_getter, avatar: bytes, token: str):
                     self.wfile.write(b"\r\n")
             except OSError:  # client went away or stalled past the timeout
                 return
+            finally:
+                engine.stream_left()
 
         def _rig_socket(self) -> None:
             """Stream rig numbers to the avatar page. Latest value wins; nothing queues."""
