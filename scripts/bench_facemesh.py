@@ -62,7 +62,7 @@ def summarize_step(name: str, samples: list[dict]) -> dict:
     span = (timed[-1]["t"] - timed[0]["t"]) if len(timed) >= 2 else 0
     out["hand_hz"] = round((timed[-1]["handPolls"] - timed[0]["handPolls"]) / span, 2) if span > 0 else None   # how often the hand model really ran
     last = samples[-1] if samples else {}
-    out["states"] = {k: last.get(k) for k in ("body", "hair", "liveHands", "stains", "seam")}
+    out["states"] = {k: last.get(k) for k in ("body", "hair", "liveHands", "stains", "seam", "angleCount")}
     out["seam_slow_ms"] = last.get("seamSlowMs")   # set when "Clean the edges" turned itself off as too slow (S13c)
     out["seam_warm_ms"] = last.get("seamWarmMs")   # its first pass, while the model is prepared: the picture freezes that long once
     drawn = [s for s in samples if (s.get("drawn") or 0) > 0]
@@ -80,6 +80,15 @@ def build_report(config: dict, hardware: dict, contention: dict, renderer: str, 
     if software:
         notes.append("The WebGL renderer is a SOFTWARE renderer, not the GPU: these numbers are not this laptop's real speed. Run with --headed.")
     notes.append("The fake camera shows no hand, so the hand model ran but found none: costs with a real hand are not included.")
+    angle = next((s for s in steps if s.get("angle_photo") is not None), None)
+    if angle:
+        if angle["angle_photo"].get("accepted"):
+            notes.append("Stage 3: one side photo was added (" + angle["angle_photo"]["accepted"] + ", a perspective warp, not a real side view). "
+                         "The fake camera never turns its head, so the page kept drawing the front photo: the crossfade's cost while "
+                         "turning (two face layers) is not included; the side photo's upload, consent and batched checks are.")
+        else:
+            notes.append("Stage 3: no side photo was accepted (" + "; ".join(angle["angle_photo"].get("refused", [])) + "): that step measured "
+                         "the option on without a side photo.")
     warm = next((s.get("seam_warm_ms") for s in steps if s.get("seam_warm_ms")), None)
     if warm:
         notes.append(f"\"Clean the edges\" first pass (the model being prepared on the graphics card) took {warm} ms: the picture froze that "
@@ -129,9 +138,32 @@ def _photo(tmp: Path) -> Path:
     return path
 
 
+def _side_photos(front: Path) -> list[Path]:
+    """Candidate side photos for Stage 3 ("Photos at several angles"): the same astronaut portrait, cropped close to the face (the
+    page refuses a side photo whose face is small), then perspective-warped so one side shrinks and the face reads as turned a little
+    each way, as in tests/test_facemesh_angles_browser.py. They are NOT real side views; the page decides from its own landmarks
+    whether each one is turned far enough from the front photo, and not too far."""
+    import cv2
+    import numpy as np
+    from skimage import data
+
+    img = cv2.cvtColor(cv2.resize(data.astronaut()[0:300, 100:400], (480, 480)), cv2.COLOR_RGB2BGR)
+    h, w = img.shape[:2]
+    out = []
+    for k in (0.3, 0.38):
+        src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
+        dst = np.float32([[0, 0], [w, h * k], [w, h * (1 - k)], [0, h]])
+        warped = cv2.warpPerspective(img, cv2.getPerspectiveTransform(src, dst), (w, h), borderMode=cv2.BORDER_REPLICATE)
+        for flip in (False, True):
+            path = front.with_name(f"side-{int(k * 100)}{'-mirror' if flip else ''}.png")
+            cv2.imwrite(str(path), cv2.flip(warped, 1) if flip else warped)
+            out.append(path)
+    return out
+
+
 def _sample(page) -> dict:
     s = page.evaluate("window.__facemesh") or {}
-    out = {k: s.get(k) for k in (*FIELDS, "drawn", "body", "hair", "liveHands", "stains", "handPolls", "seam", "seamSlowMs", "seamWarmMs")}
+    out = {k: s.get(k) for k in (*FIELDS, "drawn", "body", "hair", "liveHands", "stains", "handPolls", "seam", "seamSlowMs", "seamWarmMs", "angles", "angleCount")}
     if out.get("seam") != "on":
         out["seamMs"] = None   # the page keeps its last pass time after the option stops: only count it while it runs
     out["t"] = time.time()
@@ -156,6 +188,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
         clip = tmp / "portrait.y4m"
         write_clip(clip, size)
         photo = _photo(tmp)
+        sides = _side_photos(photo)
         server = Server(Engine(source="demo:static", mode="body"), port=0)
         server.start()
         try:
@@ -203,6 +236,35 @@ def run(args: argparse.Namespace) -> tuple[list[dict], str, str, dict]:
                     seam_on = "() => { const b = document.querySelector('#seamBtn'); if (b.getAttribute('aria-pressed') !== 'true') b.click(); }"
                     steps = [step("face only, Clean the edges off", lambda: page.evaluate(seam_off),
                                   "window.__facemesh.seam === 'off' || window.__facemesh.seam === 'too slow'")]
+                    if args.angles:
+                        # Stage 3: one side photo, with its own consent; measured with Clean the edges off, then the option is turned
+                        # off again (which ends the side photo's consent) so the later steps compare with the runs before Stage 3
+                        report: dict = {"refused": []}
+
+                        def add_side():
+                            page.click("#anglesBtn")
+                            _wait(page, "window.__facemesh.angles === 'on'", args.startup_timeout)
+                            for side in sides:
+                                page.evaluate("window.__facemesh.angleRejected = ''")
+                                page.set_input_files("#angleFile", str(side))
+                                _wait(page, "window.__facemesh.photo === 'asking' || window.__facemesh.angleRejected !== ''", args.startup_timeout)
+                                reason = page.evaluate("window.__facemesh.angleRejected")
+                                if reason:
+                                    report["refused"].append(f"{side.name}: {reason}")
+                                    continue
+                                if page.is_visible("#qualityOverrideRow"):
+                                    page.check("#qualityOverride")
+                                page.check("#consentAttest")
+                                page.click("#consentOk")
+                                _wait(page, "window.__facemesh.angleCount === 1 && window.__facemesh.photo === 'ready'", args.startup_timeout)
+                                report["accepted"] = side.name
+                                return
+
+                        angle_step = step("face only + one side photo (Photos at several angles; head not turning)", add_side, None)
+                        angle_step["angle_photo"] = report
+                        steps.append(angle_step)
+                        page.click("#anglesBtn")
+                        _wait(page, "window.__facemesh.angleCount === 0 && window.__facemesh.angles === 'off'", args.startup_timeout)
                     if args.edges == "on":   # --edges off keeps it off for every step: the feature costs without it
                         steps.append(step("face only, Clean the edges on", lambda: page.evaluate(seam_on),
                                           # sampled once its first pass (a one-off freeze while the model is prepared) is over
@@ -232,6 +294,8 @@ def main(argv: list[str] | None = None) -> int:
                     help='"Clean the edges" (S13c) for the steps after the first: on (the page default) or off, to see the other features without it')
     ap.add_argument("--edges-hz", type=float, default=None, metavar="HZ",
                     help="passes a second for Clean the edges (0.5 to 5; the page default is 5), given to the page as ?seamHz=")
+    ap.add_argument("--no-angles", dest="angles", action="store_false",
+                    help="skip the Stage 3 step (one side photo with Photos at several angles on)")
     ap.add_argument("--json", default=None, metavar="PATH")
     args = ap.parse_args(argv)
     from realx import hardware
@@ -240,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = hardware.detect()
     hw = hardware.to_dict(profile, hardware.recommend(profile))
     steps, browser_version, renderer, photo_check = run(args)
-    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "edges": args.edges, "edges_hz": args.edges_hz, "browser": browser_version,
+    doc = build_report({"resolution": args.resolution, "headed": bool(args.headed), "seconds": args.seconds, "edges": args.edges, "edges_hz": args.edges_hz, "angles": args.angles, "browser": browser_version,
                         "photo_check": photo_check}, hw, contention, renderer, steps)
     print(f"machine: {hw['cpu']['name']}; renderer: {renderer}; representative: {doc['representative']}")
     for n in doc["notes"]:

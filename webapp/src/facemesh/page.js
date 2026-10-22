@@ -23,6 +23,7 @@ import { StainSet, bindToPuppet, stainFans } from "./stains.js";
 import { MotionGate, freshness, headZone, seamDue, seamRate, seamTooSlow } from "./seams.js";
 import { edgeRate } from "./edgefeather.js";
 import { SeamSegmenter } from "./seammask.js";
+import { AnglePicker, SerialLoader, checkAngle, gateVerdict, photoYaw } from "./angles.js";
 
 const GATE_FPS = 20;       // the roadmap's gate for tracking plus compositing at 640x480
 const MEASURE_MS = 10000;
@@ -424,6 +425,126 @@ function stepSeams(now, shown) {
   probe.seamAmount = amount;
 }
 
+// Stage 3, "Photos at several angles" (off by default): side photos of the user, each under its own consent, drawn on the FACE when the
+// live head turns towards them (angles.js). The head ring, hair and body keep the front photo. Side photos are loaded one at a time, by one
+// face model that stays open while the option is on; while one loads, a consent that is only waiting for the server is paused, not ended.
+let anglesOn = false, angleFinder = null;
+let angleBlocking = false;   // true only while a side photo is decoded and its face found (the part that can block the page), never while the user reads the consent question
+const angleLoader = new SerialLoader(), anglePicker = new AnglePicker();
+Object.assign(probe, { angles: "off", angleCount: 0, angleFrom: "", angleTo: "", angleT: 1, liveYaw: null, angleRejected: "", angleLoading: false });
+
+function closeAngleFinder() {
+  if (angleFinder) { try { angleFinder.close(); } catch (e) { /* already closed */ } }
+  angleFinder = null;
+}
+
+/** One side photo leaves for good: its texture, its consent and its thumbnail address. */
+function dropAngle(item, angle) {
+  if (compositor) compositor.removeAngle(angle.slot);
+  angle.client.revoke();
+  if (angle.url) URL.revokeObjectURL(angle.url);
+  item.angles = item.angles.filter((a) => a !== angle);
+}
+
+function forgetAngles(item) { for (const a of [...((item && item.angles) || [])]) dropAngle(item, a); }
+
+/** Side photos whose consent the server ended (not merely late) leave the photo they belong to. */
+function dropEndedAngles(item) {
+  if (!item || !item.angles) return;
+  for (const a of [...item.angles]) {
+    const v = a.client.valid();
+    if (!v.ok && !v.stale) { dropAngle(item, a); setStatus(`A side photo was removed: ${v.reason}.`); }
+  }
+  if (item === gallery.active) renderAngles();
+}
+
+function renderAngles() {
+  const item = gallery.active, box = $("angles");
+  const list = (item && item.angles) || [];
+  probe.angleCount = list.length;
+  box.replaceChildren();
+  for (const a of list) {
+    const cell = document.createElement("div");
+    cell.className = "thumb-cell";
+    const img = document.createElement("img");
+    img.alt = ""; img.src = a.url; img.className = "angle-thumb";
+    const label = document.createElement("span");
+    label.textContent = `${Math.round(Math.abs(a.yaw))}°`;
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "thumb-remove"; del.dataset.slot = a.slot;
+    del.setAttribute("aria-label", `Remove side photo ${a.name}`); del.textContent = "×";
+    cell.append(img, label, del);
+    box.append(cell);
+  }
+  box.hidden = list.length === 0;
+  $("angleAdd").disabled = !anglesOn || !item;
+  $("angleBar").hidden = !anglesOn; $("anglesNote").hidden = !anglesOn;   // off: no extra height on the page
+}
+
+/** Adds one side photo to the photo on screen, after its own consent. Queued: side photos are loaded strictly one at a time. */
+function addAnglePhoto(file) {
+  return angleLoader.run(async () => {
+    const item = gallery.active;
+    if (!anglesOn || !item || !compositor) { setStatus("Choose your front photo first, then add side photos."); return; }
+    probe.angleLoading = true; probe.angleRejected = "";
+    const url = URL.createObjectURL(file);
+    let client = null, kept = false;
+    try {
+      setStatus("Reading the side photo...");
+      const image = new Image();
+      let faces = [];
+      angleBlocking = true;
+      try {
+        image.src = url;
+        await image.decode();
+        if (!angleFinder) angleFinder = await openLandmarker("IMAGE", 2);   // opened once while the option is on, reused for every side photo
+        faces = angleFinder.detect(image).faceLandmarks || [];
+      } finally { angleBlocking = false; }
+      const faceCheck = checkPhotoFaces(faces);
+      if (!faceCheck.ok) throw new Error(faceCheck.reason);
+      const yaw = photoYaw(faces[0], (image.naturalWidth || image.width) / (image.naturalHeight || image.height));
+      const fit = checkAngle(yaw, item.yaw, item.angles.length);
+      if (!fit.ok) throw new Error(fit.reason);
+      const sha = await sha256Hex(file);
+      if (sha === item.sha || item.angles.some((a) => a.sha === sha)) throw new Error("this photo is already in use");
+      client = new ConsentClient();                // every side photo has its own consent, like every gallery photo
+      const agreed = await askConsent(sha, client);
+      settleFlow();                                // the question changed the page's state: back to the photo on screen
+      if (!agreed) { setStatus("The side photo is not used: no consent was given."); return; }
+      if (!anglesOn || gallery.active !== item) return;   // the user moved on while we asked
+      const slot = compositor.addAngle(image, faces[0]);
+      item.angles.push({ name: file.name, sha, client, image, landmarks: faces[0], yaw, url, slot });
+      kept = true;
+      renderAngles();
+      setStatus(`Side photo added (turned about ${Math.round(Math.abs(yaw))}°). It is drawn when you turn your head that way.`);
+    } catch (err) {
+      const reason = String((err && err.message) || err);
+      probe.angleRejected = reason.slice(0, 160);
+      setStatus(`This side photo cannot be used: ${reason}`);
+    } finally {
+      if (!kept) { if (client && client.record) client.revoke(); URL.revokeObjectURL(url); }
+      probe.angleLoading = false;
+    }
+  });
+}
+
+/** Which photo the face is drawn from this frame, and the head turn the hold option should measure from. */
+function stepAngles(now, shown) {
+  const item = gallery.active;
+  if (!anglesOn || !item || !item.angles || item.angles.length === 0 || !shown) {
+    compositor.setFaceMix(null); anglePicker.reset();
+    Object.assign(probe, { angleFrom: "", angleTo: "", angleT: 1, liveYaw: null });
+    return null;
+  }
+  const live = photoYaw(shown.landmarks, video.videoWidth / Math.max(1, video.videoHeight));
+  const candidates = [{ id: "", yaw: item.yaw }, ...item.angles.filter((a) => a.client.valid().ok).map((a) => ({ id: a.slot, yaw: a.yaw }))];
+  const pick = anglePicker.update(live, candidates, now);
+  compositor.setFaceMix(pick);
+  Object.assign(probe, { angleFrom: pick.from, angleTo: pick.to, angleT: pick.t, liveYaw: live });
+  const drawn = candidates.find((c) => c.id === pick.to);
+  return drawn ? drawn.yaw : null;
+}
+
 function setStatus(text) { $("status").textContent = text; }
 
 function explain(err) {
@@ -561,7 +682,8 @@ async function usePhoto(file) {
     if (!(await askConsent(sha, client, report.worst === "fail"))) { setStatus("The photo is not used: no consent was given."); settleFlow(); return; }
     if (!compositor) compositor = new MeshCompositor(faceCanvas, mesh);
     compositor.setPhoto(image, faces[0]);           // throws (and changes nothing) if the photo is too large for this graphics card
-    const item = gallery.add({ name: file.name, sha, client, image, landmarks: faces[0], url });
+    const frontYaw = photoYaw(faces[0], (image.naturalWidth || image.width) / (image.naturalHeight || image.height));
+    const item = gallery.add({ name: file.name, sha, client, image, landmarks: faces[0], url, angles: [], yaw: Number.isFinite(frontYaw) ? frontYaw : 0 });   // Stage 3: its side photos, and its own head turn
     kept = true;
     makeActive(item);
     setStatus("Photo ready: it is drawn on your live face while the consent lasts and the label stays on screen.");
@@ -598,6 +720,9 @@ function makeActive(item) {
   startGate();
   Object.assign(probe, { photo: "ready", consent: "active", endedReason: "", record: consent.record });
   view.wire = false; $("wire").setAttribute("aria-pressed", "false");
+  anglePicker.reset();                              // Stage 3: setPhoto() forgot the textures of side photos; this photo's own come back
+  for (const a of item.angles || []) a.slot = compositor.addAngle(a.image, a.landmarks);
+  renderAngles();
   syncGallery();
   if (headOn) applyHead();                          // a new photo has no head mask until it has been cut
   if (hairOn) applyHair();                          // and no moving hair until its sheet is built
@@ -633,8 +758,10 @@ function renderGallery() {
 
 // An item leaves the gallery for good: its consent is ended and its thumbnail address released.
 function releaseItem(item) {
+  forgetAngles(item);                               // Stage 3: its side photos and their consents go with it
   item.client.revoke();
   if (item.url) URL.revokeObjectURL(item.url);
+  if (item === gallery.active || !gallery.active) renderAngles();
 }
 
 function showToast(text) {
@@ -734,11 +861,19 @@ function startGate() {
     pruneInactive();
     const client = consent;                        // the active photo's; it can change while the answer is awaited
     if (!client.record) return;
-    await client.check();
+    const item = gallery.active;
+    const sides = item && item.angles ? item.angles.map((a) => a.client) : [];
+    if (sides.length) await ConsentClient.checkMany([client, ...sides]);   // Stage 3: the photo and its side photos in ONE request
+    else await client.check();
     if (client !== consent) return;
+    dropEndedAngles(item);
     const v = client.valid();
     probe.consentLeft = client.secondsLeft();
-    if (!v.ok) endPhoto(v.reason);
+    // While a side photo loads, a verdict that is only late pauses the photo instead of ending it (angles.js gateVerdict); with no
+    // side photo loading this is exactly the old rule: anything but ok ends the photo.
+    const decision = gateVerdict(v, angleBlocking);
+    probe.gateDecision = decision;
+    if (decision === "end") endPhoto(v.reason);
   }, CHECK_EVERY_MS));
 }
 
@@ -747,7 +882,9 @@ async function recheckConsent() {
   if (rechecking || !consent.record) return;
   rechecking = true;
   const client = consent;
-  try { await client.check(); } finally { rechecking = false; }
+  const item = gallery.active;
+  const sides = item && item.angles ? item.angles.map((a) => a.client) : [];
+  try { if (sides.length) await ConsentClient.checkMany([client, ...sides]); else await client.check(); } finally { rechecking = false; }   // Stage 3: one request for all
 }
 
 function stopGate() { for (const t of gate.timers) clearInterval(t); gate.timers = []; gate.label = ""; probe.label = ""; }
@@ -904,7 +1041,8 @@ function frame() {
         stepSeams(now, shown);                     // S13c: clean the seams between the photo's head and the live one
         // the video goes to the graphics card for colour matching only: see compositor.js
         // S13e: the photo gives way to the live picture where it would not hold (head turned far, mouth very wide, face partly out of frame)
-        const conf = maskConf.update(shown ? shown.landmarks : null, video.videoWidth / Math.max(1, video.videoHeight));
+        const yawRef = stepAngles(now, shown);     // Stage 3: null unless side photos are in use; then the hold measures from the photo drawn
+        const conf = maskConf.update(shown ? shown.landmarks : null, video.videoWidth / Math.max(1, video.videoHeight), yawRef);
         const hold = holdFactors(look.hold / 100, conf);
         probe.confidence = conf.confidence; probe.holdPhoto = hold.photo; probe.holdRing = hold.ring;
         probe.drawn = compositor.draw(shown ? shown.landmarks : null, video, shown ? shown.opacity * hold.photo : 0, hold.ring);
@@ -1076,6 +1214,31 @@ function wireControls() {
     else { if (compositor) compositor.setSeamAmount(0, null); closeSeams(); }
     setStatus(seamOn ? "Clean the edges is on: live hair and ears round the photo's head are hidden." : "Clean the edges is off.");
   });
+  $("anglesBtn").addEventListener("click", (e) => {        // Stage 3: side photos, off by default
+    anglesOn = !anglesOn; e.currentTarget.setAttribute("aria-pressed", String(anglesOn));
+    probe.angles = anglesOn ? "on" : "off";
+    if (!anglesOn) {
+      for (const item of gallery.list()) forgetAngles(item);   // their consents end with the option
+      if (compositor) { compositor.clearAngles(); compositor.setFaceMix(null); }
+      anglePicker.reset(); closeAngleFinder();
+    }
+    renderAngles();
+    setStatus(anglesOn ? `Photos at several angles is on: add side photos of yourself, turned 15° to 45° (each needs its own consent).`
+      : "Photos at several angles is off: side photos are removed and their consents ended.");
+  });
+  $("angleAdd").addEventListener("click", () => $("angleFile").click());
+  $("angleFile").addEventListener("change", (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (f) addAnglePhoto(f);
+  });
+  $("angles").addEventListener("click", (e) => {
+    const del = e.target.closest(".thumb-remove");
+    const item = gallery.active;
+    if (!del || !item) return;
+    const angle = item.angles.find((a) => a.slot === del.dataset.slot);
+    if (angle) { dropAngle(item, angle); renderAngles(); setStatus("Side photo removed, and its consent ended."); }
+  });
   $("handReach").addEventListener("input", (e) => {
     handReach = Number(e.currentTarget.value) / 100;
     $("handReachValue").textContent = `${e.currentTarget.value}%`;
@@ -1191,8 +1354,8 @@ async function main() {
   window.addEventListener("pagehide", () => {
     stopped = true;
     try { landmarker.close(); } catch (e) { /* already closed */ }
-    closeHands(); closePose(); closeSegmenter();
-    for (const item of gallery.list()) item.client.revoke();   // best effort: the page is going away, so its consents should not outlive it
+    closeHands(); closePose(); closeSegmenter(); closeAngleFinder();
+    for (const item of gallery.list()) { item.client.revoke(); for (const a of item.angles || []) a.client.revoke(); }   // best effort: the page is going away, so its consents should not outlive it
     stream.getTracks().forEach((t) => t.stop());
   });
   schedule();
