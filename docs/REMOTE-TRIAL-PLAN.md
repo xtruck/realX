@@ -20,7 +20,7 @@ changed** by this trial.
 | Where it runs | The vendor's own web tool or the owner's own account on the vendor's page. **Not through realX.** No realX code sends anything. |
 | Who operates it | The owner, on the owner's own account and payment method. An agent does not create accounts, sign in, enter payment details or press "start". |
 | Length | One session, at most 3 minutes of generation in total. |
-| Cost cap | See the next table; the owner sets the account's spending limit before starting. |
+| Cost cap | See the next table. No spending limit is documented by the vendor, so the cap is what the owner chooses to load, or the free credits. |
 | Recording | None kept. No download of the output unless the owner decides afterwards to keep a clip of their own. |
 
 ## What the vendor says (public pages read 2026-10-24)
@@ -45,12 +45,12 @@ That is the real cost of the trial. Ask the vendor to delete the session data af
 1. [ ] I read the table above and accept that live video of my face goes to the vendor's servers for this test.
 2. [ ] I am alone in the room, nobody else can appear in the camera, and no screen shows other people's faces or private documents.
 3. [ ] Nothing private is in view (documents, other windows, mail, children's photos, house numbers).
-4. [ ] I created the vendor account myself, with an account I control, and set a **spending limit** at or below the cap I chose.
+4. [ ] I created the vendor account myself. **The vendor's FAQ states no spending limit**, so I use only the free evaluation credits, or load at most the small amount I accept to lose, and I turn off any automatic top-up.
 5. [ ] The reference photo is of me (or a labelled non-person) and I own the rights to it.
 6. [ ] I signed the consent below (typed name and date are enough; keep it in this repository's `docs/`, not in the vendor's tool).
 7. [ ] I will keep the on-screen note "AI-edited video, my own face, test" visible in the picture during the session.
 8. [ ] I will stop the session at the first sign of anything wrong (I do not need to finish the 3 minutes).
-9. [ ] Afterwards I will use the vendor's deletion route for the session data and note the date and any reference number below.
+9. [ ] Afterwards I ask the vendor to delete my session data (the privacy policy says data is kept until deleted; **the FAQ gives no self-service route**, so write to the contact address in the privacy policy) and note the date and any reference below.
 
 ## Session script (3 minutes)
 
