@@ -135,3 +135,14 @@ For a **bug report**, attach this table and a screenshot of the status panel tak
 happens. A screen recording helps, but it shows your face: attach one only if you are comfortable. The
 status panel itself contains no picture of you. Never attach anything showing another person without their
 permission.
+
+## Server-side numbers while you test (optional, 2 minutes)
+
+While you do the steps above with the real camera, a second PowerShell window can record what the server sees (fps, faces found, drops, session state, error code, CPU, memory, camera outages):
+
+```powershell
+$env:REALX_TOKEN = "the-token-realx-serve-uses"
+python scripts/validate_webcam.py --seconds 300 --json webcam-numbers.json
+```
+
+It only reads `/api/stats` on this computer and never opens a camera or writes a picture. It states no pass line; send back `webcam-numbers.json` with your filled-in tables. The browser tracker numbers (model ms, pose and hand rates) are not in it: copy them from the status panel.
