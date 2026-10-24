@@ -68,7 +68,7 @@ def test_allowed_classes_still_cannot_claim_a_safety_role(fake):
 
 def test_an_impostor_gate_cannot_unlock_a_synthesizer():
     chain = [FakeGate(), Synth(), Disclosure("p"), Watermark(b"x")]
-    Pipeline(chain)  # flags alone satisfy the ordering rules...
+    Pipeline(chain, strict=False)  # flags alone satisfy the ordering rules...
     with pytest.raises(PipelineConfigError):  # ...which is exactly why strict mode exists
         Pipeline(chain, strict=True, allow=[FakeGate, Synth])
 
@@ -97,3 +97,15 @@ def test_a_strict_pipeline_still_processes_frames():
     with Pipeline(real_chain(), strict=True) as p:
         out = p.process(FrameContext(pixels=np.zeros((120, 160, 3), np.uint8), index=0, timestamp=0.0))
     assert "disclosure" in out.meta
+
+
+def test_a_pipeline_is_strict_unless_it_opts_out():
+    with pytest.raises(PipelineConfigError, match="not a registered"):
+        Pipeline([Plain()])  # no strict= given: an unregistered stage is refused
+    Pipeline(real_chain())  # realX's own stages need no flag
+    Pipeline([Plain()], strict=False)  # opting out stays possible, and visible at the call site
+
+
+def test_an_impostor_gate_is_refused_by_default():
+    with pytest.raises(PipelineConfigError):
+        Pipeline([FakeGate(), Synth(), Disclosure("p"), Watermark(b"x")], allow=[FakeGate, Synth])

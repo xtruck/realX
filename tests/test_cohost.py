@@ -114,20 +114,20 @@ def test_likeness_needs_gate_then_visible_label_then_watermark(vault):
     mark = lambda: create("watermark", payload=b"x")  # noqa: E731
     label = lambda: create("disclosure", display_name="Kofi")  # noqa: E731
     with pytest.raises(PipelineConfigError, match="disclosure"):
-        Pipeline([gate(), swap(), mark()])  # no label
+        Pipeline([gate(), swap(), mark()], strict=False)  # no label
     with pytest.raises(PipelineConfigError, match="disclosure"):
-        Pipeline([gate(), swap(), mark(), label()])  # label after the mark is not accepted
+        Pipeline([gate(), swap(), mark(), label()], strict=False)  # label after the mark is not accepted
     with pytest.raises(PipelineConfigError):
-        Pipeline([swap(), label(), mark()])  # no consent gate
+        Pipeline([swap(), label(), mark()], strict=False)  # no consent gate
     with pytest.raises(PipelineConfigError, match="watermark"):
-        Pipeline([gate(), swap(), label()])  # no mark
-    Pipeline([gate(), swap(), label(), mark()])
+        Pipeline([gate(), swap(), label()], strict=False)  # no mark
+    Pipeline([gate(), swap(), label(), mark()], strict=False)
 
 
 def test_cohost_pipeline_runs_labelled_marked_and_stops_when_consent_is_revoked(vault):
     g = vault.grant("Kofi", agreed=True)
     stages = cohost_stages(vault, g.path, create("swap_stub", source_identity="kofi"), watermark_key=KEY)
-    with Pipeline(stages) as pipe:
+    with Pipeline(stages, strict=False) as pipe:
         out = pipe.process(frame(480, 640))
         assert out.meta["swapped_with"] == "kofi" and "DIGITAL HOST" in out.meta["disclosure"]
         assert watermark.extract(out.pixels, key=KEY) == f"realx|cohost|{g.record.record_id[:8]}".encode()
@@ -141,7 +141,7 @@ def test_cohost_pipeline_runs_labelled_marked_and_stops_when_consent_is_revoked(
 def test_a_different_persons_consent_does_not_cover_the_renderer(vault):
     g = vault.grant("Kofi", agreed=True)
     stages = cohost_stages(vault, g.path, create("swap_stub", source_identity="someone-else"))
-    with Pipeline(stages) as pipe:
+    with Pipeline(stages, strict=False) as pipe:
         with pytest.raises(ConsentError, match="does not cover"):
             pipe.process(frame())
 
@@ -178,7 +178,7 @@ def test_revoking_from_another_process_stops_a_stream_that_is_already_running(tm
     running = CohostVault(root)
     g = running.grant("Kofi", agreed=True)
     stages = cohost_stages(running, g.path, create("swap_stub", source_identity="kofi"))
-    with Pipeline(stages) as pipe:
+    with Pipeline(stages, strict=False) as pipe:
         pipe.process(frame())
         CohostVault(root).revoke(g.record.record_id, g.revoke_code)  # the co-host, in a separate process
         with pytest.raises(ConsentError, match="revoked"):
@@ -249,17 +249,17 @@ def test_nothing_may_edit_the_picture_between_the_label_and_the_watermark(vault)
     label = create("disclosure", display_name="Kofi")
     mark = create("watermark", payload=b"x")
     with pytest.raises(PipelineConfigError, match="cover the disclosure"):
-        Pipeline([gate, swap, label, _Paint(), mark])
+        Pipeline([gate, swap, label, _Paint(), mark], strict=False)
     with pytest.raises(PipelineConfigError, match="cover the disclosure"):
-        Pipeline([gate, swap, label, create("bg_replace", mode="color"), mark])
-    Pipeline([gate, swap, _Paint(), label, mark])  # edits before the label are fine
+        Pipeline([gate, swap, label, create("bg_replace", mode="color"), mark], strict=False)
+    Pipeline([gate, swap, _Paint(), label, mark], strict=False)  # edits before the label are fine
 
 
 def test_a_likeness_stage_needs_the_gate_and_the_watermark_even_without_requires_consent():
     with pytest.raises(PipelineConfigError, match="consent gate"):
-        Pipeline([_OnlyLikeness(), create("disclosure", display_name="Kofi"), create("watermark", payload=b"x")])
+        Pipeline([_OnlyLikeness(), create("disclosure", display_name="Kofi"), create("watermark", payload=b"x")], strict=False)
     with pytest.raises(PipelineConfigError):
-        Pipeline([_OnlyLikeness(), create("disclosure", display_name="Kofi")])
+        Pipeline([_OnlyLikeness(), create("disclosure", display_name="Kofi")], strict=False)
 
 
 def test_emote_ids_carry_a_per_start_token_so_restarts_cannot_collide():

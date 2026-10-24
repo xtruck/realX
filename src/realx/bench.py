@@ -190,6 +190,9 @@ def default_stage_factory(with_background: bool) -> list:
     return stages
 
 
+_OWN_STAGES = default_stage_factory  # captured now: a replacement installed later is not realX's own
+
+
 def _fresh(ctx: FrameContext) -> FrameContext:
     """Stages edit frames in place, so each pass works on its own copy of the pre-rendered picture."""
     return FrameContext(pixels=ctx.pixels.copy(), index=ctx.index, timestamp=ctx.timestamp, meta=dict(ctx.meta))
@@ -199,9 +202,14 @@ def _stats(values: list[float]) -> dict:
     return {"mean": round(sum(values) / len(values), 3), "p50": round(percentile(values, 50), 3), "p95": round(percentile(values, 95), 3)}
 
 
+def _pipeline(stage_factory, with_background: bool) -> Pipeline:
+    """realX's own stage list is checked strictly; a factory the caller injected (tests, experiments) is theirs to vouch for."""
+    return Pipeline(stage_factory(with_background), strict=stage_factory is _OWN_STAGES)
+
+
 def _timing_pass(frames: list[FrameContext], stage_factory, with_background: bool, clock) -> dict:
     warmup = min(5, max(1, len(frames) // 10))
-    pipe = Pipeline(stage_factory(with_background))
+    pipe = _pipeline(stage_factory, with_background)
     pipe.setup()
     try:
         per_stage: dict[str, list[float]] = {s.name: [] for s in pipe.stages}
@@ -247,7 +255,7 @@ def clear_process_caches() -> None:
 def _cycle(frames: list[FrameContext], stage_factory, with_background: bool, clock) -> dict:
     """One full run on fresh stages with nothing excluded: setup, the first frame, then the rest."""
     began = clock()
-    pipe = Pipeline(stage_factory(with_background))
+    pipe = _pipeline(stage_factory, with_background)
     pipe.setup()
     try:
         setup_ms = (clock() - began) * 1000.0
@@ -371,7 +379,7 @@ def _stream_pass(frames: list[FrameContext], stage_factory, with_background: boo
             yield frame
 
     producer = threading.Thread(target=camera, name="bench-camera", daemon=True)
-    with Pipeline(stage_factory(with_background)) as pipe:
+    with _pipeline(stage_factory, with_background) as pipe:
         timed = _Timed(pipe, clock)
         started = clock()
         producer.start()

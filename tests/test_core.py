@@ -101,7 +101,7 @@ def test_each_issued_record_is_unique():
 # --- safety ordering --------------------------------------------------------
 def test_swap_without_gate_is_refused_at_build_time():
     with pytest.raises(PipelineConfigError):
-        Pipeline([create("swap_stub", source_identity="alice"), create("watermark", payload=b"x")])
+        Pipeline([create("swap_stub", source_identity="alice"), create("watermark", payload=b"x")], strict=False)
 
 
 def test_swap_before_gate_is_refused():
@@ -121,7 +121,7 @@ def test_swap_without_watermark_after_it_is_refused():
     st = store()
     rec = st.issue("alice", "live", 60)
     with pytest.raises(PipelineConfigError):
-        Pipeline([create("consent_gate", store=st, record=rec), create("swap_stub", source_identity="alice")])
+        Pipeline([create("consent_gate", store=st, record=rec), create("swap_stub", source_identity="alice")], strict=False)
 
 
 def test_gated_swap_runs_and_is_watermarked_with_authentic_tag():
@@ -162,7 +162,7 @@ def test_expired_consent_blocks_pipeline_setup():
     st = store()
     rec = st.issue("alice", "live", ttl_seconds=0.01)
     time.sleep(0.05)
-    pipe = Pipeline([create("consent_gate", store=st, record=rec)])
+    pipe = Pipeline([create("consent_gate", store=st, record=rec)], strict=False)
     with pytest.raises(ConsentError):
         pipe.setup()
 
@@ -183,7 +183,7 @@ def test_failed_setup_closes_already_started_stages():
     st = store()
     expired = st.issue("alice", "live", ttl_seconds=0.01)
     time.sleep(0.05)
-    pipe = Pipeline([Probe(), create("consent_gate", store=st, record=expired)])
+    pipe = Pipeline([Probe(), create("consent_gate", store=st, record=expired)], strict=False)
     with pytest.raises(ConsentError):
         pipe.setup()
     assert closed == [True]
@@ -191,7 +191,7 @@ def test_failed_setup_closes_already_started_stages():
 
 # --- pipeline / streaming ---------------------------------------------------
 def test_pipeline_requires_setup_and_records_timings():
-    pipe = Pipeline([create("passthrough")])
+    pipe = Pipeline([create("passthrough")], strict=False)
     with pytest.raises(RuntimeError):
         pipe.process(frame())
     with pipe:
@@ -200,7 +200,7 @@ def test_pipeline_requires_setup_and_records_timings():
 
 
 def test_run_stream_keeps_order_and_counts_every_frame():
-    with Pipeline([create("passthrough")]) as pipe:
+    with Pipeline([create("passthrough")], strict=False) as pipe:
         out = list(run_stream(pipe, (frame(i) for i in range(20)), workers=1, max_in_flight=20))
     assert [c.index for c in out] == list(range(20))
 
@@ -217,7 +217,7 @@ def test_run_stream_reports_drops_and_accounts_for_all_frames():
         def close(self): ...
 
     dropped = []
-    with Pipeline([Slow()]) as pipe:
+    with Pipeline([Slow()], strict=False) as pipe:
         out = list(
             run_stream(pipe, (frame(i, 8) for i in range(40)), workers=1, max_in_flight=2, on_drop=dropped.append)
         )
@@ -242,14 +242,14 @@ def test_run_stream_propagates_stage_errors_and_stops():
 
         def close(self): ...
 
-    with Pipeline([Boom()]) as pipe:
+    with Pipeline([Boom()], strict=False) as pipe:
         with pytest.raises(RuntimeError, match="stage failed"):
             list(run_stream(pipe, (frame(i, 8) for i in range(500)), workers=1, max_in_flight=2))
     assert len(seen) < 500
 
 
 def test_run_stream_validates_arguments_and_stateful_workers():
-    with Pipeline([create("smooth")]) as pipe:
+    with Pipeline([create("smooth")], strict=False) as pipe:
         with pytest.raises(ValueError):
             list(run_stream(pipe, [], workers=0))
         with pytest.raises(PipelineConfigError):
@@ -257,7 +257,7 @@ def test_run_stream_validates_arguments_and_stateful_workers():
 
 
 def test_multiple_workers_record_all_timings():
-    with Pipeline([create("passthrough")]) as pipe:
+    with Pipeline([create("passthrough")], strict=False) as pipe:
         out = list(run_stream(pipe, (frame(i, 8) for i in range(50)), workers=4, max_in_flight=50))
     assert len(out) == pipe.timings["passthrough"].calls
 
