@@ -54,7 +54,7 @@ branch). The browser tests were not run (see below).
 | 1 | Done on 2026-10-15 (see the update at the top of this file); `main` has moved on since. |
 | 2 | Done: `TROUBLESHOOTING.md` (PR #37). |
 | 3 | Written, in PR #38 (`scripts/validate_webcam.py`, server-side numbers only; **never run with a real webcam**). Merged only when PR #38 is. |
-| 4 | Still open: no 30-minute soak test exists. |
+| 4 | Script ready: `validate_webcam.py --seconds 1800 --per-minute` (server-side numbers per minute). **The 30-minute run itself has not been done**; it needs the owner's real camera session. |
 | 5 | Done as a page, not judged: `/facemesh` (see `CPU-STATUS.md`); the owner's real-webcam results are still missing (`FACEMESH-DEFECTS.md` is empty on purpose). |
 | 6 | Still the owner's. |
 | 7 | Not checked. |
