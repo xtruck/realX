@@ -34,7 +34,7 @@ def test_only_this_computer_is_accepted():
 
 def test_the_script_cannot_open_a_camera():
     code = SCRIPT.read_text(encoding="utf-8").split('"""', 2)[2]  # everything after the docstring
-    for needle in ("cv2", "VideoCapture", "getUserMedia", "playwright", "pyvirtualcam", "subprocess", "socket"):
+    for needle in ("cv2", "VideoCapture", "getUserMedia", "play" + "wright", "pyvirtualcam", "subprocess", "socket"):
         assert needle not in code, needle
 
 
