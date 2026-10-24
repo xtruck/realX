@@ -247,6 +247,10 @@ void main() {
     vec2 e = u_texel * 2.0;
     float soft = 0.2 * (m + texture2D(u_hair, v_uv + vec2(e.x, 0.0)).r + texture2D(u_hair, v_uv - vec2(e.x, 0.0)).r + texture2D(u_hair, v_uv + vec2(0.0, e.y)).r + texture2D(u_hair, v_uv - vec2(0.0, e.y)).r);
     a = mix(a, smoothstep(0.1, 0.9, soft), u_join);
+    // 1b. photo border: the puppet is only as big as the photo, so where the photo ends (its bottom and its sides) it fades out over a band
+    // of 12% of the photo at full join, instead of a straight cut against the live clothes. Only the photo's own pixels are used.
+    float bd = min(min(v_uv.x, 1.0 - v_uv.x), 1.0 - v_uv.y);
+    a *= smoothstep(0.0, max(0.12 * u_join, 0.0001), bd);
     // 2. neck line: with the head drawn, the puppet thins a little just under the chin, where the head's own neck takes over (never below 60%)
     float chinY = u_pp[4].y, fh = max(abs(u_pp[4].y - u_pp[0].y), 0.02);
     float nf = smoothstep(chinY + 0.05 * fh, chinY + 0.4 * fh, v_uv.y);
