@@ -27,6 +27,9 @@ with **consent, provenance and license checks built in**.
   OBS Browser Source receives only joint angles. The character is always labelled as virtual.
 - **Background replacement**: cut yourself out of your own camera picture and put a
   photo, a blur or a colour behind you (PP-HumanSeg, Apache-2.0). Nothing is generated.
+- **Virtual camera (off by default)**: `realx serve --virtual-camera pyvirtualcam|softcam` sends the avatar
+  picture to a camera other programs can pick, with the visible bar and the provenance mark on every frame
+  (`docs/VCAM.md` says what survives each route). `/preview` shows the same picture in a window.
 - **Character voices**: `realx voices` lists presets (pip, bear, imp, robot, radio).
   They colour your own voice and cannot imitate anyone.
 - **Voice**: pitch shifting with a streaming phase vocoder, noise gate, normalization,
