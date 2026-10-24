@@ -8,6 +8,9 @@ Windows PowerShell, in a second window while `realx serve` runs:
     $env:REALX_TOKEN = "the-same-token-realx-serve-uses"     # set it before `realx serve` too, so both agree
     python scripts/validate_webcam.py --seconds 120 --json webcam-numbers.json
 
+A 30-minute endurance run (one row per minute, so a slow memory leak or a slow drop in fps shows):
+    python scripts/validate_webcam.py --seconds 1800 --per-minute --json soak.json
+
 What it can see: the server-side camera path (fps, latency, faces found, drops, session state, error code, CPU, memory, camera
 outages). Browser tracking numbers (model milliseconds, pose/hand rates) are shown on the page itself; copy those by hand
 (`REAL-WEBCAM-VALIDATION.md`, `facemesh_baseline.md`). No pass/fail line is invented here: the table is the evidence.
@@ -118,6 +121,37 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+def per_minute(rows: list[dict], size: int = 60) -> list[dict]:
+    """One row per `size` samples (one minute at one sample a second): the numbers that show a slow leak or a slow decline in a long run."""
+    out = []
+    for start in range(0, len(rows), size):
+        chunk = rows[start:start + size]
+        fps, cpu, rss = _values(chunk, "fps"), _values(chunk, "cpu_percent"), _values(chunk, "rss_mb")
+        dropped, frames = _values(chunk, "dropped"), _values(chunk, "frames")
+        out.append({
+            "minute": start // size + 1,
+            "samples": len(chunk),
+            "fps_median": _round(statistics.median(fps)) if fps else None,
+            "fps_min": _round(min(fps)) if fps else None,
+            "cpu_median": _round(statistics.median(cpu), 1) if cpu else None,
+            "rss_mb_last": _round(rss[-1], 1) if rss else None,
+            "dropped_in_minute": _span(dropped),
+            "frames_in_minute": _span(frames),
+            "sessions": sorted({r["session"] for r in chunk if r.get("session")}),
+            "errors": sorted({r["error_code"] for r in chunk if r.get("error_code")}),
+        })
+    return out
+
+
+def format_minutes(minutes: list[dict]) -> str:
+    head = "min | fps med/min | cpu % | memory MB | dropped | frames | sessions / errors"
+    lines = [head, "-" * len(head)]
+    for m in minutes:
+        lines.append(f"{m['minute']:>3} | {m['fps_median']} / {m['fps_min']} | {m['cpu_median']} | {m['rss_mb_last']} | "
+                     f"{m['dropped_in_minute']} | {m['frames_in_minute']} | {','.join(m['sessions']) or '-'} {','.join(m['errors'])}".rstrip())
+    return "\n".join(lines)
+
+
 def format_table(doc: dict) -> str:
     s = doc["summary"]
     fps = s["fps"]
@@ -144,6 +178,8 @@ def main(argv: list[str] | None = None, fetcher=fetch, sleep=time.sleep) -> int:
     ap = argparse.ArgumentParser(description="Record /api/stats numbers while you use a real webcam. Never opens a camera.")
     ap.add_argument("--url", default="http://127.0.0.1:8765", help="the running control room (this computer only)")
     ap.add_argument("--seconds", type=int, default=60, help="how long to record, one sample a second (default 60)")
+    ap.add_argument("--per-minute", action="store_true",
+                    help="also print and save one row per minute (use with --seconds 1800 for a 30-minute run)")
     ap.add_argument("--json", default=None, metavar="PATH")
     args = ap.parse_args(argv)
     if not 1 <= args.seconds <= 86400:
@@ -178,7 +214,12 @@ def main(argv: list[str] | None = None, fetcher=fetch, sleep=time.sleep) -> int:
         "summary": summarize(rows),
         "samples": rows,
     }
+    if args.per_minute:
+        doc["per_minute"] = per_minute(rows)
     print(format_table(doc))
+    if args.per_minute:
+        print()
+        print(format_minutes(doc["per_minute"]))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(doc, fh, indent=2)

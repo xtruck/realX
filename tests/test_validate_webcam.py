@@ -89,3 +89,31 @@ def test_a_server_that_never_answers_is_reported(monkeypatch):
         raise OSError("refused")
 
     assert vw.main(["--seconds", "3"], fetcher=down, sleep=lambda s: None) == 1
+
+
+def test_per_minute_rows_show_a_slow_leak():
+    rows = [vw.pick(stats(i)) for i in range(130)]  # memory grows by 1 MB a second in the fake data
+    minutes = vw.per_minute(rows)
+    assert [m["minute"] for m in minutes] == [1, 2, 3]
+    assert [m["samples"] for m in minutes] == [60, 60, 10]
+    assert minutes[0]["rss_mb_last"] == 559.0 and minutes[1]["rss_mb_last"] == 619.0
+    assert minutes[0]["dropped_in_minute"] == 59 and minutes[0]["sessions"] == ["live"]
+    assert "min | fps" in vw.format_minutes(minutes)
+
+
+def test_per_minute_handles_gaps_and_empty_input():
+    assert vw.per_minute([]) == []
+    sparse = vw.per_minute([vw.pick({}) for _ in range(5)])
+    assert sparse[0]["fps_median"] is None and sparse[0]["rss_mb_last"] is None and sparse[0]["dropped_in_minute"] is None
+
+
+def test_main_prints_and_saves_the_minutes_only_when_asked(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("REALX_TOKEN", TOKEN)
+    calls = iter(range(1000))
+    fetch = lambda base, token: stats(next(calls))  # noqa: E731
+    out = tmp_path / "a.json"
+    assert vw.main(["--seconds", "70", "--json", str(out)], fetcher=fetch, sleep=lambda s: None) == 0
+    assert "min | fps" not in capsys.readouterr().out and "per_minute" not in json.loads(out.read_text(encoding="utf-8"))
+    out2 = tmp_path / "b.json"
+    assert vw.main(["--seconds", "70", "--per-minute", "--json", str(out2)], fetcher=fetch, sleep=lambda s: None) == 0
+    assert "min | fps" in capsys.readouterr().out and len(json.loads(out2.read_text(encoding="utf-8"))["per_minute"]) == 2
