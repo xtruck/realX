@@ -142,7 +142,7 @@ def test_a_stage_that_raises_is_reported_then_the_pipeline_is_rebuilt(monkeypatc
     def build(cfg):
         stage = FlakyStage()
         built.append(stage)
-        return Pipeline([stage])
+        return Pipeline([stage], strict=False)
 
     engine = make_engine(monkeypatch, lambda source: FakeCamera(None))
     monkeypatch.setattr(engine, "_build", build)
@@ -193,7 +193,7 @@ def _run_slow_stream(max_in_flight, workers=1, count=40, stage_seconds=0.03):
         nonlocal dropped
         dropped += 1
 
-    with Pipeline([SlowStage(stage_seconds)]) as pipe:
+    with Pipeline([SlowStage(stage_seconds)], strict=False) as pipe:
         for out in run_stream(pipe, frames(), workers=workers, max_in_flight=max_in_flight, on_drop=on_drop):
             yielded += 1
             order.append(out.index)
@@ -279,7 +279,7 @@ def test_memory_does_not_grow_over_a_long_session():
     stages = [create("detect_yunet", score_threshold=0.3), create("track"), create("one_euro"), create("rig")]
     tracemalloc.start()
     try:
-        with Pipeline(stages) as pipe:
+        with Pipeline(stages, strict=False) as pipe:
             for i in range(100):  # warm-up: lazy model state, caches, tracker state
                 pipe.process(frame(i))
             gc.collect()
@@ -393,7 +393,7 @@ def test_real_detector_through_an_occlusion_keeps_one_identity():
     scene = SyntheticScene("dance", degrade=0.6)
     stages = [create("detect_yunet", score_threshold=0.3), create("track"), create("one_euro")]
     ids, counts, back_at = set(), [], None
-    with Pipeline(stages) as pipe:
+    with Pipeline(stages, strict=False) as pipe:
         for i in range(60):
             ctx = scene.render(i)
             if 25 <= i < 33:  # eight frames of a flat grey card in front of the face

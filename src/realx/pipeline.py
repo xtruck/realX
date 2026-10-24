@@ -155,7 +155,7 @@ class Pipeline:
 
     stages: Sequence[Stage]
     timings: dict[str, StageTiming] = field(default_factory=dict)
-    strict: bool = False
+    strict: bool = True
     allow: Sequence[type] = ()
     _ready: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)

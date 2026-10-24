@@ -239,6 +239,6 @@ def test_a_stage_that_fails_to_start_is_logged_by_name_and_the_error_still_propa
             pass
 
     with pytest.raises(RuntimeError, match="no weights"):
-        Pipeline([Broken()]).setup()
+        Pipeline([Broken()], strict=False).setup()
     hits = [r for r in caplog.records if r.levelno == logging.ERROR and "broken_stage" in r.getMessage()]
     assert hits and "no weights" in hits[0].getMessage()
