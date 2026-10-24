@@ -217,3 +217,112 @@ software renderer). After one pass over 1 s, or two in a row over 250 ms, the op
 took 6.5-8.3 s once (the model being prepared on the GPU), then about 26 ms a pass; its time is in `window.__facemesh.seamWarmMs`.
 
 The live-frame segmenter keeps the privacy rule: the camera goes to MediaPipe as the video element itself, MediaPipe answers with WebGL textures, one small shader folds them into a running value inside MediaPipe's own context, and the compositor uploads that mask canvas (`MeshCompositor.setSeam`, a sixth texture upload, of values and not of the camera). `seammask.js` and `seams.js` may not call `getAsUint8Array`, `getAsFloat32Array`, `readPixels` or any other read-back (a Node test checks it); there is no CPU delegate for this reason.
+
+**Soft edges (S13f, 2026-10-21, off by default, unmeasured).** A cheaper complement: a feathered band in the photo's background colour built from the mesh outline (`edgefeather.js`), with no model and no mask. With it on, "Clean the edges" runs at most 1.5 times a second. It cannot see hair, so it softens a thin strip all round the head. Whether it saves frames or looks right is not yet measured (`BENCHMARKS.md` section 11 has the baseline to compare against).
+
+## Photos at several angles (Stage 3)
+
+**Status: built and tested on synthetic numbers and in Chromium with a fake camera; not seen on a real webcam; fps not measured on
+the target laptop.** Option "Photos at several angles", **off by default**. It aims at the top expected defect, side views
+stretching one front-on photo. The owner's Stage 2 ranking (`scripts/facemesh_baseline.md`) had not arrived when this was built.
+
+**What it does.**
+- With the option on, "Add a side photo" adds photos of the user with the head turned to one side.
+- The toggle sits at the end of the control bar. The "Add a side photo" button, the side-photo list and the explanation
+  appear at the end of the page only while the option is on, so with it off the page keeps its height. The dashboard tests
+  showed that 128 px of extra page height was enough to scroll the label out of the window after a gallery click.
+- Scrolling down to those controls takes the "Virtual face" label out of view, which pauses the photo (the existing label
+  guard) until you scroll back.
+- Each frame, the face is drawn from the photo whose head turn is nearest the live head's (`webapp/src/facemesh/angles.js`).
+- It switches only when another photo is at least 5° nearer, with a 200 ms crossfade: the old photo is drawn fully, the new one
+  over it at the fade's opacity.
+- **Only the face layer** changes photo. The head ring (hair, ears, neck), the moving hair and the body keep the front photo.
+- "Hold the mask when turning" measures the turn from the photo being drawn, so a 30° photo is not faded out at 30°. With the
+  option off, the hold measures from facing the camera, exactly as before.
+
+**Limits on side photos.**
+- A side photo's turn is measured from its own landmarks (signed yaw from the cheek points).
+- Refused, with the reason in the status line:
+  - turned more than **45°**;
+  - within **8°** of the front photo's turn;
+  - a fifth side photo (at most 4 per front photo);
+  - the same file twice.
+- No photo-quality advice is shown for side photos: its "face the camera" tip would be wrong for them.
+
+**Consent.**
+- Every side photo has its own signed consent bound to its own hash, asked like any photo.
+- The page checks the front photo and its side photos in **one** request every 2 s, `POST /api/facemesh/consent/check-batch`.
+  Each record is checked on its own on the server, at most 5 per request. The request carries records and hashes only.
+- A side photo the server refuses is dropped and never drawn again, not even to fade out.
+- A side photo whose check is merely late is left out of the choice until it is confirmed.
+- Side photos end with the front photo they belong to, with Stop, and when the option is turned off.
+
+**Loading, and the 6 s grace.**
+- Side photos load **one at a time** (`SerialLoader`), with one image face model that stays open while the option is on.
+- While a side photo is decoded and its face found (the part that can block the page, **not** while its consent question is open),
+  the 2 s timed check treats a verdict that is only late (no confirmation for 6 s) as **pause**, not end (`gateVerdict`). A
+  face-model load can block the page for seconds, and that alone must not end a consent the server never refused.
+- A refusal, a revocation or an expiry still ends the photo at once.
+- A paused photo is not drawn until the server confirms it again.
+- Node test: a 9 s block with no answer pauses and does not end. After the load, a fresh confirmation brings the photo back. The
+  same silence with no load in progress still ends it.
+
+**Privacy.**
+- No new read-back. Side photos reach the graphics card through the compositor's one photo-upload helper (`_uploadPhoto`), so the
+  file still has exactly six `texImage2D` calls.
+- The camera is still named only in `uploadCamera`.
+- `angles.js` touches no DOM, pixels or network (source check).
+- The Chromium test counts zero read-backs by the page with a side photo in use.
+
+**Tests.**
+- `webapp/test/angles.test.mjs`, 15 Node tests: yaw sign and size; the 45°, 8° and count limits and their messages; picker start,
+  crossfade timing, 5° hysteresis, a dropped photo never drawn; one-at-a-time loading; the grace rule; the batched check and a
+  refusal ending only its photo; hold measured from the drawn photo; the compositor's draw order (ring from the front photo, face
+  twice mid-fade), its fallbacks, and no texture upload on a switch; source checks.
+- `tests/test_facemesh_consent.py`: the batched check, record by record, a malformed batch, the route behind the token, a full
+  batch fitting the 4 KiB JSON limit.
+- `tests/test_facemesh_angles_browser.py`, Chromium with a fake camera, and only these:
+  - the option is off by default;
+  - a same-facing side photo is refused with the reason shown;
+  - an accepted side photo asks for its own consent;
+  - the timed check becomes one batched request;
+  - there are zero read-backs;
+  - turning the option off ends the side photo's consent.
+  - Its "turned" photos are perspective warps of the test portrait (about ±8°), not real side views.
+
+**Not verified (not seen on a real webcam).** How it looks:
+- whether a side photo at 20 to 45° stretches less than the front photo;
+- whether the crossfade reads as a smooth turn or as a visible swap;
+- seams between a side-photo face and the front-photo ring and hair;
+- different light or glasses between photos.
+
+Also not verified: the real fps. The estimate is no cost in steady state (one face draw, as before) and one extra face draw
+(about 4 ms on the UHD 620, from the 24.6 to 22.4 fps above) during each 200 ms crossfade, not measured. **The 20 fps gate
+applies: if the page shows "20 fps gate: not met" with the option on, leave it off.**
+
+### Fix (2026-10-21): the face now returns to the front photo
+
+Found by new sequence tests in `webapp/test/angles.test.mjs`: once a side photo was drawn, facing the camera again never brought the
+front photo back (the front photo's id is the empty string, and the picker's `best && ...` treated it as "no candidate"). Fixed with
+`best !== null`; a regression test covers it. **Not yet seen on a real webcam.**
+
+### Webcam check (the owner, on the laptop; nothing here has been tried with a real camera yet)
+
+Needs: a front photo of yourself and one side photo, both of you, both consented in the page. The side photo should be turned 15 to 30
+degrees (the page refuses one closer than 8 degrees to the front photo, or turned more than 45). Close other browser windows.
+
+1. `realx serve`, open `/facemesh`, allow the camera, "Choose my photo" with the front photo, give consent.
+2. Click "Photos at several angles", "Add a side photo", choose the side photo, give its own consent. The list shows it with its angle.
+3. Face the camera for 5 s: the front photo is drawn. Note the "frames per second" value (or click "Measure 10 s").
+4. Turn your head slowly towards the side the photo shows, over about 3 s, to about 30 degrees. Expected: one short crossfade
+   (0.2 s) to the side photo past roughly the middle of the two angles; the hair, ears and neck stay from the front photo.
+5. Hold 5 s, then turn slowly back to face the camera. Expected: one crossfade back to the front photo (this is what the 2026-10-21 fix
+   repairs).
+6. Turn the OTHER way: the side photo must not appear. **If it appears when you turn the other way, the side photo file is mirrored**
+   (many phones save front-camera selfies mirrored): note it, it is a defect to fix, not your mistake.
+7. Wobble your head a little around halfway: no flicker between the two photos.
+8. Throughout: the "Virtual face" label stays on screen, and the fps stays at or above 20 (note the lowest value you see during a turn:
+   during the 0.2 s crossfade the face is drawn twice).
+9. Turn "Photos at several angles" off: the side photo's consent ends and the front photo stays.
+
+Send back: for steps 3 to 8, what you saw, the fps, and a screenshot during a turn if something looks wrong.

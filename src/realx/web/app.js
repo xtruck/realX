@@ -42,6 +42,8 @@ try {
 function saveStudio() {
   try { localStorage.setItem(STUDIO_KEY, JSON.stringify(studio)); } catch (e) { /* simply not remembered */ }
 }
+// the camera the person chose, passed to the Photo face page (the page checks the length and falls back to a non-infrared camera)
+const photoUrl = () => (studio.cam ? `/facemesh?cam=${encodeURIComponent(studio.cam.id)}` : "/facemesh");
 function trackerUrl() {
   const p = new URLSearchParams({
     track: "1", publish: "1", preview: "1",
@@ -72,7 +74,7 @@ function applyMode(next) {
   const isCharacter = mode === "character", isBody = mode === "body", isPhoto = mode === "photoface";
   const noPicture = isCharacter || isBody || isPhoto;   // none of them draws the server's MJPEG picture
   if (isPhoto) {
-    if (!photoFrame.getAttribute("src")) photoFrame.setAttribute("src", "/facemesh");
+    if (!photoFrame.getAttribute("src")) photoFrame.setAttribute("src", photoUrl());
   } else {
     releasePhotoFace();
   }
@@ -93,6 +95,7 @@ function applyMode(next) {
   if (!noPicture && !view.getAttribute("src")) view.src = "/stream.mjpg";
   character.hidden = !isCharacter;
   tracker.hidden = !isBody;
+  $("cameraPanel").hidden = !(isBody || isPhoto);   // both open the camera in this browser, so both need the choice
   view.hidden = noPicture || lastFrames < 1;
   if (isBody || isPhoto) $("notice").hidden = true;
   $("obs").hidden = !(isCharacter || isBody);   // Photo face is not an OBS source yet
@@ -112,6 +115,10 @@ function reloadTracker() {   // a new camera, quality or outfit needs a fresh tr
   tracker.setAttribute("src", trackerUrl());
 }
 $("frameFull").addEventListener("change", reloadTracker);
+function reloadCamera() {   // a new camera: reload whichever page is using the browser's camera
+  if (mode === "body") reloadTracker();
+  else if (mode === "photoface") photoFrame.setAttribute("src", photoUrl());
+}
 
 // --- studio controls --------------------------------------------------------------------------------
 function fillDevices(select, offLabel, noun, list, chosen) {
@@ -148,7 +155,7 @@ syncView();
 
 $("camSelect").addEventListener("change", (e) => {
   studio.cam = e.target.value ? { id: e.target.value, label: optionLabel(e.target) } : null;
-  saveStudio(); reloadTracker();
+  saveStudio(); reloadCamera();
 });
 $("micSelect").addEventListener("change", (e) => {
   studio.mic = e.target.value ? { id: e.target.value, label: optionLabel(e.target) } : null;
@@ -191,22 +198,27 @@ function parseStats(d) {
 }
 function onDevices(d) {
   const ok = (l) => Array.isArray(l) && l.length <= 32 && l.every((x) => !!device(x));
-  if (!ok(d.cameras) || !ok(d.mics)) return;
-  const cams = d.cameras.map(device), mics = d.mics.map(device);
+  const hasMics = d.mics !== undefined;   // the Photo face page reports cameras only
+  if (!ok(d.cameras) || (hasMics && !ok(d.mics))) return;
+  const cams = d.cameras.map(device), mics = hasMics ? d.mics.map(device) : null;
   const missing = studio.cam && !cams.some((c) => c.id === studio.cam.id);
   if (missing) { studio.cam = null; saveStudio(); }          // the remembered camera is gone: back to the default
   fillDevices($("camSelect"), "Default camera", "Camera", cams, studio.cam);
-  fillDevices($("micSelect"), "Off", "Microphone", mics, studio.mic);
-  if (missing) reloadTracker();
+  if (mics) fillDevices($("micSelect"), "Off", "Microphone", mics, studio.mic);
+  if (missing) reloadCamera();
 }
 let lastStats = null, lastStatsAt = 0, lastBody = null;
 const STALE_MS = 4000;
 window.addEventListener("message", (ev) => {
   try {
-    if (ev.origin !== location.origin || !tracker.contentWindow || ev.source !== tracker.contentWindow) return;
+    // the tracking page may report anything documented below; the Photo face page may only report its cameras
+    const fromTracker = !!tracker.contentWindow && ev.source === tracker.contentWindow;
+    const fromPhoto = !!photoFrame.contentWindow && ev.source === photoFrame.contentWindow;
+    if (ev.origin !== location.origin || !(fromTracker || fromPhoto)) return;
     const d = ev.data;
     if (!d || typeof d !== "object" || Array.isArray(d)) return;
     if (d.type === "realx-devices") onDevices(d);
+    else if (!fromTracker) return;
     else if (d.type === "realx-gesture") {
       const names = { Closed_Fist: "fist", Thumb_Up: "thumb up", Victory: "V sign", Open_Palm: "open palm" };
       if (names[d.gesture] && typeof d.micMuted === "boolean")
@@ -251,6 +263,11 @@ function bodyStatusText(s) {
 }
 document.querySelectorAll(".emote").forEach((b) => b.addEventListener("click", () =>
   api("/api/emote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: b.dataset.emote }) }).catch(() => {})));
+$("previewOpen").addEventListener("click", () => {
+  // same origin, so the cookie carries the access token; noopener keeps the new window from reaching this page
+  const w = window.open("/preview", "realx-output-preview", "popup,width=960,height=540,noopener");
+  if (!w) { $("notice").hidden = false; $("notice").textContent = "The browser blocked the preview window. Allow pop-ups for this page and try again."; }
+});
 $("obsCopy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("obsUrl").value); $("obsCopy").textContent = "Copied"; }
   catch (e) { $("obsUrl").select(); $("obsCopy").textContent = "Press Ctrl+C"; }
@@ -309,7 +326,11 @@ async function poll() {
       : s.error ? "Needs attention" : live ? "Live" : "Waiting for video";
     if (s.error && !inBody && !inPhoto) {
       $("notice").hidden = false;
-      $("notice").textContent = s.error + " Choose a demo source or check your camera.";
+      const info = s.error_info;
+      $("notice").textContent = info
+        ? `${info.title}. ${info.hint}${info.retryable ? " realX is trying again." : ""}`
+        : s.error + " Choose a demo source or check your camera.";
+      $("notice").title = info && info.detail ? `${info.code}: ${info.detail}` : "";
     }
     $("srcLabel").textContent = inBody ? "This computer's camera" : s.config.source === "camera" ? "Camera" : "Demo footage";
     syncControls(s.config);

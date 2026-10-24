@@ -6,6 +6,7 @@ hardware, and never assume CUDA: "do not assume that an Intel integrated GPU sup
 """
 
 import json
+import os
 
 import pytest
 
@@ -162,3 +163,19 @@ def test_the_hardware_api_refuses_a_request_without_the_token():
         assert c.getresponse().status == 401
     finally:
         srv.stop()
+
+
+def test_windows_cpu_probe_needs_no_powershell(monkeypatch):
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("Windows registry and kernel32 probe")
+
+    def no_powershell(*a, **k):
+        raise AssertionError("PowerShell must not be started when the registry and kernel32 answer")
+
+    monkeypatch.setattr(hardware.subprocess, "run", no_powershell)
+    cpu = hardware._cpu()
+    assert cpu["name"] and len(cpu["name"]) > 3
+    assert cpu["threads"] == os.cpu_count()
+    assert 1 <= cpu["cores"] <= cpu["threads"]

@@ -40,6 +40,10 @@
   .thumb { width: 64px; height: 64px; padding: 0; overflow: hidden; border-radius: 10px; }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .thumb-remove { position: absolute; right: -6px; top: -6px; width: 22px; height: 22px; padding: 0; border-radius: 50%; line-height: 1; }
+  #angles { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; align-items: center; }
+  #angles[hidden] { display: none; }
+  #angles .thumb-cell { display: flex; flex-direction: column; align-items: center; font-size: 12px; }
+  .angle-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; display: block; }
 </style>
 </head>
 <body>
@@ -71,6 +75,7 @@
     <button id="headBtn" type="button" aria-pressed="false" aria-describedby="headNote">Whole head (hair, ears, neck)</button>
     <button id="handsTop" type="button" aria-pressed="false" aria-describedby="handsNote">Show my hands on top</button>
     <button id="eyesBtn" type="button" aria-pressed="false">Use my live eyes</button>
+    <button id="softBtn" type="button" aria-pressed="false">Soft edges</button>
     <button id="seamBtn" type="button" aria-pressed="false">Clean the edges</button>
     <button id="glassesBtn" type="button" aria-pressed="false">Hide the photo's glasses</button>
     <button id="skinBtn" type="button" aria-pressed="false" aria-describedby="handsNote">Match my hands' skin to the photo</button>
@@ -84,6 +89,7 @@
     <label>Cover my clothes <input id="coverClothes" type="range" min="0" max="40" value="0" step="5"> <span id="coverClothesValue">0%</span></label>
     <button id="hairBtn" type="button" aria-pressed="false" aria-describedby="hairNote">Hair that moves</button>
     <label>Hair reach <input id="hairReach" type="range" min="30" max="100" value="55" step="5"> <span id="hairReachValue">55%</span></label>
+    <label>Hair halo <input id="hairHalo" type="range" min="0" max="100" value="50" step="10"> <span id="hairHaloValue">50%</span></label>
     <button id="keepFace" type="button" aria-pressed="true">Keep my eyes and mouth</button>
     <label>Match the webcam's look <input id="webcamLook" type="range" min="0" max="100" value="60" step="10"> <span id="webcamLookValue">60%</span></label>
     <label>Mouth patch <input id="mouthPatch" type="range" min="0" max="100" value="50" step="10"> <span id="mouthPatchValue">50%</span></label>
@@ -95,6 +101,7 @@
     <button id="mirror" type="button" aria-pressed="true">Mirror</button>
     <button id="go" type="button" disabled>Measure 10 s</button>
     <span id="gate">measuring</span>
+    <button id="anglesBtn" type="button" aria-pressed="false" aria-describedby="anglesNote" title="Side photos of yourself, each with its own consent, drawn when you turn your head (off by default)">Photos at several angles</button>
   </div>
   <p class="note" id="headNote">Whole head (off by default): hair, ears, the top of the forehead and the neck also come from your photo, softly blended.
     It loads a 16 MB model that cuts your <em>photo</em> (not the camera) into hair, skin and background once, and may cost some speed: watch the frames per second.</p>
@@ -131,6 +138,16 @@
   </div>
   <p id="status" role="status"></p>
   <p id="measure"></p>
+  <!-- Stage 3: shown only while the option is on; off, the page keeps its height, so nothing scrolls the label away -->
+  <div id="angleBar" hidden>
+    <button id="angleAdd" type="button" disabled aria-describedby="anglesNote">Add a side photo</button>
+    <input id="angleFile" type="file" accept="image/*" hidden>
+  </div>
+  <div id="angles" hidden role="group" aria-label="Your side photos"></div>
+  <p class="note" id="anglesNote" hidden>Photos at several angles (off by default): add photos of <em>yourself</em> with your head turned 15° to 45° to one side.
+    When you turn your head, your face is drawn from the side photo nearest your turn, so side views stretch less. Each side photo needs its own consent, like any photo,
+    and photos turned more than 45° are refused. Only the face changes; hair, ears, neck and body still come from your front photo. Side photos load one at a time.
+    It is a prototype: watch the frames per second, and leave it off if the 20 fps gate is not met.</p>
 </main>
 <script src="/facemesh.bundle.js"></script>
 </body>

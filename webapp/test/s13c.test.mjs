@@ -143,7 +143,7 @@ test("with no mask, an option off or a stale answer the compositor draws no seam
   // the amount that reaches the compositor is 0 in all of these (see stepSeams in page.js): option off or no face -> 0; failed -> 0; stale -> freshness 0
   const page = code("page.js");
   assert.ok(page.includes("if (!seamOn || !shown) { compositor.setSeamAmount(0, null)"));
-  assert.ok(page.includes("seamSeg.failed ? 0 : freshness(now - seamAt, seamHz)"));
+  assert.ok(page.includes("seamSeg.failed ? 0 : freshness(now - seamAt, edgeRate(seamHz, softOn))"));
   const comp = code("compositor.js");
   assert.ok(comp.includes("if (!this.seam.ready || !z || !(this.seam.amount > 0.002)) return 0;"));
 });

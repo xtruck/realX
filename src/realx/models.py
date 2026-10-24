@@ -7,6 +7,7 @@ SHA-256 so a swapped or corrupted file is rejected.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import os
 import tempfile
 import urllib.request
@@ -168,7 +169,7 @@ def ensure_model(name: str, download: bool = True) -> Path:
         except ModelError as exc:
             log.warning("model %s: download from %s refused: %s", name, host, rlog.clip(exc))
             failures.append(str(exc))
-        except OSError as exc:  # network error, HTTP error status, timeout
+        except (OSError, http.client.HTTPException, ValueError) as exc:  # network error, HTTP status, timeout, truncated response
             log.warning("model %s: download from %s failed: %s", name, host, rlog.clip(exc))
             failures.append(f"{spec.filename}: {url.split('/')[2]}: {exc}")
     raise ModelError("; ".join(failures))

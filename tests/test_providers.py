@@ -282,3 +282,22 @@ def test_a_real_model_loads_through_onnxruntime_on_the_cpu_provider():
         session = cache.get(path, [CPU])
         assert session.get_inputs(), "a real inference session with inputs"
         assert cache.info(path, [CPU]).provider == CPU
+
+
+def test_pick_providers_full_order_with_every_provider_available():
+    everything = [CPU, "CoreMLExecutionProvider", "OpenVINOExecutionProvider", DML, CUDA, TRT]
+    assert pick_providers(everything) == [
+        TRT,
+        CUDA,
+        DML,
+        "OpenVINOExecutionProvider",
+        "CoreMLExecutionProvider",
+        CPU,
+    ]
+
+
+def test_pick_providers_cuda_ranks_above_directml_and_input_order_is_irrelevant():
+    assert pick_providers([DML, CUDA]) == [CUDA, DML, CPU]
+    assert pick_providers([CUDA, DML]) == [CUDA, DML, CPU]
+    assert pick_providers([CPU, DML, "Unknown"]) == [DML, CPU]
+    assert pick_providers([DML, CPU, DML]) == [DML, CPU]

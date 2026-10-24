@@ -343,7 +343,6 @@ What this supports, and no more:
   body reached 20 in some runs. A reliable answer needs runs on an idle machine (close every other browser) and several repeats.
 * **Not covered:** a real hand (so the hands-on-top and wiping costs), a real webcam, thermal drift over minutes, battery or power-saver mode.
 
-
 ## 10. The page pipeline after the pose cadence change (2026-10-17)
 
 Same tool as section 9 (`scripts/bench_facemesh.py --headed --warmup 15`), real GPU (ANGLE Intel UHD 620 D3D11), 12 other Chrome processes
@@ -417,3 +416,46 @@ full 5 passes a second, and a run with `--edges off` (#24) kept it off for every
 **S13c explains the whole slowdown** (no commit bisect needed): its passes cost about 27 ms each, but five a second double the face model's
 time on the shared GPU. Without it every step meets the 20 fps gate. Owner's decision (2026-10-20): S13c is now **off by default**, and
 lower rates are to be measured with `scripts/bench_facemesh.py --headed --edges-hz 2` (and `1`), which loads the page as `/facemesh?seamHz=2`.
+
+## 12. Stage 3 "Photos at several angles" (owner's laptop, 2026-10-21, branch `stage3-angle-photos`)
+
+`scripts/bench_facemesh.py --headed --edges off`, UHD 620 (Direct3D11). **Not representative**: 12 other Chrome processes were running.
+The side photo is a perspective warp of the bench portrait (`side-38.png`), not a real side view, and the fake camera never turns its
+head, so the page kept drawing the front photo: the crossfade between two face layers while turning is **not** measured.
+
+| Step | fps (median) | face ms |
+|---|---|---|
+| face only, Clean the edges off | 27.5 | 19.5 |
+| face only + one side photo (head not turning) | 27.8 | 18.7 |
+| + body and clothes | 23.7 | 23.0 |
+| + hair that moves | 23.5 | 26.0 |
+| + hands on top | 21.5 | 23.9 |
+| + a spill | 23.2 | 22.9 |
+
+Reading: with the head still, a loaded side photo (its upload, consent and batched checks) costs nothing measurable, and every step met
+the 20 fps gate. Still open for the Stage 3 gate: a quiet-machine run, and the cost while the head actually turns (real webcam).
+
+**Clean rerun: not done (2026-10-21).** The section 12 run must be repeated on the owner's laptop with every other Chrome window closed
+(`scripts/bench_facemesh.py --headed --edges off --json facemesh-stage3.json`, branch `stage3-angle-photos`). It cannot be done from the
+cloud container: no access to the laptop, and the container's Chromium only has a software renderer (SwiftShader), whose numbers say nothing
+about the UHD 620. No estimate replaces it.
+
+## 2026-10-21 idle-machine run (Intel UHD 620, no discrete GPU)
+
+Machine: i5-8365U, 8 threads, Intel UHD 620 (integrated, 1 GB), Windows 11 10.0.26300, Python 3.12.15, OpenCV 5.0.0, no onnxruntime.
+Conditions: Chrome closed, CPU load under 20% for three checks in a row before each run, no `WARNING` printed. A first run
+taken while Windows Defender was scanning (CPU 82% busy) gave about half these numbers and was discarded.
+
+`realx bench` (detect > track > one_euro > rig), face found in 100% of frames:
+
+| Resolution | One frame at a time | At 30 fps offered | Lost | Stream frame mean / p95 |
+|---|---|---|---|---|
+| 320x240 | 116.0 fps | 180/180 | 0 | 9.5 / 13.4 ms |
+| 640x480 | 37.8 fps | 180/180 | 0 | 20.9 / 28.9 ms |
+| 1280x720 | 29.4 fps | 177/180 | 3 | 31.6 / 39.1 ms |
+
+Browser tracker (`scripts/bench_tracking.py`, 640x480, windowed Chrome 155, 20 s): tracker 30.0 fps median; delegates pose/hands/face all
+GPU (the integrated one); per model median pose 25.7 ms, face 23.5 ms, hands 31.1 ms; models ran per second pose 15.0, face 7.5, hands 7.0;
+character rendered at 46.5 fps while tracking. Hands: no hand was in view, so the hand figures are not a real-hand measurement.
+
+Not covered: a discrete GPU (CUDA/TensorRT), a real hand, a thermal soak. Raw output: `bench.json`, `tracking.json` (kept outside the repo).

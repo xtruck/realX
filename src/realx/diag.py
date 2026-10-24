@@ -53,9 +53,10 @@ def process_rss_bytes() -> int | None:
             counters.cb = ctypes.sizeof(counters)
             kernel = ctypes.windll.kernel32
             kernel.GetCurrentProcess.restype = wintypes.HANDLE
-            ok = ctypes.windll.psapi.GetProcessMemoryInfo(
-                kernel.GetCurrentProcess(), ctypes.byref(counters), counters.cb
-            )
+            get_info = ctypes.windll.psapi.GetProcessMemoryInfo
+            get_info.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]  # the pseudo-handle does not fit a C int
+            get_info.restype = wintypes.BOOL
+            ok = get_info(kernel.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
             return int(counters.WorkingSetSize) if ok else None
         import resource  # other Unix: only the peak is available
 

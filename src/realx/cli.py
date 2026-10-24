@@ -30,15 +30,20 @@ def _models(action: str) -> int:
     from realx.models import BLOCKED, MANIFEST, ModelError, ensure_model, models_dir
 
     print(f"models folder: {models_dir()}")
+    failed: list[str] = []
     for name, spec in MANIFEST.items():
         try:
             path = ensure_model(name, download=(action == "fetch"))
             status = f"ready ({path.name})"
         except ModelError as exc:
-            status = f"missing: {exc}"
-        print(f"  {name:12s} {spec.license:6s} commercial_ok={spec.commercial_ok}  {status}")
+            status = f"{'failed' if action == 'fetch' else 'missing'}: {exc}"
+            failed.append(name)
+        print(f"  {name:12s} {spec.license:10s} commercial_ok={spec.commercial_ok}  {status}")
     for name, why in BLOCKED.items():
         print(f"  {name:12s} BLOCKED  {why}")
+    if action == "fetch" and failed:
+        print(f"fetch incomplete, not ready: {', '.join(failed)}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -50,23 +55,50 @@ def _cohost(args) -> int:
     try:
         if args.action == "grant":
             g = vault.grant(args.name, days=args.days, agreed=args.friend_agreed)
-            print(f"consent saved: {g.path}")
-            print(f"REVOKE CODE (give it to {g.display_name}, it is shown only once): {g.revoke_code}")
+            # The code is plain ASCII and shown first, before any text that could fail to encode. It is also
+            # saved to a file, so an output problem can never leave a live consent with no way to revoke it.
+            code_file = _save_revoke_code(vault.root, g.record.record_id, g.revoke_code)
+            _say(f"REVOKE CODE (shown only once): {g.revoke_code}")
+            if code_file is not None:
+                _say(f"the code is also saved in {code_file}; give it to {g.display_name}, then delete that file")
+            _say(f"consent saved: {g.path}")
         elif args.action == "list":
             for r in vault.list():
-                print(f"  {r['id']}  {r['name']:20s} {r['state']}")
+                _say(f"  {r['id']}  {r['name']:20s} {r['state']}")
         elif args.action == "check":
             _, name = vault.check(args.file)
-            print(f"valid: {name}")
+            _say(f"valid: {name}")
         elif args.action == "revoke":
             vault.revoke(args.id, args.code)
-            print("revoked: this person's likeness can no longer be used")
+            _say("revoked: this person's likeness can no longer be used")
     except (ConsentError, ValueError) as exc:
-        print(f"{exc}", file=sys.stderr)
+        _say(f"{exc}", sys.stderr)
         if args.action == "grant" and not args.friend_agreed:
-            print(f"Pass --friend-agreed only if true: {AGREEMENT}", file=sys.stderr)
+            _say(f"Pass --friend-agreed only if true: {AGREEMENT}", sys.stderr)
         return 2
     return 0
+
+
+def _say(text: str, stream=None) -> None:
+    """Print text that may hold a person's name; characters the output cannot show become '?', never an error."""
+    stream = stream or sys.stdout
+    try:
+        print(text, file=stream)
+    except UnicodeEncodeError:
+        enc = getattr(stream, "encoding", None) or "ascii"
+        print(text.encode(enc, errors="replace").decode(enc), file=stream)
+
+
+def _save_revoke_code(root, record_id: str, code: str):
+    """Write the revoke code to a private file next to the consent record. None if that is not possible."""
+    path = root / f"{record_id}.revoke-code.txt"
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(code + "\n")
+    except OSError:
+        return None
+    return path
 
 
 def _voices() -> int:
@@ -82,7 +114,13 @@ def _voice(src: str, dst: str, semitones: float, preset: str | None = None) -> i
     from realx.audio import offline
     from realx.audio.wavio import read_wav
 
-    samples, rate = read_wav(src)
+    import wave
+
+    try:
+        samples, rate = read_wav(src)
+    except (OSError, ValueError, EOFError, wave.Error) as exc:
+        print(f"cannot read {src}: {exc}", file=sys.stderr)
+        return 2
     try:
         _, pcm = offline.convert(samples, rate, semitones, preset=preset)
     except ValueError as exc:
@@ -96,7 +134,7 @@ def _voice(src: str, dst: str, semitones: float, preset: str | None = None) -> i
     return 0
 
 
-def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None) -> int:
+def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None, vcam=None) -> int:
     from realx.models import ModelError, ensure_model
     from realx.server import Engine, Server
 
@@ -106,7 +144,7 @@ def _serve(port: int, source: str, open_browser: bool, avatar: str | None = None
         print(f"cannot start: {exc}", file=sys.stderr)
         return 2
     try:
-        server = Server(Engine(source=source), port=port, avatar_path=avatar)
+        server = Server(Engine(source=source, vcam=vcam), port=port, avatar_path=avatar)
     except (OSError, ValueError) as exc:
         print(f"cannot start: {exc}", file=sys.stderr)
         return 2
@@ -182,6 +220,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--avatar", default=None, help="your own .vrm character (default: the bundled original, Pip)")
     s.add_argument("--no-browser", action="store_true")
     s.add_argument("--offline", action="store_true", help="never download models (same as REALX_OFFLINE=1)")
+    s.add_argument("--virtual-camera", choices=("pyvirtualcam", "softcam"), default=None,
+                   help="also send the avatar picture, with its label and watermark, to a virtual camera on this PC (off by default)")
+    s.add_argument("--softcam-dll", default=None, help="absolute path to softcam.dll (for --virtual-camera softcam)")
+    s.add_argument("--vcam-size", default="1280x720", help="virtual camera size WxH, multiples of four (default 1280x720)")
 
     args = parser.parse_args(argv)
     try:
@@ -206,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "voice":
         return _voice(args.input, args.output, args.semitones, args.preset)
     if args.command == "cohost":
+        needs = {"grant": ("name",), "check": ("file",), "revoke": ("id", "code")}.get(args.action, ())
+        for opt in needs:
+            if not getattr(args, opt):
+                parser.error(f"cohost {args.action} needs --{opt}")  # a clean usage error, exit 2
         return _cohost(args)
     if args.command == "voices":
         return _voices()
@@ -220,7 +266,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         if args.offline:
             os.environ["REALX_OFFLINE"] = "1"
-        return _serve(args.port, args.source, not args.no_browser, args.avatar)
+        vcam = None
+        if args.virtual_camera:
+            from realx.vcam import VirtualCamera, VirtualCameraConfig
+
+            try:
+                w, h = (int(v) for v in args.vcam_size.lower().split("x"))
+                vcam = VirtualCamera(VirtualCameraConfig(enabled=True, backend=args.virtual_camera, width=w, height=h,
+                                                         softcam_dll=args.softcam_dll))
+            except ValueError as exc:
+                parser.error(f"virtual camera: {exc}")
+        return _serve(args.port, args.source, not args.no_browser, args.avatar, vcam)
     return _selftest()
 
 

@@ -193,10 +193,15 @@ def test_outage_duration_and_count_are_recorded():
 
 
 def test_process_memory_is_readable_on_this_platform():
+    import sys
+
     from realx.diag import process_rss_bytes
 
     rss = process_rss_bytes()
-    assert rss is None or rss > 1_000_000
+    if sys.platform == "win32":
+        assert isinstance(rss, int) and rss > 1_000_000  # None here hid a ctypes argtypes bug (B4-11)
+    else:
+        assert rss is None or rss > 1_000_000
 
 
 # --- the engine reports them ------------------------------------------------------------------------------

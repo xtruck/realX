@@ -48,7 +48,10 @@ def test_stats_say_how_the_token_was_chosen_and_never_show_it(monkeypatch):
     monkeypatch.delenv("REALX_TOKEN", raising=False)
     e1 = Engine(source="demo:static")
     s1 = Server(e1, port=0)
-    assert e1.stats()["security"] == {"token": "per-run", "watermark": True}
+    sec = e1.stats()["security"]
+    assert sec["token"] == "per-run"
+    assert sec["watermark"] is False  # served MJPEG/avatar has no watermark stage (B3-03)
+    assert sec["note"]
     e2 = Engine(source="demo:static")
     s2 = Server(e2, port=0, token=TOKEN)
     out = e2.stats()

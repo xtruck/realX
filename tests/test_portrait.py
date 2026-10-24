@@ -210,11 +210,11 @@ def test_the_stage_checks_consent_itself_on_every_frame_even_if_the_gate_proof_i
     stage = create("portrait_animate", portrait=png, record=record, store=store, engine="synthetic_warp")
     stage.setup()
     ok = frame()
-    grant(ok, record.subject_id)
+    grant(ok, store, record, record.scope)
     stage.process(ok)
-    store.revoke(record.record_id)
     stale = frame()
-    grant(stale, record.subject_id)  # a gate stage that did not re-check would still vouch for this frame
+    grant(stale, store, record, record.scope)  # a gate stage that did not re-check would still vouch for this frame
+    store.revoke(record.record_id)
     with pytest.raises(ConsentError, match="revoked"):
         stage.process(stale)
 

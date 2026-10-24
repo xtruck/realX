@@ -116,8 +116,14 @@ def guided_filter(guide: np.ndarray, src: np.ndarray, radius: int, eps: float) -
 
 
 def smoothstep(x: np.ndarray, lo: float, hi: float) -> np.ndarray:
-    t = np.clip((x - lo) / (hi - lo), 0.0, 1.0)
-    return t * t * (3.0 - 2.0 * t)
+    t = np.subtract(x, lo)  # one new array; the rest happens in place
+    t *= 1.0 / (hi - lo)
+    np.clip(t, 0.0, 1.0, out=t)
+    u = t * -2.0
+    u += 3.0
+    u *= t
+    u *= t
+    return u
 
 
 class PersonSegmenter:
@@ -157,10 +163,11 @@ class PersonSegmenter:
         s = min(1.0, _WORK_SIDE / max(h, w))
         ww, wh = max(16, int(round(w * s))), max(16, int(round(h * s)))
         work = cv2.resize(rgb, (ww, wh), interpolation=cv2.INTER_AREA) if s < 1 else rgb
-        guide = cv2.cvtColor(work, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+        guide = cv2.cvtColor(work, cv2.COLOR_RGB2GRAY).astype(np.float32)
+        guide *= 1.0 / 255.0
         coarse = cv2.resize(prob, (ww, wh), interpolation=cv2.INTER_LINEAR)
         refined = guided_filter(guide, coarse, radius=max(3, ww // 90), eps=2e-3)
-        alpha = smoothstep(refined, self.lo, self.hi).astype(np.float32)
+        alpha = smoothstep(refined, self.lo, self.hi).astype(np.float32, copy=False)
         if (ww, wh) != (w, h):
             alpha = cv2.resize(alpha, (w, h), interpolation=cv2.INTER_LINEAR)
         return alpha
@@ -228,7 +235,13 @@ class BackgroundReplace:
     def process(self, ctx: FrameContext) -> FrameContext:
         rgb = ctx.pixels
         alpha = self._seg.matte(rgb)[..., None]
-        out = rgb.astype(np.float32) * alpha + self._backdrop(rgb).astype(np.float32) * (1.0 - alpha)
-        ctx.pixels = np.clip(out + 0.5, 0, 255).astype(np.uint8)
+        backdrop = self._backdrop(rgb)
+        # backdrop + alpha * (rgb - backdrop): one float32 buffer, no astype copies of the two frames
+        out = np.subtract(rgb, backdrop, dtype=np.float32)
+        out *= alpha
+        out += backdrop
+        out += 0.5
+        np.clip(out, 0, 255, out=out)
+        ctx.pixels = out.astype(np.uint8)
         ctx.meta["background"] = {"mode": self.mode, "model": "pphumanseg", "person_fraction": float(alpha.mean())}
         return ctx

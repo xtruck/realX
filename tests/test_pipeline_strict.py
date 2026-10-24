@@ -13,6 +13,7 @@ from realx.types import FrameContext
 
 class Plain:
     name = "plain"
+    role = "neutral"  # strict mode: a class realX did not register must declare what it is
 
     def setup(self) -> None: ...
     def process(self, ctx): return ctx
@@ -109,3 +110,13 @@ def test_a_pipeline_is_strict_unless_it_opts_out():
 def test_an_impostor_gate_is_refused_by_default():
     with pytest.raises(PipelineConfigError):
         Pipeline([FakeGate(), Synth(), Disclosure("p"), Watermark(b"x")], allow=[FakeGate, Synth])
+
+
+def test_yunet_detector_is_stateful_so_run_stream_refuses_multiple_workers():
+    from realx.pipeline import Pipeline, PipelineConfigError, run_stream
+    from realx.stages import create
+
+    det = create("detect_yunet")  # no model is loaded until setup()
+    assert getattr(det, "stateful", False) is True
+    with pytest.raises(PipelineConfigError):
+        list(run_stream(Pipeline([det]), iter(()), workers=2))

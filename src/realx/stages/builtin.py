@@ -57,6 +57,13 @@ class TemporalSmoother:
             prev = self._state.get(face.track_id)
             bbox = np.array(face.bbox, dtype=float)
             lm = None if face.landmarks is None else np.array(face.landmarks, dtype=float)
+            if lm is not None and not np.all(np.isfinite(lm)):
+                lm, face.landmarks = None, None  # drop the bad points, keep the box
+                if prev is not None:
+                    prev = self._state[face.track_id] = (prev[0], None, prev[2])
+            if not np.all(np.isfinite(bbox)):
+                self._state.pop(face.track_id, None)  # reset this track's smoothing
+                continue
             if prev is not None:
                 prev_bbox, prev_lm, _ = prev
                 bbox = a * bbox + (1 - a) * prev_bbox
@@ -115,7 +122,12 @@ class OneEuroSmoother:
             box_f, lm_f, _ = entry
             face.bbox = box_f(np.array(face.bbox, dtype=float), t)
             if face.landmarks is not None:
-                face.landmarks = lm_f(np.array(face.landmarks, dtype=float), t)
+                lm = np.array(face.landmarks, dtype=float)
+                if np.all(np.isfinite(lm)):
+                    face.landmarks = lm_f(lm, t)
+                else:
+                    lm_f.reset()
+                    face.landmarks = None  # drop the bad points, keep the box
             self._filters[face.track_id] = (box_f, lm_f, self._tick)
         stale = [k for k, (_, _, seen) in self._filters.items() if self._tick - seen > self.max_age]
         for key in stale:
@@ -149,8 +161,7 @@ class ConsentGate:
         self.__store.verify(self.__record, self.__scope)
 
     def process(self, ctx: FrameContext) -> FrameContext:
-        self.__store.verify(self.__record, self.__scope)
-        grant(ctx, self.__record.subject_id)
+        grant(ctx, self.__store, self.__record, self.__scope)  # verifies, then vouches
         return ctx
 
     def close(self) -> None: ...
@@ -236,6 +247,7 @@ class Disclosure:
 class Watermark:
     name = "watermark"
     is_watermark = True
+    media = "video"
 
     def __init__(self, payload: bytes, key: bytes | None = None) -> None:
         if not payload or len(payload) > watermark.MAX_PAYLOAD:
