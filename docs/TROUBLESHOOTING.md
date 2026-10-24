@@ -46,7 +46,7 @@ fixed one.
 - **"Clean the edges" turned itself off, status line says it was too slow**: one segmenter pass took over 1 s, or two in a row
   over 250 ms. The first pass of a session is never judged (it can take 6 to 8 s on an Intel UHD 620 while the model is prepared).
   Clicking the button tries again. The option is off by default; `/facemesh?seamHz=0.5..5` sets its rate.
-- **Low fps**: other tabs share the GPU; unplug-free laptops on battery run slower. The page shows the delegate (GPU or CPU).
+- **Low fps**: other tabs share the GPU, and a laptop on battery runs slower. The page shows the delegate (GPU or CPU).
   A benchmark that prints "SwiftShader" ran on a software renderer, and its numbers do not count for a real laptop.
 - **The "Virtual face" label must always be on screen.** If it is ever missing, stop and report it.
 
