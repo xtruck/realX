@@ -1,4 +1,4 @@
-# realX roadmap by priority (2026-10-20)
+# realX roadmap by priority (2026-10-20, statuses updated 2026-10-24)
 
 Ordered P0 (security) to P5 (product), as the 2026-10-20 mission asks. `ROADMAP.md` keeps the long-term milestones (M0-M7) and their
 status; this page is the working order. Each item says how it will be known to be done. Nothing moves up a level by being written here:
@@ -20,7 +20,7 @@ an item is "done" only when its check has been run.
 | # | Item | Done when |
 |---|---|---|
 | 1 | PR #18 (two flaky face-mesh browser tests): merged 2026-10-20 (`4347b74`) | done |
-| 2 | S13c auto-off: on the laptop it **did** trigger, on the one-off first pass (6.5-8.3 s; later passes about 26 ms). Fix: branch `seam-warmup-pass` | `seam` stays "on" on the UHD 620 |
+| 2 | S13c auto-off: on the laptop it **did** trigger, on the one-off first pass (6.5-8.3 s; later passes about 26 ms). Fix: the first pass is never judged (PR #23, merged 2026-10-20; the branch `seam-warmup-pass` is still on GitHub). Tested with Node tests and a benchmark note; the owner then turned S13c **off by default** (cost, item P2 2), so "seam stays on" is only true when the option is switched on | done (code); the warm-up freeze itself is P2 1b |
 | 3 | Laptop GPU: the benchmark's renderer is `ANGLE (Intel, UHD Graphics 620, Direct3D11)`, i.e. hardware-accelerated (2026-10-20) | done |
 | 4 | Stage 2 real-webcam checklist (`scripts/facemesh_baseline.md`), then `docs/FACEMESH-DEFECTS.md` | owner's results |
 
@@ -34,11 +34,11 @@ an item is "done" only when its check has been run.
 | 1d | S13c at a lower rate: `bench_facemesh.py --headed --edges-hz 2` and `1` on the laptop; keep the rate that stays over 20 fps, if any | owner's runs |
 | 2 | S13c default: **off** (owner, 2026-10-20) | done |
 | 3 | 10-minute soak, mains and battery | a run with p95 frame time |
-| 4 | Stage 3 20 fps gate (PR #14 stays unmerged until then) | bench with angle photos |
+| 4 | Stage 3 20 fps gate. PR #14 was **merged 2026-10-22** (option off by default), so the gate is now a check to run, not a merge condition. `bench_facemesh.py` has a Stage 3 step with synthetic side photos | a laptop run of the Stage 3 step (owner) |
 
 ## P3: visual quality
 
-Stage 3 (angle photos, PR #14) judged on a real webcam; then the defects the Stage 2 checklist ranks highest. Owner's earlier report:
+Stage 3 (angle photos, PR #14, merged) judged on a real webcam; then the defects the Stage 2 checklist ranks highest. Owner's earlier report:
 "face fake" beyond the S12 fixes is the photoreal limit of a warped photo (`CPU-STATUS.md`).
 
 ## P4: new capabilities
@@ -48,5 +48,5 @@ identity model listed there is non-commercial or unverified. Remote GPU needs a 
 
 ## P5: product
 
-Pick a product licence (no `LICENSE` file exists), installer, the OBS virtual camera validation. (The unused 28 MB onnxruntime-web
+Pick a product licence (no `LICENSE` file exists), installer, the OBS virtual camera validation. The virtual camera output itself exists since PR #29 (merged 2026-10-22, off by default, `VCAM.md`): the visible bar survives both camera routes measured, the LSB watermark survives Softcam but not OBS's NV12 path; the Zoom/Meet/WhatsApp matrix in `SOFTCAM.md` is still the owner's to fill in. (The unused 28 MB onnxruntime-web
 assets were removed on 2026-10-20.)

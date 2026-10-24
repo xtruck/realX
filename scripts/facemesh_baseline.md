@@ -14,7 +14,8 @@ Nothing in `webapp/src/facemesh/` is changed in this stage. You fill this in; it
    - Photo file: ______________________ Photo check score: ____ / 100 Problems listed: ______________________
 5. Give consent (tick the statement, Allow). The "Virtual face" label must stay on screen in **every** screenshot.
 6. Leave every control at its default unless an item says otherwise:
-   Smoothing on, Clean the edges on, Keep my eyes and mouth on, Use my live eyes off, Hide the photo's glasses off (unless
+   Smoothing on, Clean the edges **off** (its default since 2026-10-20: it costs frames; switching it on is a separate measurement, `--edges-hz`),
+   Soft edges off, Photos at several angles off, Keep my eyes and mouth on, Use my live eyes off, Hide the photo's glasses off (unless
    the page turned it on by itself), Whole head off, Body / Hair / Hands on top off, Match the webcam's look 60%, Mouth patch
    50%, **Hold the mask when turning 100%**, Photo's face shape 70%, Colour match 100%.
 7. Machine record (once):
@@ -23,6 +24,7 @@ Nothing in `webapp/src/facemesh/` is changed in this stage. You fill this in; it
 8. Machine benchmark (once, same session, after the checklist): close the page, then in PowerShell
    ```powershell
    $env:REALX_CHROMIUM = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+   # use the project's Python (the .venv one), not a system Python
    python scripts/bench_facemesh.py --headed --seconds 12 --json facemesh-baseline.json
    ```
    Send me `facemesh-baseline.json`. The run must print a hardware renderer (e.g. "Intel(R) UHD Graphics 620"), not
