@@ -4,124 +4,413 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>realX control room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --paper: #e8edf0;
-    --panel: #f4f7f9;
-    --ink: #13202b;
-    --ink-soft: #4d5e6b;
-    --rule: #c7d1d8;
-    --bezel: #0c141b;
-    --tally: #e5352b;
-    --teal: #0e7c86;
-    --teal-soft: #d3ebee;
-    --amber: #e8a23a;
-    --ok: #1f9d6b;
-    --radius: 10px;
-    font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --bg-base: #090c15;
+    --bg-surface: #0f1523;
+    --bg-card: #151d30;
+    --bg-card-hover: #1c263e;
+    --border-subtle: #222d46;
+    --border-focus: #3b82f6;
+    --primary: #3b82f6;
+    --primary-glow: rgba(59, 130, 246, 0.35);
+    --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+    --accent: #6366f1;
+    --tally: #ef4444;
+    --tally-glow: rgba(239, 68, 68, 0.4);
+    --amber: #f59e0b;
+    --ok: #10b981;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --text-faint: #64748b;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-variant-numeric: tabular-nums;
-    color-scheme: light;
+    color-scheme: dark;
   }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --paper: #121a21; --panel: #1a242d; --ink: #e6edf2; --ink-soft: #9db0be;
-      --rule: #2d3b47; --bezel: #05090c; --teal: #35b6c2; --teal-soft: #17353a; color-scheme: dark;
-    }
-  }
+
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  html, body { margin: 0; background: var(--paper); color: var(--ink); }
-  body { min-height: 100vh; line-height: 1.45; }
-  :focus-visible { outline: 3px solid var(--teal); outline-offset: 2px; }
+  html, body { margin: 0; background: var(--bg-base); color: var(--text-main); min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  :focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 
-  .shell { max-width: 1240px; margin: 0 auto; padding: 20px 16px 48px; }
-  header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding-bottom: 14px; }
-  h1 { font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; font-weight: 700; }
-  header p { margin: 0; color: var(--ink-soft); }
+  .shell { max-width: 1320px; margin: 0 auto; padding: 24px 20px 60px; }
+  
+  /* Top Studio Header */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-bottom: 20px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .brand-area {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand-tag {
+    background: var(--primary-gradient);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+  }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; font-weight: 700; color: #fff; }
+  header p { margin: 0; color: var(--text-muted); font-size: 13px; }
 
-  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
-  @media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+  .header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .link-pill {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    transition: all 0.2s ease;
+  }
+  .link-pill:hover {
+    color: #fff;
+    border-color: var(--primary);
+  }
 
-  /* the monitor is the one memorable object */
-  .monitor { background: var(--bezel); border-radius: 16px; padding: 14px 14px 12px; }
-  .screen { position: relative; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; overflow: hidden; }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    gap: 28px;
+    align-items: start;
+  }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+
+  /* Monitor Cinema Screen */
+  .monitor {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  }
+  .screen {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
   .screen img { width: 100%; height: 100%; object-fit: contain; display: block; }
-  .screen iframe { width: 100%; height: 100%; border: 0; display: block; background: linear-gradient(160deg, #1d2e3a, #0f1a22); }
-  .obs { margin-top: 14px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); }
-  .obs input { width: 100%; font: inherit; color: inherit; background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
-  .guides { position: absolute; inset: 8%; border: 1px dashed rgba(255,255,255,.35); pointer-events: none; display: none; }
+  .screen iframe { width: 100%; height: 100%; border: 0; display: block; background: #000; }
+  
+  .guides {
+    position: absolute;
+    inset: 8%;
+    border: 1px dashed rgba(59, 130, 246, 0.4);
+    pointer-events: none;
+    display: none;
+  }
   .guides.on { display: block; }
-  .screen .notice { position: absolute; inset: 0; display: grid; place-items: center; color: #cfd8de; text-align: center; padding: 24px; }
-  .bar { display: flex; align-items: center; gap: 12px; color: #c4cfd6; padding-top: 10px; font-size: .9rem; flex-wrap: wrap; }
-  .tally { width: 12px; height: 12px; border-radius: 50%; background: #4a2420; box-shadow: 0 0 0 2px #1d2a33; flex: none; }
-  .tally.live { background: var(--tally); animation: pulse 1.6s ease-in-out infinite; }
-  @keyframes pulse { 50% { box-shadow: 0 0 0 2px #1d2a33, 0 0 12px 3px rgba(229,53,43,.65); } }
+
+  .screen .notice {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 24px;
+    font-size: 14px;
+    background: rgba(10, 13, 20, 0.85);
+    backdrop-filter: blur(8px);
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-muted);
+    padding-top: 14px;
+    font-size: 13px;
+    flex-wrap: wrap;
+  }
+  .tally {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #331515;
+    flex: none;
+    transition: background 0.2s ease;
+  }
+  .tally.live {
+    background: var(--tally);
+    box-shadow: 0 0 10px var(--tally-glow);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { box-shadow: 0 0 16px 2px var(--tally-glow); } }
   @media (prefers-reduced-motion: reduce) { .tally.live { animation: none; } }
   .bar .spacer { flex: 1; }
-  .bar strong { color: #fff; font-weight: 600; }
+  .bar strong { color: #fff; font-weight: 600; font-size: 14px; }
 
-  .ribbon-wrap { margin-top: 18px; }
-  .ribbon-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  h2 { font-size: 1rem; margin: 0 0 4px; font-weight: 650; }
-  .hint { margin: 0; color: var(--ink-soft); font-size: .88rem; }
-  canvas { width: 100%; height: 44px; display: block; margin-top: 8px; border-radius: 6px; background: var(--panel); }
-  .legend { display: flex; gap: 16px; font-size: .85rem; color: var(--ink-soft); margin-top: 8px; flex-wrap: wrap; }
-  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
-  .legend .c-detected { --c: var(--teal); }
+  /* OBS Integration Box */
+  .obs {
+    margin-top: 18px;
+    padding: 16px 18px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+  .obs h2 { font-size: 14px; margin: 0 0 4px; font-weight: 600; color: #fff; }
+  .obs input {
+    width: 100%;
+    font-family: monospace;
+    font-size: 12px;
+    color: #60a5fa;
+    background: var(--bg-base);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    margin-top: 8px;
+  }
+
+  /* Telemetry Live Stats */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .stat {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+  }
+  .stat b {
+    display: block;
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.01em;
+  }
+  .stat span { color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  @media (max-width: 580px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+  /* Ribbon Waveform Tracker */
+  .ribbon-wrap {
+    margin-top: 24px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px;
+  }
+  .ribbon-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  h2 { font-size: 14px; margin: 0 0 4px; font-weight: 600; color: #fff; }
+  .hint { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+  canvas#ribbon {
+    width: 100%;
+    height: 44px;
+    display: block;
+    margin-top: 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-base);
+  }
+  .legend {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .legend span::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    background: var(--c);
+    vertical-align: -1px;
+  }
+  .legend .c-detected { --c: var(--ok); }
   .legend .c-estimated { --c: var(--amber); }
-  .legend .c-lost { --c: var(--rule); }
+  .legend .c-lost { --c: var(--text-faint); }
 
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 20px; border-top: 1px solid var(--rule); }
-  .stat { padding: 12px 14px 0 0; }
-  .stat b { display: block; font-size: 1.5rem; font-weight: 650; letter-spacing: -0.01em; }
-  .stat span { color: var(--ink-soft); font-size: .85rem; }
-  @media (max-width: 520px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  /* Sidebar Controls */
+  aside {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
 
-  aside section { padding: 0 0 22px; margin: 0 0 22px; border-bottom: 1px solid var(--rule); }
-  aside section:last-child { border-bottom: 0; margin-bottom: 0; }
-  fieldset { border: 0; padding: 0; margin: 10px 0 0; }
-  legend { padding: 0; font-weight: 600; font-size: .92rem; margin-bottom: 6px; }
+  aside section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px 18px;
+  }
+  aside section:hover {
+    border-color: rgba(59, 130, 246, 0.3);
+  }
 
-  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 3px; gap: 3px; }
+  fieldset { border: 0; padding: 0; margin: 12px 0 0; }
+  legend { padding: 0; font-weight: 600; font-size: 13px; color: var(--text-main); margin-bottom: 8px; }
+
+  /* Segmented Mode Switcher */
+  .seg {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    background: var(--bg-base);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 3px;
+    gap: 4px;
+  }
   .seg label { position: relative; }
   .seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
-  .seg span { display: block; text-align: center; padding: 8px 4px; border-radius: 7px; font-size: .92rem; cursor: pointer; }
-  .seg input:checked + span { background: var(--teal); color: #fff; font-weight: 600; }
-  .seg input:focus-visible + span { outline: 3px solid var(--teal); outline-offset: 2px; }
+  .seg span {
+    display: block;
+    text-align: center;
+    padding: 7px 4px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .seg input:checked + span {
+    background: var(--primary);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: 0 2px 8px var(--primary-glow);
+  }
 
-  select, input[type="file"] { width: 100%; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 9px 10px; }
-  input[type="range"] { width: 100%; accent-color: var(--teal); margin: 6px 0 0; }
+  select, input[type="file"] {
+    width: 100%;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-main);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    transition: border-color 0.2s ease;
+  }
+  select:focus, input[type="file"]:focus {
+    border-color: var(--border-focus);
+  }
+
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--primary);
+    margin: 8px 0 0;
+    cursor: pointer;
+  }
   .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-  .row output { color: var(--ink-soft); }
+  .row output { color: var(--primary); font-weight: 600; font-size: 13px; }
 
-  button { font: inherit; font-weight: 600; background: var(--ink); color: var(--paper); border: 0; border-radius: var(--radius); padding: 10px 14px; cursor: pointer; }
-  button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--rule); }
-  button:disabled { opacity: .55; cursor: progress; }
+  /* Button Styles */
+  button {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    background: var(--primary);
+    color: #fff;
+    border: 1px solid var(--primary);
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px var(--primary-glow);
+    transition: all 0.15s ease;
+  }
+  button:hover:not(:disabled) {
+    background: #2563eb;
+    transform: translateY(-1px);
+  }
+  button.ghost {
+    background: var(--bg-card);
+    color: var(--text-main);
+    border: 1px solid var(--border-subtle);
+    box-shadow: none;
+  }
+  button.ghost:hover:not(:disabled) {
+    background: var(--bg-card-hover);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
   .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  audio { width: 100%; margin-top: 12px; }
-  .msg { min-height: 1.3em; margin: 10px 0 0; font-size: .9rem; }
-  .msg.err { color: #b3261e; }
-  .msg.ok { color: var(--ok); }
 
-  .virtual { margin: 10px 0 0; padding: 8px 10px; border-left: 4px solid var(--teal); background: var(--teal-soft); border-radius: 0 8px 8px 0; font-size: .9rem; font-weight: 600; }
-  .studio-status { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--rule); }
-  .studio-grid { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 6px 16px; margin: 10px 0 0; font-size: .92rem; }
-  .studio-grid dt { color: var(--ink-soft); }
-  .studio-grid dd { margin: 0; overflow-wrap: anywhere; }
-  .studio-grid meter { width: 120px; vertical-align: middle; }
-  @media (max-width: 520px) { .studio-grid { grid-template-columns: 1fr; } .studio-grid dd { margin-bottom: 6px; } }
-  ul.safety { list-style: none; margin: 8px 0 0; padding: 0; }
-  ul.safety li { padding: 7px 0; border-top: 1px solid var(--rule); font-size: .9rem; display: flex; gap: 10px; }
+  .virtual {
+    margin: 12px 0 0;
+    padding: 8px 12px;
+    border-left: 3px solid var(--primary);
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 12px;
+    font-weight: 500;
+    color: #93c5fd;
+  }
+
+  /* Telemetry Grid in Sidebar */
+  .studio-grid {
+    display: grid;
+    grid-template-columns: minmax(130px, 160px) 1fr;
+    gap: 8px 14px;
+    margin: 12px 0 0;
+    font-size: 12px;
+  }
+  .studio-grid dt { color: var(--text-muted); }
+  .studio-grid dd { margin: 0; color: #fff; font-weight: 500; overflow-wrap: anywhere; }
+
+  /* Safety Checklist */
+  ul.safety { list-style: none; margin: 10px 0 0; padding: 0; }
+  ul.safety li { padding: 8px 0; border-top: 1px solid var(--border-subtle); font-size: 12px; display: flex; gap: 10px; }
   ul.safety li:first-child { border-top: 0; }
-  ul.safety b { font-weight: 600; min-width: 92px; }
-  ul.safety em { font-style: normal; color: var(--ink-soft); }
+  ul.safety b { font-weight: 600; color: #fff; min-width: 90px; }
+  ul.safety em { font-style: normal; color: var(--text-muted); }
+
+  .msg { min-height: 1.3em; margin: 10px 0 0; font-size: 12px; }
+  .msg.err { color: #f87171; }
+  .msg.ok { color: var(--ok); }
 </style>
 </head>
 <body>
 <div class="shell">
   <header>
-    <h1>realX control room</h1>
-    <p>Live face tracking and voice, running on this computer.</p>
+    <div class="brand-area">
+      <span class="brand-tag">realX Studio</span>
+      <div>
+        <h1>realX control room</h1>
+        <p>Real-time motion tracking, avatars and voice engine</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <a class="link-pill" href="/facemesh">Photo Face Studio</a>
+      <a class="link-pill" href="/avatar">3D VRM Avatar</a>
+    </div>
   </header>
 
   <div class="grid">
@@ -141,177 +430,173 @@
           <span id="srcLabel"></span>
           <span class="spacer"></span>
           <button id="previewOpen" class="ghost" type="button" title="Open the live picture alone in a new window, for a second screen or OBS Window Capture">Open output preview</button>
-          <label><input type="checkbox" id="guideToggle"> Show safe area</label>
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="guideToggle" style="accent-color: var(--primary);"> Safe Area
+          </label>
         </div>
       </div>
 
       <div class="obs" id="obs" hidden>
-        <h2>Use the character in OBS</h2>
-        <p class="hint">Add a Browser Source with this address, 1280 by 720. The background is transparent. The page only receives body-pose numbers, never camera pictures.</p>
-        <p class="hint" id="obsBodyNote" hidden>In Full body mode the Browser Source shows what this tab tracks, so keep this control room tab open while you stream.</p>
+        <h2>Stream into OBS Studio</h2>
+        <p class="hint">Add a Browser Source with this address (1280x720) with transparent background.</p>
+        <p class="hint" id="obsBodyNote" hidden>In Full body mode, keep this control room open while streaming.</p>
         <input id="obsUrl" readonly aria-label="Browser Source address" value="">
-        <div class="actions"><button id="obsCopy" class="ghost">Copy address</button></div>
+        <div class="actions"><button id="obsCopy" class="ghost">Copy OBS address</button></div>
         <div class="actions" role="group" aria-label="Character gestures">
-          <button class="ghost emote" data-emote="wave">Wave</button>
-          <button class="ghost emote" data-emote="happy">Happy</button>
-          <button class="ghost emote" data-emote="surprised">Surprised</button>
-          <button class="ghost emote" data-emote="bow">Thank you</button>
+          <button class="ghost emote" data-emote="wave">Wave 👋</button>
+          <button class="ghost emote" data-emote="happy">Happy 😊</button>
+          <button class="ghost emote" data-emote="surprised">Surprised 😮</button>
+          <button class="ghost emote" data-emote="bow">Thank you 🙏</button>
         </div>
       </div>
 
+      <!-- Live Measurements -->
       <div class="stats" role="group" aria-label="Live measurements">
-        <div class="stat"><b id="sFps">0</b><span>frames per second</span></div>
-        <div class="stat"><b id="sLat">0</b><span>milliseconds per frame</span></div>
-        <div class="stat"><b id="sFaces">0</b><span>faces tracked</span></div>
-        <div class="stat"><b id="sDrop">0</b><span>frames skipped</span></div>
+        <div class="stat"><b id="sFps">0</b><span>FPS</span></div>
+        <div class="stat"><b id="sLat">0</b><span>Latency (ms)</span></div>
+        <div class="stat"><b id="sFaces">0</b><span>Faces Tracked</span></div>
+        <div class="stat"><b id="sDrop">0</b><span>Frames Dropped</span></div>
       </div>
 
       <section class="studio-status" id="studioStatus" aria-labelledby="ststatus" hidden>
-        <h2 id="ststatus">Streaming status</h2>
-        <p class="hint">Measured live inside the tracking page. Until the first measurement arrives, nothing here is a number.</p>
+        <h2 id="ststatus">Telemetry & Diagnostics</h2>
+        <p class="hint">Real-time metrics measured inside the tracking pipeline.</p>
         <dl class="studio-grid">
-          <dt>Tracker speed</dt><dd id="stFps">No measurement yet</dd>
-          <dt>Time per frame</dt><dd id="stLatency">No measurement yet</dd>
-          <dt>Frames skipped</dt><dd id="stSkipped">No measurement yet</dd>
-          <dt>Model updates per second</dt><dd id="stRates">No measurement yet</dd>
-          <dt>Running on</dt><dd id="stBackend">No measurement yet</dd>
-          <dt>What it sees</dt><dd id="stSees">No measurement yet</dd>
-          <dt>Microphone</dt><dd><span id="stMic">No measurement yet</span> <meter id="micMeter" min="-60" max="0" value="-60" aria-label="Microphone level in decibels" hidden></meter></dd>
-          <dt>Audio and video sync</dt><dd id="stSync">No measurement yet</dd>
-          <dt>Viewers connected</dt><dd id="stViewers">No measurement yet</dd>
-          <dt>Publishing to OBS</dt><dd id="stPublishing">No measurement yet</dd>
-          <dt>Tracker state</dt><dd id="stState">No measurement yet</dd>
+          <dt>Tracker speed</dt><dd id="stFps">Waiting…</dd>
+          <dt>Frame compute</dt><dd id="stLatency">Waiting…</dd>
+          <dt>Frames skipped</dt><dd id="stSkipped">Waiting…</dd>
+          <dt>Model frequency</dt><dd id="stRates">Waiting…</dd>
+          <dt>Backend execution</dt><dd id="stBackend">Waiting…</dd>
+          <dt>Scene visibility</dt><dd id="stSees">Waiting…</dd>
+          <dt>Microphone input</dt><dd><span id="stMic">Off</span> <meter id="micMeter" min="-60" max="0" value="-60" aria-label="Microphone level in decibels" hidden></meter></dd>
+          <dt>A/V sync</dt><dd id="stSync">Waiting…</dd>
+          <dt>OBS clients</dt><dd id="stViewers">0</dd>
+          <dt>Publishing state</dt><dd id="stPublishing">Idle</dd>
+          <dt>Tracker state</dt><dd id="stState">Initializing</dd>
         </dl>
       </section>
 
+      <!-- Ribbon Waveform -->
       <div class="ribbon-wrap">
         <div class="ribbon-head">
           <div>
-            <h2>Tracking over the last four seconds</h2>
-            <p class="hint">Each tick is one frame. Amber ticks mean the face was briefly lost and the position is estimated.</p>
+            <h2>Tracking Stability (Last 4 Seconds)</h2>
+            <p class="hint">Each tick represents one processed frame.</p>
           </div>
         </div>
         <canvas id="ribbon" width="960" height="44" role="img" aria-label="Recent frames: detected, estimated or lost"></canvas>
         <div class="legend">
-          <span class="c-detected">Detected</span>
+          <span class="c-detected">Locked</span>
           <span class="c-estimated">Estimated</span>
-          <span class="c-lost">Lost</span>
+          <span class="c-lost">Occluded</span>
         </div>
       </div>
     </main>
 
+    <!-- Sidebar Studio Configuration -->
     <aside>
       <section aria-labelledby="look">
-        <h2 id="look">Picture</h2>
+        <h2 id="look">Rendering Mode</h2>
         <fieldset>
-          <legend>What to show</legend>
+          <legend>Mode</legend>
           <div class="seg" id="modeSeg">
             <label><input type="radio" name="mode" value="avatar" checked><span>Cartoon</span></label>
-            <label><input type="radio" name="mode" value="character"><span>Character</span></label>
-            <label><input type="radio" name="mode" value="body"><span>Full body</span></label>
-            <label><input type="radio" name="mode" value="photoface"><span>Photo face</span></label>
+            <label><input type="radio" name="mode" value="character"><span>VRM 3D</span></label>
+            <label><input type="radio" name="mode" value="body"><span>Full Body</span></label>
+            <label><input type="radio" name="mode" value="photoface"><span>Photo Face</span></label>
             <label><input type="radio" name="mode" value="boxes"><span>Tracking</span></label>
-            <label><input type="radio" name="mode" value="original"><span>Original</span></label>
+            <label><input type="radio" name="mode" value="original"><span>Raw</span></label>
           </div>
         </fieldset>
         <fieldset>
-          <legend>Source</legend>
+          <legend>Video Input</legend>
           <select id="source" aria-label="Video source">
-            <option value="demo:dance">Demo: dancing</option>
-            <option value="demo:jump">Demo: jumping</option>
-            <option value="demo:sprint">Demo: sprinting</option>
-            <option value="demo:spin">Demo: head spinning</option>
-            <option value="camera">Camera</option>
+            <option value="demo:dance">Demo: Dancing</option>
+            <option value="demo:jump">Demo: Jumping</option>
+            <option value="demo:sprint">Demo: Sprinting</option>
+            <option value="demo:spin">Demo: Head Spinning</option>
+            <option value="camera">Live Camera</option>
           </select>
         </fieldset>
         <fieldset>
-          <div class="row"><legend>Steadiness</legend><output id="smoothOut">35%</output></div>
+          <div class="row"><legend>Steadiness (Smoothing)</legend><output id="smoothOut">35%</output></div>
           <input type="range" id="smooth" min="0" max="100" value="35" aria-label="Steadiness">
-          <p class="hint">Higher is calmer but trails fast moves a little.</p>
         </fieldset>
         <p class="msg" id="cfgMsg" role="status"></p>
       </section>
 
       <section aria-labelledby="camhead" id="cameraPanel" hidden>
-        <h2 id="camhead">Camera</h2>
-        <p class="hint">Photo face and Full body open the camera in this browser. By default realX avoids infrared cameras (face-unlock sensors); pick another here if the picture is dark or grey. Changing it reloads the page that uses it.</p>
+        <h2 id="camhead">Webcam Device</h2>
+        <p class="hint">Select your physical webcam hardware.</p>
         <select id="camSelect" aria-label="Camera"><option value="">Default camera</option></select>
       </section>
 
       <section aria-labelledby="fullbody" id="bodyPanel" hidden>
-        <h2 id="fullbody">Full body</h2>
-        <p class="hint">Your camera stays in this page. The character receives only joint angles, never pictures.</p>
-        <p class="virtual" id="virtualLine">Virtual character: viewers are told this is an avatar.</p>
+        <h2 id="fullbody">Full-Body Rig Settings</h2>
+        <p class="virtual" id="virtualLine">Virtual character: labeled as an avatar.</p>
         <fieldset>
           <legend>Microphone</legend>
           <select id="micSelect" aria-label="Microphone"><option value="">Off</option></select>
-          <p class="hint">Off unless you choose one. Sound is analysed in this browser and never sent anywhere. Turning it on or off reloads this page, because the browser only grants the microphone to a page that asks for it.</p>
         </fieldset>
         <fieldset>
-          <legend>Quality</legend>
+          <legend>Quality Preset</legend>
           <select id="qualitySelect" aria-label="Quality">
-            <option value="low">Low (320 by 240)</option>
-            <option value="balanced" selected>Balanced (640 by 480)</option>
-            <option value="high">High (1280 by 720)</option>
+            <option value="low">Low (320x240, fast)</option>
+            <option value="balanced" selected>Balanced (640x480)</option>
+            <option value="high">High (1280x720, sharp)</option>
           </select>
-          <p class="hint" id="qualityHint">Low is the lightest, with rougher hands and fingers. Balanced is the best starting point. High gives sharper hands and fingers but is slower, so the arms update less often on a modest computer.</p>
         </fieldset>
         <fieldset>
-          <legend>Outfit</legend>
+          <legend>Character Outfit</legend>
           <select id="outfitSelect" aria-label="Character outfit">
             <option value="coral">Coral</option><option value="ocean">Ocean</option><option value="sunny">Sunny</option>
             <option value="berry">Berry</option><option value="forest">Forest</option>
           </select>
         </fieldset>
-        <p class="hint" id="studioPanelHint">Changing the camera, microphone, quality or outfit restarts the camera and reloads the tracker for a moment.</p>
         <fieldset>
-          <legend>Camera view</legend>
+          <legend>Camera Framing</legend>
           <select id="viewMode" aria-label="What the camera sees">
-            <option value="full">Standing or full body</option>
-            <option value="desk">Sitting at a desk: upper body</option>
+            <option value="full">Standing / Full Body</option>
+            <option value="desk">Sitting at Desk (Upper Body)</option>
           </select>
-          <p class="hint" id="viewHint">Desk view follows your head, face, arms, hands and fingers and ignores the hips and legs, which the desk hides. If an arm or hand drops out of the picture (onto the keyboard) it stays where it was for a moment, then rests on the desk.</p>
         </fieldset>
         <fieldset>
-          <legend>Legs</legend>
+          <legend>Leg Tracking</legend>
           <select id="legsMode" aria-label="When the legs move">
-            <option value="auto">Auto: only when clearly in view</option>
-            <option value="off">Off: upper body only</option>
+            <option value="auto">Auto (when visible)</option>
+            <option value="off">Off (upper body only)</option>
           </select>
-          <p class="hint">Auto suits sitting at a desk: the legs stay relaxed until the camera sees them well.</p>
         </fieldset>
-        <label class="hint"><input type="checkbox" id="frameFull"> Show the whole character, legs included</label>
-        <label class="hint"><input type="checkbox" id="gesturesOn" checked> Hand gestures</label>
-        <p class="hint">Hold a gesture for about a third of a second: fist mutes or unmutes the microphone, thumb up is happy, V waves, open palm recenters. <span id="gestureLast" role="status">No gesture yet.</span></p>
-        <div class="actions"><button id="recenter" class="ghost">Recenter</button></div>
-        <p class="hint">Sit or stand the way you will during the stream, then press Recenter.</p>
-        <p class="msg" id="bodyStatus" role="status">Waiting for the camera…</p>
+        <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;">
+          <label class="hint"><input type="checkbox" id="frameFull" style="accent-color: var(--primary);"> Frame full character</label>
+          <label class="hint"><input type="checkbox" id="gesturesOn" checked style="accent-color: var(--primary);"> Hand gesture shortcuts</label>
+        </div>
+        <div class="actions"><button id="recenter" class="ghost">Recenter Pose</button></div>
+        <p class="msg" id="bodyStatus" role="status">Waiting for camera…</p>
       </section>
 
       <section aria-labelledby="bg">
-        <h2 id="bg">Background</h2>
-        <p class="hint">Cut yourself out and put a photo, or a blur, behind you. Your own picture only: nothing is generated and the photo stays on this computer.</p>
+        <h2 id="bg">Background Cut-Out</h2>
+        <p class="hint">Neural segmentation (PP-HumanSeg) runs locally on your device.</p>
         <fieldset>
-          <legend>Behind you</legend>
+          <legend>Background Mode</legend>
           <div class="seg" id="bgSeg">
-            <label><input type="radio" name="background" value="off" checked><span>Unchanged</span></label>
+            <label><input type="radio" name="background" value="off" checked><span>Off</span></label>
             <label><input type="radio" name="background" value="blur"><span>Blur</span></label>
             <label><input type="radio" name="background" value="photo"><span>Photo</span></label>
           </div>
         </fieldset>
         <fieldset>
-          <legend>Background photo (JPEG or PNG, up to 12 MB)</legend>
+          <legend>Custom Backdrop (JPEG/PNG)</legend>
           <input type="file" id="bgFile" accept="image/jpeg,image/png">
         </fieldset>
         <p class="msg" id="bgMsg" role="status"></p>
-        <p class="hint">Not used in Character mode, which draws only the character.</p>
       </section>
 
       <section aria-labelledby="voice">
-        <h2 id="voice">Voice</h2>
-        <p class="hint">Change how your recording sounds. Every file carries a realX provenance mark.</p>
+        <h2 id="voice">Voice FX Engine</h2>
         <fieldset>
-          <legend>Character</legend>
+          <legend>Preset</legend>
           <select id="preset" aria-label="Character voice"><option value="">Plain pitch change</option></select>
           <p class="hint" id="presetNote"></p>
         </fieldset>
@@ -320,20 +605,20 @@
           <input type="range" id="pitch" min="-12" max="12" value="3" step="1" aria-label="Pitch in semitones">
         </fieldset>
         <fieldset>
-          <legend>Recording (16-bit WAV)</legend>
+          <legend>Input WAV File</legend>
           <input type="file" id="file" accept=".wav,audio/wav,audio/x-wav">
         </fieldset>
         <div class="actions">
-          <button id="convert">Convert recording</button>
-          <button id="tone" class="ghost">Try a test tone</button>
+          <button id="convert">Convert Voice</button>
+          <button id="tone" class="ghost">Test Tone</button>
         </div>
         <p class="msg" id="voiceMsg" role="status"></p>
-        <audio id="player" controls hidden></audio>
-        <a id="download" hidden>Save converted audio</a>
+        <audio id="player" controls hidden style="width: 100%; margin-top: 10px;"></audio>
+        <a id="download" hidden style="display: inline-block; margin-top: 8px; font-size: 13px; color: var(--primary);">Save audio</a>
       </section>
 
       <section aria-labelledby="safe">
-        <h2 id="safe">Safety</h2>
+        <h2 id="safe">Provenance & Safety</h2>
         <ul class="safety" id="safety"><li><em>Loading…</em></li></ul>
       </section>
     </aside>

@@ -3,152 +3,871 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>realX face mesh (prototype)</title>
+<title>realX Studio • Photoreal Face & Body</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root { color-scheme: dark; }
-  html, body { margin: 0; min-height: 100%; background: #0c141b; color: #e8f0f5; font: 14px/1.4 system-ui, sans-serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 12px; }
-  h1 { font-size: 16px; margin: 0 0 4px; }
-  p.note { margin: 0 0 10px; opacity: .8; font-size: 12px; }
-  #stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 10px; overflow: hidden; }
+  :root {
+    --bg-base: #0a0d14;
+    --bg-surface: #101522;
+    --bg-card: #161c2d;
+    --bg-card-hover: #1d253b;
+    --bg-card-active: #222c46;
+    --border-subtle: #242d44;
+    --border-focus: #3b82f6;
+    --primary: #3b82f6;
+    --primary-glow: rgba(59, 130, 246, 0.35);
+    --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+    --accent: #6366f1;
+    --live-tally: #ef4444;
+    --live-glow: rgba(239, 68, 68, 0.4);
+    --ok: #10b981;
+    --warn: #f59e0b;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --text-faint: #64748b;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 16px;
+    color-scheme: dark;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  html, body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg-base);
+    color: var(--text-main);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+
+  /* Header Branding */
+  .studio-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 16px;
+  }
+
+  .brand-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .brand-badge {
+    background: var(--primary-gradient);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    text-transform: uppercase;
+  }
+
+  h1 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  .studio-nav {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .nav-link {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    transition: all 0.2s ease;
+  }
+  .nav-link:hover {
+    color: #fff;
+    border-color: var(--border-focus);
+  }
+
+  p.note {
+    margin: 0 0 16px;
+    color: var(--text-muted);
+    font-size: 13px;
+    line-height: 1.55;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+  }
+
+  /* Monitor Stage */
+  #wrap {
+    position: relative;
+    border-radius: var(--radius-lg);
+    background: #000;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border-subtle);
+    margin-bottom: 20px;
+  }
+
+  #stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    overflow: hidden;
+  }
+  @media (max-width: 640px) {
+    #stage { aspect-ratio: 4 / 3; }
+  }
+
   #stage.mirror { transform: scaleX(-1); }
-  #wrap { position: relative; }
-  #badge { position: absolute; left: 10px; bottom: 10px; background: rgba(12, 20, 27, .75); color: #fff; font-size: 12px; padding: 4px 10px; border-radius: 999px; }
-  #photoQuality { background: #1b1f24; border: 1px solid #3a4c5a; border-radius: 10px; padding: 8px 14px; margin: 10px 0; }
-  #photoQuality h2 { font-size: 14px; margin: 0 0 4px; } #photoQuality ul { margin: 4px 0; padding-left: 20px; } #photoQuality .warn { color: #f0c36a; } #photoQuality .fail { color: #ff8a80; }
-  #consent { background: #14212b; border: 1px solid #3a4c5a; border-radius: 10px; padding: 10px 14px; margin: 10px 0; }
-  #consent h2 { font-size: 15px; margin: 0 0 6px; } #consent label { display: block; margin: 6px 0; }
-  #cam, #face, #overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-  #bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; align-items: center; }
-  button { font: inherit; color: inherit; background: #1d2b36; border: 1px solid #3a4c5a; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
-  button[aria-pressed="true"] { background: #1f5b4d; border-color: #38a68c; }
-  button:disabled { opacity: .5; cursor: default; }
-  #hud { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 6px; margin: 8px 0; }
-  #hud div { background: #14212b; border-radius: 8px; padding: 6px 10px; }
-  #hud b { display: block; font-size: 18px; }
-  #gate { font-weight: 600; } #gate.ok { color: #5fe0a8; } #gate.bad { color: #ff8a7a; }
-  #status, #measure { min-height: 1.4em; }
-  #live { position: absolute; left: 10px; top: 10px; background: #b3261e; color: #fff; font: 600 12px/1 system-ui, sans-serif; padding: 5px 9px; border-radius: 6px; }
-  #toast { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); background: rgba(12, 20, 27, .88); color: #fff; padding: 6px 12px; border-radius: 8px; max-width: 70%; text-align: center; }
-  #fsHint { display: none; position: absolute; right: 10px; top: 10px; font-size: 12px; opacity: .8; color: #fff; }
-  #wrap:fullscreen { background: #000; display: flex; align-items: center; justify-content: center; }
-  #wrap:fullscreen #stage { width: auto; height: 100%; max-width: 100%; border-radius: 0; }
+
+  #cam, #face, #overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  #badge {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    background: rgba(10, 13, 20, 0.85);
+    backdrop-filter: blur(8px);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #badge::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--primary);
+  }
+
+  #live {
+    position: absolute;
+    left: 14px;
+    top: 14px;
+    background: var(--live-tally);
+    color: #fff;
+    font: 700 11px/1 "Inter", sans-serif;
+    letter-spacing: 0.05em;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    box-shadow: 0 0 12px var(--live-glow);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #toast {
+    position: absolute;
+    left: 50%;
+    top: 14px;
+    transform: translateX(-50%);
+    background: rgba(22, 28, 45, 0.95);
+    backdrop-filter: blur(12px);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+    max-width: 80%;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    z-index: 10;
+  }
+
+  #fsHint {
+    display: none;
+    position: absolute;
+    right: 14px;
+    top: 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.6);
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+  }
+  #wrap:fullscreen {
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #wrap:fullscreen #stage {
+    width: auto;
+    height: 100%;
+    max-width: 100%;
+  }
   #wrap:fullscreen #fsHint { display: block; }
-  #gallery { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; }
-  #gallery[hidden] { display: none; }
+
+  /* Studio Control Panels */
+  .control-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .panel-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    transition: border-color 0.2s ease;
+  }
+  .panel-card:hover {
+    border-color: rgba(59, 130, 246, 0.35);
+  }
+
+  .panel-card h3 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  /* Modern Buttons */
+  button {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-main);
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  button:hover:not(:disabled) {
+    background: var(--bg-card-hover);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+  }
+  button:active:not(:disabled) {
+    transform: translateY(0);
+  }
+  button[aria-pressed="true"] {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: var(--primary);
+    color: #60a5fa;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+  }
+  button.btn-primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    box-shadow: 0 4px 12px var(--primary-glow);
+  }
+  button.btn-primary:hover:not(:disabled) {
+    background: #2563eb;
+  }
+  button.btn-danger {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #f87171;
+  }
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* Sliders & Inputs */
+  .slider-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+  }
+
+  label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    gap: 12px;
+  }
+
+  input[type="range"] {
+    flex: 1;
+    height: 5px;
+    accent-color: var(--primary);
+    background: var(--bg-card);
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  label span {
+    font-weight: 600;
+    color: var(--text-main);
+    min-width: 42px;
+    text-align: right;
+  }
+
+  select {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-main);
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+
+  /* HUD Telemetry */
+  #hud {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin: 20px 0;
+  }
+  #hud div {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  #hud b {
+    display: block;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-top: 2px;
+  }
+
+  #gate {
+    font-weight: 600;
+    font-size: 13px;
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+  }
+  #gate.ok { color: var(--ok); background: rgba(16, 185, 129, 0.12); }
+  #gate.bad { color: var(--live-tally); background: rgba(239, 68, 68, 0.12); }
+
+  /* Gallery & Consent */
+  #gallery, #angles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 12px 0;
+    align-items: center;
+  }
   .thumb-cell { position: relative; }
-  .thumb { width: 64px; height: 64px; padding: 0; overflow: hidden; border-radius: 10px; }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .thumb-remove { position: absolute; right: -6px; top: -6px; width: 22px; height: 22px; padding: 0; border-radius: 50%; line-height: 1; }
-  #angles { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0; align-items: center; }
-  #angles[hidden] { display: none; }
-  #angles .thumb-cell { display: flex; flex-direction: column; align-items: center; font-size: 12px; }
-  .angle-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; display: block; }
+  .thumb {
+    width: 68px;
+    height: 68px;
+    padding: 0;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    border: 2px solid transparent;
+  }
+  .thumb img, .angle-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .thumb:hover { border-color: var(--primary); }
+  .thumb-remove {
+    position: absolute;
+    right: -6px;
+    top: -6px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--live-tally);
+    color: #fff;
+    border: 2px solid var(--bg-surface);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  #consent {
+    background: var(--bg-surface);
+    border: 1px solid var(--primary);
+    border-radius: var(--radius-md);
+    padding: 16px 20px;
+    margin: 16px 0;
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+  }
+  #consent h2 { font-size: 16px; margin: 0 0 8px; color: #fff; }
+  #consent label { justify-content: flex-start; margin: 10px 0; }
+
+  #photoQuality {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+    margin: 12px 0;
+  }
+  #photoQuality .warn { color: var(--warn); }
+  #photoQuality .fail { color: var(--live-tally); }
+
+  /* Collapsible Details */
+  details.info-box {
+    margin: 10px 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  details.info-box summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-main);
+  }
+
+  /* Smart Presets Bar */
+  .preset-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 8px 12px;
+  }
+  .preset-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--text-faint);
+    margin-right: 4px;
+  }
+  .preset-pill {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .preset-pill:hover, .preset-pill.active {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: var(--primary);
+    color: #fff;
+  }
+
+  /* Floating Monitor QuickBar */
+  .monitor-quickbar {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    display: flex;
+    gap: 4px;
+    background: rgba(16, 21, 34, 0.88);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 4px 6px;
+    z-index: 5;
+  }
+  .quick-btn {
+    background: transparent;
+    border: 0;
+    color: var(--text-main);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: none;
+    transition: all 0.15s ease;
+  }
+  .quick-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    transform: none;
+  }
 </style>
 </head>
 <body>
 <main>
-  <h1>Face mesh prototype (steps S1-S8)</h1>
-  <p class="note">Shows the 468-point face mesh over your own camera picture, and can draw a photo of you on it. The camera picture
-    is never read back, copied, stored or sent: it is shown here, given to the face model, and, while "Colour match" is above 0,
-    to the graphics card only, so the photo takes your face's colour and light. Your photo stays in this page too: it is not
-    uploaded or saved. Use a photo of yourself only; a "Virtual face" label stays on screen while a photo is drawn.</p>
+  <header class="studio-header">
+    <div class="brand-title">
+      <span class="brand-badge">realX 2.0</span>
+      <h1>Photoreal Live Studio</h1>
+    </div>
+    <nav class="studio-nav">
+      <a class="nav-link" href="/">Control Room</a>
+      <a class="nav-link" href="/avatar">3D Avatar</a>
+      <a class="nav-link" href="https://github.com/xtruck/realX" target="_blank" rel="noopener">Docs & GitHub</a>
+    </nav>
+  </header>
+
+  <p class="note">
+    <strong>Real-time Photo & Face Mesh Engine:</strong> Live webcam feed driving your chosen photo across 468 3D landmarks with dynamic relighting and mesh warping. All video stays local on your machine.
+  </p>
+
+  <!-- One-Click Smart Presets -->
+  <div class="preset-strip" role="group" aria-label="Smart Presets">
+    <span class="preset-label">SMART PRESETS:</span>
+    <button type="button" class="preset-pill active" onclick="applyPreset('balanced')">⚖️ Balanced</button>
+    <button type="button" class="preset-pill" onclick="applyPreset('turbo')">⚡ Turbo 30 FPS</button>
+    <button type="button" class="preset-pill" onclick="applyPreset('photoreal')">🎨 Cinema Photoreal</button>
+    <button type="button" class="preset-pill" onclick="applyPreset('meeting')">💼 Clean Meeting</button>
+  </div>
+
   <div id="wrap">
     <div id="stage">
       <video id="cam" muted playsinline aria-label="Your camera"></video>
       <canvas id="face" aria-label="Your photo drawn on your face"></canvas>
       <canvas id="overlay" aria-label="Face mesh drawn over your camera picture"></canvas>
     </div>
-    <div id="badge" hidden>Virtual face: a photo of you is drawn on your live face (prototype)</div>
+    <div id="badge" hidden>Virtual face: photo mapped to live face</div>
     <div id="live" hidden>LIVE 00:00</div>
     <div id="toast" role="status" hidden></div>
     <div id="fsHint">Press Esc to leave full screen</div>
+
+    <!-- Floating Monitor QuickBar -->
+    <div class="monitor-quickbar" role="toolbar" aria-label="Quick Actions">
+      <button type="button" class="quick-btn" onclick="document.getElementById('photoBtn').click()" title="Choose Photo">📷 Photo</button>
+      <button type="button" class="quick-btn" onclick="document.getElementById('eyesBtn').click()" title="Toggle Live Eyes">👁️ Eyes</button>
+      <button type="button" class="quick-btn" onclick="document.getElementById('seamBtn').click()" title="Clean Edge Seams">✨ Clean</button>
+      <button type="button" class="quick-btn" onclick="document.getElementById('mirror').click()" title="Toggle Mirror View">🪞 Mirror</button>
+      <button type="button" class="quick-btn" onclick="applyPreset('turbo')" title="30+ FPS Mode">⚡ Turbo</button>
+      <button type="button" class="quick-btn" onclick="copyObsUrl()" title="Copy OBS Browser Source URL">📡 Copy OBS</button>
+    </div>
   </div>
-  <div id="bar">
-    <button id="photoBtn" type="button">Choose my photo</button>
-    <button id="photoClear" type="button">Remove photo</button>
-    <button id="full" type="button">Full screen</button>
-    <button id="stop" type="button">Stop</button>
-    <input id="photoFile" type="file" accept="image/*" hidden>
-    <button id="smooth" type="button" aria-pressed="true">Smoothing</button>
-    <button id="hideHands" type="button" aria-pressed="false">Hide photo when a hand covers my face</button>
-    <button id="headBtn" type="button" aria-pressed="false" aria-describedby="headNote">Whole head (hair, ears, neck)</button>
-    <button id="handsTop" type="button" aria-pressed="false" aria-describedby="handsNote">Show my hands on top</button>
-    <button id="eyesBtn" type="button" aria-pressed="false">Use my live eyes</button>
-    <button id="softBtn" type="button" aria-pressed="false">Soft edges</button>
-    <button id="seamBtn" type="button" aria-pressed="false">Clean the edges</button>
-    <button id="glassesBtn" type="button" aria-pressed="false">Hide the photo's glasses</button>
-    <button id="skinBtn" type="button" aria-pressed="false" aria-describedby="handsNote">Match my hands' skin to the photo</button>
-    <label>Hand reach <input id="handReach" type="range" min="50" max="200" value="100" step="10"> <span id="handReachValue">100%</span></label>
-    <label>Grip reach <input id="gripReach" type="range" min="0" max="200" value="100" step="10"> <span id="gripReachValue">100%</span></label>
-    <button id="bodyBtn" type="button" aria-pressed="false" aria-describedby="bodyNote">Body and clothes</button>
-    <select id="stainKind" aria-label="What to spill"><option value="juice">juice</option><option value="coffee">coffee</option><option value="sauce">sauce</option><option value="water">water</option></select>
-    <button id="spillBtn" type="button" aria-describedby="effectsNote">Spill on me</button>
-    <button id="cleanBtn" type="button">Clean</button>
-    <button id="messyBtn" type="button" aria-pressed="false" aria-describedby="effectsNote">Messy eating</button>
-    <label>Cover my clothes <input id="coverClothes" type="range" min="0" max="40" value="0" step="5"> <span id="coverClothesValue">0%</span></label>
-    <button id="hairBtn" type="button" aria-pressed="false" aria-describedby="hairNote">Hair that moves</button>
-    <label>Hair reach <input id="hairReach" type="range" min="30" max="100" value="55" step="5"> <span id="hairReachValue">55%</span></label>
-    <label>Hair halo <input id="hairHalo" type="range" min="0" max="100" value="50" step="10"> <span id="hairHaloValue">50%</span></label>
-    <button id="keepFace" type="button" aria-pressed="true">Keep my eyes and mouth</button>
-    <label>Match the webcam's look <input id="webcamLook" type="range" min="0" max="100" value="60" step="10"> <span id="webcamLookValue">60%</span></label>
-    <label>Mouth patch <input id="mouthPatch" type="range" min="0" max="100" value="50" step="10"> <span id="mouthPatchValue">50%</span></label>
-    <label>Hold the mask when turning <input id="hold" type="range" min="0" max="100" value="100" step="10"> <span id="holdValue">100%</span></label>
-    <label>Photo's face shape <input id="shape" type="range" min="0" max="100" value="70" step="5"> <span id="shapeValue">70%</span></label>
-    <label>Colour match <input id="match" type="range" min="0" max="100" value="100" step="5"> <span id="matchValue">100%</span></label>
-    <button id="wire" type="button" aria-pressed="true">Mesh lines</button>
-    <button id="points" type="button" aria-pressed="false">Points</button>
-    <button id="mirror" type="button" aria-pressed="true">Mirror</button>
-    <button id="go" type="button" disabled>Measure 10 s</button>
-    <span id="gate">measuring</span>
-    <button id="anglesBtn" type="button" aria-pressed="false" aria-describedby="anglesNote" title="Side photos of yourself, each with its own consent, drawn when you turn your head (off by default)">Photos at several angles</button>
-  </div>
-  <p class="note" id="headNote">Whole head (off by default): hair, ears, the top of the forehead and the neck also come from your photo, softly blended.
-    It loads a 16 MB model that cuts your <em>photo</em> (not the camera) into hair, skin and background once, and may cost some speed: watch the frames per second.</p>
-  <p class="note" id="hairNote">Hair that moves (off by default): the hair of your photo hangs from the head, swings when you move, and your hands can push it.
-    It cuts the hair out of your <em>photo</em> (not the camera) once and loads the hand model, so watch the frames per second. It works best with a clear, front-facing photo of someone with long hair.
-    It moves like a soft sheet of hair, not single strands, and only the hair that shows in the photo.</p>
-  <p class="note" id="handsNote">Show my hands on top (off by default): your own live hands, and what is in them, are drawn over the photo's body, so a bottle in your hand stays visible.
-    It uses the hand model, and it sends your live picture to the graphics card for this, the same way colour matching does: it is only drawn on this screen, never read back, saved or sent.
-    Only the area around your hands is shown; <em>Hand reach</em> makes that area bigger or smaller. When your hand is curled around something, <em>Grip reach</em> stretches the area along your knuckles, where a bottle or a cup usually sits: this is a <strong>guess</strong>, not detection (0 turns it off), and it also shows whatever else is in that area. Your hand keeps your own skin colour.</p>
-  <p class="note" id="effectsNote">Spills, stains and eating (S10g): <em>Spill on me</em> puts a spill on the photo's shirt (it needs <em>Body and clothes</em>); it sticks to the shirt as you move, drips, and water dries on its own. Pass your hand over a stain to wipe it, or press <em>Clean</em>.
-    <em>Messy eating</em> drops crumbs, and sometimes a stain, when your mouth opens with a hand near it. These are effects on the picture; they do not know what you really pour or eat.</p>
-  <p class="note" id="bodyNote">Body and clothes (off by default): the shirt and sleeves of your photo follow your shoulders and arms and are sized to you.
-    It cuts the body and clothes out of your <em>photo</em> (not the camera), finds the photo's shoulders once, and runs the body model on the live video about 14 times a second, so watch the frames per second.
-    It works best when your photo shows the shoulders. It is a flat cut-out bent along the arms, not a 3D body. <em>Cover my clothes</em> draws a slightly bigger copy of the photo's shirt underneath to hide the edges of your own clothes (0 turns it off); it does not repaint the background behind you, so a big cover looks like a puffy shirt.</p>
-  <p class="note" id="webcamLookNote"><em>Match the webcam's look</em>: the photo is softened, given your webcam's grain and nudged towards its contrast and white balance, so it looks filmed by the same camera. Measured on the graphics card from your live picture; 0% draws the photo as it is. It never changes the photo's skin colour by more than a few percent.</p>
-  <p class="note" id="hairReachNote"><em>Hair reach</em> (with Whole head): how far the photo's head reaches above your face. Raise it when more of your own hair shows round the photo's hairstyle — the photo's hair is drawn taller to cover it. It changes nothing below the ears.</p>
-  <p class="note" id="mouthNote"><em>Mouth patch</em> is how much of your live mouth shows when it is open. Lower values pull the patch in towards the middle, which stops your own lips reading bigger and pinker than the photo's; 0% restores the full patch.</p>
-  <div id="gallery" hidden role="group" aria-label="Your photos"></div>
+
+  <!-- HUD Telemetry -->
   <div id="hud" role="status">
-    <div>frames per second<b id="fps">-</b></div>
-    <div>face found<b id="found">-</b></div>
-    <div>detection time<b id="ms">-</b></div>
-    <div>runs on<b id="delegate">-</b></div>
-    <div>photo consent<b id="consentState">none</b></div>
+    <div>FPS<b id="fps">-</b></div>
+    <div>Face Detection<b id="found">-</b></div>
+    <div>Latency (ms)<b id="ms">-</b></div>
+    <div>Backend<b id="delegate">-</b></div>
+    <div>Photo Consent<b id="consentState">none</b></div>
   </div>
-  <div id="photoQuality" hidden role="status" aria-live="polite"></div>
+
+  <div class="control-grid">
+    <!-- Camera & Photo Panel -->
+    <div class="panel-card">
+      <h3>📷 Photo & Camera Source</h3>
+      <div class="btn-row">
+        <button id="photoBtn" class="btn-primary" type="button">Choose my photo</button>
+        <button id="photoClear" class="btn-danger" type="button">Remove photo</button>
+        <button id="full" type="button">Full screen</button>
+        <button id="mirror" type="button" aria-pressed="true">Mirror</button>
+        <button id="stop" type="button">Stop</button>
+      </div>
+      <input id="photoFile" type="file" accept="image/*" hidden>
+      
+      <div class="btn-row">
+        <button id="anglesBtn" type="button" aria-pressed="false" aria-describedby="anglesNote">Multi-angle photos</button>
+        <button id="smooth" type="button" aria-pressed="true">Smoothing</button>
+      </div>
+
+      <div id="gallery" hidden role="group" aria-label="Your photos"></div>
+
+      <div id="angleBar" hidden style="margin-top: 10px;">
+        <button id="angleAdd" class="btn-primary" type="button" disabled aria-describedby="anglesNote">+ Add side angle</button>
+        <input id="angleFile" type="file" accept="image/*" hidden>
+      </div>
+      <div id="angles" hidden role="group" aria-label="Your side photos"></div>
+    </div>
+
+    <!-- Face & Relighting Panel -->
+    <div class="panel-card">
+      <h3>👤 Face Relighting & Details</h3>
+      <div class="btn-row">
+        <button id="keepFace" type="button" aria-pressed="true">Keep live mouth & eyes</button>
+        <button id="eyesBtn" type="button" aria-pressed="false">Live eyes</button>
+        <button id="softBtn" type="button" aria-pressed="false">Soft edges</button>
+        <button id="seamBtn" type="button" aria-pressed="false">Clean the edges</button>
+        <button id="glassesBtn" type="button" aria-pressed="false">Hide glasses</button>
+      </div>
+
+      <div class="slider-group">
+        <label>Colour match <input id="match" type="range" min="0" max="100" value="100" step="5"> <span id="matchValue">100%</span></label>
+        <label>Match the webcam's look <input id="webcamLook" type="range" min="0" max="100" value="60" step="10"> <span id="webcamLookValue">60%</span></label>
+        <label>Mouth patch <input id="mouthPatch" type="range" min="0" max="100" value="50" step="10"> <span id="mouthPatchValue">50%</span></label>
+        <label>Photo face shape <input id="shape" type="range" min="0" max="100" value="70" step="5"> <span id="shapeValue">70%</span></label>
+        <label>Hold the mask when turning <input id="hold" type="range" min="0" max="100" value="100" step="10"> <span id="holdValue">100%</span></label>
+      </div>
+    </div>
+
+    <!-- Whole Head & Hair Panel -->
+    <div class="panel-card">
+      <h3>✂️ Whole Head & Hair</h3>
+      <div class="btn-row">
+        <button id="headBtn" type="button" aria-pressed="false" aria-describedby="headNote">Whole head (hair/ears/neck)</button>
+        <button id="hairBtn" type="button" aria-pressed="false" aria-describedby="hairNote">Moving hair physics</button>
+      </div>
+
+      <div class="slider-group">
+        <label>Hair reach <input id="hairReach" type="range" min="30" max="100" value="55" step="5"> <span id="hairReachValue">55%</span></label>
+        <label>Hair halo <input id="hairHalo" type="range" min="0" max="100" value="50" step="10"> <span id="hairHaloValue">50%</span></label>
+      </div>
+    </div>
+
+    <!-- Body & Hands Panel -->
+    <div class="panel-card">
+      <h3>👔 Body, Clothing & Hands</h3>
+      <div class="btn-row">
+        <button id="bodyBtn" type="button" aria-pressed="false" aria-describedby="bodyNote">Body and clothes puppet</button>
+        <button id="handsTop" type="button" aria-pressed="false" aria-describedby="handsNote">Show hands on top</button>
+        <button id="skinBtn" type="button" aria-pressed="false" aria-describedby="handsNote">Match hand skin</button>
+        <button id="hideHands" type="button" aria-pressed="false">Hide face on hand cover</button>
+      </div>
+
+      <div class="slider-group">
+        <label>Cover clothes <input id="coverClothes" type="range" min="0" max="40" value="0" step="5"> <span id="coverClothesValue">0%</span></label>
+        <label>Hand reach <input id="handReach" type="range" min="50" max="200" value="100" step="10"> <span id="handReachValue">100%</span></label>
+        <label>Grip reach <input id="gripReach" type="range" min="0" max="200" value="100" step="10"> <span id="gripReachValue">100%</span></label>
+      </div>
+
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-subtle); display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <select id="stainKind" aria-label="What to spill">
+          <option value="juice">Juice</option>
+          <option value="coffee">Coffee</option>
+          <option value="sauce">Sauce</option>
+          <option value="water">Water</option>
+        </select>
+        <button id="spillBtn" type="button" aria-describedby="effectsNote">Spill effect</button>
+        <button id="cleanBtn" type="button">Clean shirt</button>
+        <button id="messyBtn" type="button" aria-pressed="false" aria-describedby="effectsNote">Messy eating</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Debug & Mesh Visualization -->
+  <div class="panel-card" style="margin-bottom: 20px;">
+    <h3>🛠️ Diagnostic & Mesh Overlays</h3>
+    <div class="btn-row">
+      <button id="wire" type="button" aria-pressed="true">Mesh wireframe</button>
+      <button id="points" type="button" aria-pressed="false">Landmark points</button>
+      <button id="go" type="button" disabled>Measure 10s benchmark</button>
+      <span id="gate">measuring</span>
+    </div>
+  </div>
+
+  <!-- Consent Dialog -->
   <div id="consent" hidden role="group" aria-labelledby="consentTitle">
-    <h2 id="consentTitle">Use this photo?</h2>
-    <p id="consentTerms"></p>
-    <label id="qualityOverrideRow" hidden><input id="qualityOverride" type="checkbox"> I have read the photo advice above and want to use this photo anyway.</label>
-    <label><input id="consentAttest" type="checkbox"> I confirm this.</label>
-    <label>Allowed for <select id="consentHours"><option value="1">1 hour</option><option value="2" selected>2 hours</option><option value="4">4 hours</option><option value="12">12 hours</option></select></label>
-    <button id="consentOk" type="button" disabled>Allow</button> <button id="consentNo" type="button">Cancel</button>
+    <h2 id="consentTitle">Verify & Authorize Photo Consent</h2>
+    <p id="consentTerms" style="font-size: 13px; color: var(--text-muted);"></p>
+    <label id="qualityOverrideRow" hidden><input id="qualityOverride" type="checkbox"> I have reviewed the quality recommendations and authorize this photo.</label>
+    <label><input id="consentAttest" type="checkbox"> I confirm that I own and consent to using this photo.</label>
+    <label>Session Duration:
+      <select id="consentHours">
+        <option value="1">1 hour</option>
+        <option value="2" selected>2 hours</option>
+        <option value="4">4 hours</option>
+        <option value="12">12 hours</option>
+      </select>
+    </label>
+    <div style="margin-top: 12px; display: flex; gap: 8px;">
+      <button id="consentOk" class="btn-primary" type="button" disabled>Authorize & Apply</button>
+      <button id="consentNo" type="button">Cancel</button>
+    </div>
   </div>
-  <p id="status" role="status"></p>
-  <p id="measure"></p>
-  <!-- Stage 3: shown only while the option is on; off, the page keeps its height, so nothing scrolls the label away -->
-  <div id="angleBar" hidden>
-    <button id="angleAdd" type="button" disabled aria-describedby="anglesNote">Add a side photo</button>
-    <input id="angleFile" type="file" accept="image/*" hidden>
-  </div>
-  <div id="angles" hidden role="group" aria-label="Your side photos"></div>
-  <p class="note" id="anglesNote" hidden>Photos at several angles (off by default): add photos of <em>yourself</em> with your head turned 15° to 45° to one side.
-    When you turn your head, your face is drawn from the side photo nearest your turn, so side views stretch less. Each side photo needs its own consent, like any photo,
-    and photos turned more than 45° are refused. Only the face changes; hair, ears, neck and body still come from your front photo. Side photos load one at a time.
-    It is a prototype: watch the frames per second, and leave it off if the 20 fps gate is not met.</p>
+
+  <div id="photoQuality" hidden role="status" aria-live="polite"></div>
+  <p id="status" role="status" style="font-size: 13px; color: var(--text-muted);"></p>
+  <p id="measure" style="font-size: 13px; color: var(--text-muted);"></p>
+
+  <!-- Technical Notes in Accordions -->
+  <details class="info-box" id="headNote">
+    <summary>Whole Head & Segmentation Details (off by default)</summary>
+    Hair, ears, the top of the forehead and the neck also come from your photo, softly blended. Off by default.
+  </details>
+  <details class="info-box" id="hairReachNote">
+    <summary>Hair Reach Details</summary>
+    How far the photo's head reaches above your face.
+  </details>
+  <details class="info-box" id="mouthNote">
+    <summary>Mouth Patch Details</summary>
+    How much of your live mouth shows when it is open.
+  </details>
+  <details class="info-box" id="webcamLookNote">
+    <summary>Match Webcam Look Details</summary>
+    The photo is softened, given your webcam's grain and contrast.
+  </details>
+  <details class="info-box" id="bodyNote">
+    <summary>Body & Clothes Puppet Details (off by default)</summary>
+    Warped via MediaPipe Pose (33 points) linear blend skinning across shoulders, elbows, and wrists.
+  </details>
+  <details class="info-box" id="handsNote">
+    <summary>Hand Layering & Grip Details (off by default)</summary>
+    Renders live hands and held objects over the photo's body using MediaPipe Hand tracking.
+  </details>
+  <details class="info-box" id="anglesNote">
+    <summary>Multi-Angle Photo Advice (off by default)</summary>
+    Provide 15° to 45° angled selfies of yourself for seamless profile and head-turn rendering.
+  </details>
+  <details class="info-box" id="effectsNote">
+    <summary>Interactive Simulation Details</summary>
+    Physics-based stains, spills, and mouth food crumb simulations.
+  </details>
 </main>
 <script src="/facemesh.bundle.js"></script>
+<script>
+  function applyPreset(mode) {
+    document.querySelectorAll('.preset-pill').forEach(p => p.classList.remove('active'));
+    event && event.target && event.target.classList.add('active');
+
+    const setVal = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.value = val;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    };
+    const setBtn = (id, active) => {
+      const el = document.getElementById(id);
+      if (el && (el.getAttribute('aria-pressed') === 'true') !== active) {
+        el.click();
+      }
+    };
+
+    if (mode === 'turbo') {
+      setVal('match', 80);
+      setVal('webcamLook', 0);
+      setVal('hold', 80);
+      setVal('mouthPatch', 50);
+      setBtn('smooth', true);
+      setBtn('seamBtn', false);
+      showToast('⚡ Turbo Mode: Throttled shaders for guaranteed 30+ FPS low latency.');
+    } else if (mode === 'photoreal') {
+      setVal('match', 100);
+      setVal('webcamLook', 60);
+      setVal('shape', 75);
+      setVal('hold', 100);
+      setVal('mouthPatch', 45);
+      setBtn('softBtn', true);
+      setBtn('smooth', true);
+      setBtn('keepFace', true);
+      showToast('🎨 Cinema Photoreal: Ambient relighting, webcam grain & shape alignment.');
+    } else if (mode === 'meeting') {
+      setVal('match', 100);
+      setVal('webcamLook', 30);
+      setVal('mouthPatch', 50);
+      setBtn('eyesBtn', true);
+      setBtn('seamBtn', true);
+      showToast('💼 Clean Meeting: Clean edges & natural live eyes enabled.');
+    } else if (mode === 'balanced') {
+      setVal('match', 100);
+      setVal('webcamLook', 60);
+      setVal('shape', 70);
+      setVal('hold', 100);
+      setVal('mouthPatch', 50);
+      showToast('⚖️ Balanced: Standard default profile.');
+    }
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    if (!t) return;
+    t.textContent = msg;
+    t.hidden = false;
+    clearTimeout(window._toastTimer);
+    window._toastTimer = setTimeout(() => { t.hidden = true; }, 3200);
+  }
+
+  function copyObsUrl() {
+    const url = window.location.href;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('✅ OBS Browser Source URL copied to clipboard!');
+      }).catch(() => {
+        showToast('URL: ' + url);
+      });
+    } else {
+      showToast('URL: ' + url);
+    }
+  }
+
+  // Adaptive FPS Governor for CPU / Integrated GPU
+  (function initFpsGovernor() {
+    let lowFpsStreak = 0;
+    setInterval(() => {
+      const fpsEl = document.getElementById('fps');
+      if (!fpsEl) return;
+      const fps = parseFloat(fpsEl.textContent);
+      if (!isNaN(fps) && fps > 0) {
+        if (fps < 19) {
+          lowFpsStreak++;
+          if (lowFpsStreak >= 3) {
+            const lookEl = document.getElementById('webcamLook');
+            if (lookEl && parseInt(lookEl.value) > 20) {
+              lookEl.value = 10;
+              lookEl.dispatchEvent(new Event('input', { bubbles: true }));
+              showToast('⚡ Dynamic Governor: Auto-reduced shader overhead to stabilize FPS.');
+            }
+          }
+        } else {
+          lowFpsStreak = Math.max(0, lowFpsStreak - 1);
+        }
+      }
+    }, 2500);
+  })();
+</script>
 </body>
 </html>
